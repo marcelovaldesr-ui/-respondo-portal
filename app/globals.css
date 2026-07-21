@@ -1,0 +1,155 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ===========================================================================
+   Sistema visual del portal — alineado con la web viva (Astro).
+   Referencias: Stripe, Linear, Vercel. Sobrio, mucho aire, jerarquía clara.
+   =========================================================================== */
+
+:root {
+  --indigo: #4f46e5;
+  --indigo-suave: #eef0fe;
+  --tinta: #0f172a;
+  --muted: #5b6981;
+  --muted-2: #8792a8;
+  --fondo: #f6f7fb;
+  --superficie: #ffffff;
+  --borde: #e8eaf0;
+  --borde-fuerte: #d8dce6;
+
+  --coral: #f97362;
+  --cobalto: #2563eb;
+  --malva: #b84a86;
+  --violeta: #7c3aed;
+
+  --ok: #047857;
+  --ok-suave: #ecfdf5;
+  --alerta: #9a3412;
+  --alerta-suave: #fff7ed;
+  --alerta-borde: #fed7aa;
+
+  --r-card: 16px;
+  --r-input: 12px;
+  --sombra: 0 1px 2px rgba(15, 23, 42, 0.04), 0 10px 30px -18px rgba(15, 23, 42, 0.25);
+  --sombra-alta: 0 1px 2px rgba(15, 23, 42, 0.05), 0 18px 40px -22px rgba(15, 23, 42, 0.35);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  background: var(--fondo);
+  color: var(--tinta);
+  font-family: Manrope, ui-sans-serif, system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+h1,
+h2,
+h3,
+.titular {
+  font-family: Montserrat, ui-sans-serif, system-ui, sans-serif;
+  letter-spacing: -0.02em;
+}
+
+@layer components {
+  /* Tarjeta base */
+  .tarjeta {
+    @apply rounded-2xl border bg-white;
+    border-color: var(--borde);
+    box-shadow: var(--sombra);
+  }
+
+  .tarjeta-plana {
+    @apply rounded-2xl border bg-white;
+    border-color: var(--borde);
+  }
+
+  /* Etiqueta pequeña de sección */
+  .eyebrow {
+    @apply text-[11px] font-extrabold uppercase;
+    letter-spacing: 0.14em;
+    color: var(--muted-2);
+  }
+
+  /* Botones */
+  .btn {
+    @apply inline-flex items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-[15px] font-bold transition;
+  }
+  .btn-primario {
+    @apply btn text-white;
+    background: var(--indigo);
+  }
+  .btn-primario:hover {
+    filter: brightness(1.07);
+  }
+  .btn-primario:disabled {
+    opacity: 0.55;
+  }
+  .btn-suave {
+    @apply btn border bg-white;
+    border-color: var(--borde);
+    color: var(--tinta);
+  }
+  .btn-suave:hover {
+    border-color: var(--borde-fuerte);
+    background: #fbfbfe;
+  }
+
+  /* Campo de texto */
+  .campo {
+    @apply w-full rounded-xl border bg-white px-4 py-3 text-[15px] outline-none transition;
+    border-color: var(--borde-fuerte);
+  }
+  .campo:focus {
+    border-color: var(--indigo);
+    box-shadow: 0 0 0 4px var(--indigo-suave);
+  }
+
+  /* Píldoras */
+  .pildora {
+    @apply inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-bold;
+  }
+  .pildora-alerta {
+    @apply pildora;
+    background: var(--alerta-suave);
+    color: var(--alerta);
+  }
+  .pildora-ok {
+    @apply pildora;
+    background: var(--ok-suave);
+    color: var(--ok);
+  }
+  .pildora-indigo {
+    @apply pildora;
+    background: var(--indigo-suave);
+    color: var(--indigo);
+  }
+
+  /* Avatar circular del empleado */
+  .avatar {
+    @apply shrink-0 rounded-full object-cover;
+    box-shadow: 0 0 0 2px #fff, 0 0 0 3.5px var(--anillo, transparent);
+  }
+}
+
+/* Scrollbar discreta */
+*::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+*::-webkit-scrollbar-thumb {
+  background: #dfe3ec;
+  border-radius: 999px;
+  border: 3px solid transparent;
+  background-clip: content-box;
+}
+*::-webkit-scrollbar-thumb:hover {
+  background: #c9cfdd;
+  background-clip: content-box;
+}

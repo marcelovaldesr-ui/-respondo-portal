@@ -1,0 +1,29 @@
+# dependencies
+/node_modules
+
+# next.js
+/.next/
+/out/
+
+# production
+/build
+
+# env
+.env
+.env.local
+.env*.local
+
+# vercel
+.vercel
+
+# typescript
+*.tsbuildinfo
+next-env.d.ts
+
+# os
+.DS_Store
+
+# Flujos de n8n (del carril A / Railway): traen secretos pegados dentro,
+# NO deben ir al repo del portal.
+flow_v2.json
+flow_*.json
