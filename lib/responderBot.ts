@@ -3,6 +3,8 @@ import { armarPrompt, type MensajePrueba } from "@/lib/promptEmpleado";
 import { generarJSON } from "@/lib/gemini";
 import { enviarTexto, type ConfigWhatsApp } from "@/lib/whatsapp";
 import { etiquetasDesdeMotor } from "@/lib/etiquetas";
+import { guardarMensaje } from "@/lib/mensajes";
+import { modoDe, setModo } from "@/lib/estadoChat";
 
 /**
  * Cerebro de Tino sobre WhatsApp real (Opción B, Fase 2).
@@ -68,24 +70,19 @@ async function historial(
     .order("creado_en", { ascending: false })
     .limit(20);
 
-  // Vienen del más nuevo al más viejo: invertir. 'humano' cuenta como "nosotros".
+  // Vienen del más nuevo al más viejo: invertir. Se conserva el rol 'humano'
+  // (mensajes que escribió una persona del equipo) para que el prompt los marque
+  // como decisiones tomadas y Tino no las contradiga ni repregunte lo ya resuelto.
   return (data ?? [])
     .reverse()
     .map((m) => ({
-      rol: (m.rol === "cliente" ? "cliente" : "empleado") as "cliente" | "empleado",
+      rol: (m.rol === "cliente"
+        ? "cliente"
+        : m.rol === "humano"
+          ? "humano"
+          : "empleado") as MensajePrueba["rol"],
       texto: m.texto as string,
     }));
-}
-
-/** ¿En qué modo está el chat? (bot | humano | pausado). Default bot. */
-async function modoDe(empleadoId: string, chatId: string): Promise<string> {
-  const { data } = await db()
-    .from("ed_chat_estado")
-    .select("modo")
-    .eq("empleado_id", empleadoId)
-    .eq("chat_id", chatId)
-    .maybeSingle();
-  return (data?.modo as string) ?? "bot";
 }
 
 /**
@@ -96,7 +93,17 @@ export async function responderSiBot(params: {
   clienteId: string;
   empleadoId: string;
   chatId: string;
-  cfg: ConfigWhatsApp;
+  /** Transporte oficial (Opción B). Si se pasa `enviar`, tiene prioridad. */
+  cfg?: ConfigWhatsApp;
+  /**
+   * Transporte de envío pluggable. Opción A (Evolution) pasa su propio sender;
+   * si no se pasa, se usa `cfg` con la Cloud API oficial. Así el MISMO cerebro
+   * sirve para los dos canales sin duplicar lógica.
+   */
+  enviar?: (
+    chatId: string,
+    texto: string,
+  ) => Promise<{ ok: boolean; waId?: string; error?: string }>;
 }): Promise<{ accion: string; detalle?: string }> {
   const { clienteId, empleadoId, chatId, cfg } = params;
 
@@ -122,26 +129,38 @@ export async function responderSiBot(params: {
 
   const supa = db();
 
-  // Enviar por WhatsApp (si hay token configurado; en dev sin token queda solo guardado).
-  const envio = await enviarTexto(cfg, chatId, texto);
+  // ANTI-CARRERA: Gemini tardó unos segundos; si en ese lapso una persona tomó
+  // el control (o se pausó), NO se envía la respuesta ya obsoleta. Se re-lee el
+  // modo justo antes de mandar. Esto evita que Tino "hable encima" del humano.
+  const modoAhora = await modoDe(empleadoId, chatId, supa);
+  if (modoAhora !== "bot") {
+    return { accion: "silencio_carrera", detalle: `modo cambió a ${modoAhora}` };
+  }
 
-  // Guardar la respuesta del asistente. Sin 'canal' explícito (lo pone el default
-  // de 210); así funciona aunque 210 aún no esté aplicada.
-  await supa.from("ed_mensajes").insert({
-    empleado_id: empleadoId,
-    chat_id: chatId,
+  // Enviar por WhatsApp. Opción A: usa el sender pasado (Evolution). Opción B:
+  // usa la Cloud API con cfg. Sin ninguno de los dos, queda solo guardado.
+  const envio = params.enviar
+    ? await params.enviar(chatId, texto)
+    : cfg
+      ? await enviarTexto(cfg, chatId, texto)
+      : { ok: false, error: "sin transporte configurado" };
+
+  // Guardar la respuesta del asistente con el id que devolvió el envío. Ese id
+  // permite reconocer luego su ECO en el webhook y NO tratarlo como intervención
+  // humana (ver lib/inboundEvolution.ts). Idempotente: guardarMensaje ignora
+  // duplicados por el índice único de la migración 212.
+  await guardarMensaje(supa, {
+    empleadoId,
+    chatId,
     rol: "empleado",
     texto,
+    waId: "waId" in envio ? (envio as { waId?: string }).waId : undefined,
+    canal: "whatsapp",
   });
 
   // Escalación: si el motor pide humano, silenciar el bot y registrar.
   if (datos.escalar) {
-    await supa
-      .from("ed_chat_estado")
-      .upsert(
-        { empleado_id: empleadoId, chat_id: chatId, modo: "humano" },
-        { onConflict: "empleado_id,chat_id" },
-      );
+    await setModo(empleadoId, chatId, "humano", supa);
     await supa.from("ed_escalaciones").insert({
       empleado_id: empleadoId,
       chat_id: chatId,
