@@ -9,7 +9,7 @@ import {
   fechaCorta,
 } from "@/lib/conversaciones";
 import { cambiarModo } from "./acciones";
-import Compositor from "@/components/Compositor";
+import InboxConversacion from "@/components/InboxConversacion";
 import EtiquetasEditor from "@/components/EtiquetasEditor";
 import { metaEtiqueta } from "@/lib/etiquetas";
 
@@ -345,93 +345,21 @@ export default async function Conversaciones({
                 </div>
               )}
 
-              <div className="mt-5 flex max-h-[50vh] flex-col gap-2.5 overflow-y-auto pr-1">
-                {seleccion.mensajes.map((m, i) => (
-                  <Burbuja
-                    key={i}
-                    rol={m.rol}
-                    texto={m.texto}
-                    creadoEn={m.creadoEn}
-                    color={colorSel}
-                  />
-                ))}
-              </div>
+              {/* Los mensajes en vivo + el compositor viven en InboxConversacion (abajo). */}
 
-              {/* Control del dueño sobre el chat */}
-              <div
-                className="mt-4 border-t pt-4"
-                style={{ borderColor: "var(--borde)" }}
-              >
-                {seleccion.modo === "bot" && (
-                  <div className="flex flex-wrap items-center gap-2">
-                    <span className="text-[13px]" style={{ color: "var(--muted)" }}>
-                      {seleccion.empleadoNombre} está respondiendo.
-                    </span>
-                    <div className="ml-auto flex flex-wrap gap-2">
-                      <BotonModo
-                        empleadoId={searchParams.emp!}
-                        chatId={seleccion.chatId}
-                        modo="pausado"
-                      >
-                        Pausar asistente
-                      </BotonModo>
-                      <BotonModo
-                        empleadoId={searchParams.emp!}
-                        chatId={seleccion.chatId}
-                        modo="humano"
-                        primario
-                      >
-                        Tomar la conversación
-                      </BotonModo>
-                    </div>
-                  </div>
-                )}
-
-                {seleccion.modo === "humano" && (
-                  <div className="flex flex-wrap items-center gap-2">
-                    <span className="text-[13px] font-semibold">
-                      Tu equipo tiene esta conversación. {seleccion.empleadoNombre} no
-                      responderá.
-                    </span>
-                    <div className="ml-auto">
-                      <BotonModo
-                        empleadoId={searchParams.emp!}
-                        chatId={seleccion.chatId}
-                        modo="bot"
-                        primario
-                      >
-                        Devolver a {seleccion.empleadoNombre}
-                      </BotonModo>
-                    </div>
-                  </div>
-                )}
-
-                {seleccion.modo === "pausado" && (
-                  <div className="flex flex-wrap items-center gap-2">
-                    <span className="text-[13px] font-semibold">
-                      Asistente pausado en este chat. Nadie está respondiendo
-                      automáticamente.
-                    </span>
-                    <div className="ml-auto">
-                      <BotonModo
-                        empleadoId={searchParams.emp!}
-                        chatId={seleccion.chatId}
-                        modo="bot"
-                        primario
-                      >
-                        Reactivar a {seleccion.empleadoNombre}
-                      </BotonModo>
-                    </div>
-                  </div>
-                )}
-
-              </div>
-
-              {/* Inbox: escribirle al cliente desde el portal (Opción B) */}
-              <Compositor
+              {/* Inbox en vivo: control (tomar/devolver) + mensajes + responder manual */}
+              <InboxConversacion
                 empleadoId={searchParams.emp!}
                 chatId={seleccion.chatId}
+                empleadoNombre={seleccion.empleadoNombre}
+                color={colorSel}
                 ventana={seleccion.ventana}
+                mensajesIniciales={seleccion.mensajes.map((m) => ({
+                  rol: m.rol,
+                  texto: m.texto,
+                  creadoEn: m.creadoEn,
+                }))}
+                modoInicial={seleccion.modo}
               />
             </>
           )}

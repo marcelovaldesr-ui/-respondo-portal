@@ -2,17 +2,15 @@ import { NextResponse, type NextRequest } from "next/server";
 import { manejarEntranteEvolution } from "@/lib/inboundEvolution";
 
 export const dynamic = "force-dynamic";
+export const maxDuration = 60;
 
 /**
  * Webhook de Evolution API (WhatsApp NO oficial / Opción A).
  *
- * Ruta delgada: toda la lógica (idempotencia, toma de control humana, respuesta)
- * vive en lib/inboundEvolution.ts para poder probarla sin HTTP.
+ * Ruta delgada: la lógica (idempotencia, toma de control humana, respuesta) vive
+ * en lib/inboundEvolution.ts. Responde 200 siempre (Evolution reintenta si no).
  *
  * Seguridad ligera: si EVOLUTION_WEBHOOK_SECRET está definido, se exige ?k=<secret>.
- * SIEMPRE responde 200 rápido: Evolution reintenta si no recibe 200 y eso
- * duplicaría eventos (la idempotencia por id ya cubre los reenvíos, pero igual
- * respondemos 200 para no acumular reintentos).
  */
 export async function POST(request: NextRequest) {
   const secret = process.env.EVOLUTION_WEBHOOK_SECRET;
@@ -30,7 +28,6 @@ export async function POST(request: NextRequest) {
 
   try {
     const r = await manejarEntranteEvolution(payload);
-    // Log útil para observabilidad (aparece en los logs de Vercel).
     console.log("[evolution webhook]", r.accion, r.detalle ?? "");
   } catch (e) {
     console.error("[evolution webhook] error:", (e as Error).message);
