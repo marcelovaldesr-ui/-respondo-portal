@@ -49,9 +49,22 @@ export async function clientePorInstancia(
 }
 
 /**
+ * Delay "humano" para un texto: proporcional al largo (como si alguien lo
+ * tipeara) con jitter aleatorio. Evolution emite presencia "escribiendo…"
+ * durante este delay, lo que además baja el perfil de bot ante el antispam.
+ * Rango: 1.5s – 6s.
+ */
+function delayHumano(texto: string): number {
+  const base = 1500 + texto.length * 35; // ~35ms por caracter
+  const jitter = Math.floor(Math.random() * 1200);
+  return Math.min(6000, Math.max(1500, base + jitter));
+}
+
+/**
  * Envía un mensaje de texto por Evolution (endpoint sendText).
  * Devuelve el id del mensaje creado (data.key.id) para poder reconocer luego su
- * eco en el webhook y no tratarlo como intervención humana.
+ * eco en el webhook y no tratarlo como intervención humana, y para trackear su
+ * estado de entrega vía MESSAGES_UPDATE (Fase 5).
  */
 export async function enviarTextoEvolution(
   instancia: string,
@@ -64,7 +77,12 @@ export async function enviarTextoEvolution(
     const r = await fetch(`${BASE}/message/sendText/${instancia}`, {
       method: "POST",
       headers: { "Content-Type": "application/json", apikey: key },
-      body: JSON.stringify({ number: numero, text: texto }),
+      body: JSON.stringify({
+        number: numero,
+        text: texto,
+        // Fase 5: ritmo humano — Evolution muestra "escribiendo…" durante el delay.
+        delay: delayHumano(texto),
+      }),
     });
     if (!r.ok) {
       const t = await r.text();
@@ -130,4 +148,70 @@ export function parsearEvolution(payload: unknown): EntranteEvolution | null {
     fromMe: key.fromMe === true,
     waId: key.id ?? null,
   };
+}
+
+// ============================================================================
+// FASE 5 — ACKs de entrega (evento MESSAGES_UPDATE)
+// ============================================================================
+
+/** ACK de entrega ya normalizado desde el webhook de Evolution. */
+export type AckEvolution = {
+  instancia: string;
+  waId: string;
+  estado: "pendiente" | "server_ack" | "entregado" | "leido" | "error";
+};
+
+const MAPA_STATUS: Record<string, AckEvolution["estado"]> = {
+  PENDING: "pendiente",
+  SERVER_ACK: "server_ack",
+  DELIVERY_ACK: "entregado",
+  READ: "leido",
+  PLAYED: "leido",
+  ERROR: "error",
+};
+
+/**
+ * Extrae un ACK de entrega de un payload MESSAGES_UPDATE. Devuelve null si el
+ * evento no es de este tipo o no trae lo mínimo (id + status reconocible).
+ * La forma del data varía entre versiones de Evolution; se leen todas las
+ * variantes conocidas de forma defensiva.
+ */
+export function parsearAckEvolution(payload: unknown): AckEvolution | null {
+  const body = payload as {
+    event?: string;
+    instance?: string;
+    data?: {
+      keyId?: string;
+      messageId?: string;
+      key?: { id?: string };
+      status?: string | number;
+      update?: { status?: string | number };
+    };
+  };
+
+  if (body?.event !== "messages.update") return null;
+  const instancia = body?.instance ?? "";
+  if (!instancia) return null;
+
+  const d = body?.data ?? {};
+  const waId = d.keyId || d.key?.id || d.messageId || null;
+  const statusBruto = d.status ?? d.update?.status;
+  if (!waId || statusBruto === undefined || statusBruto === null) return null;
+
+  // Numérico (protocolo crudo: 0..5) o string ('SERVER_ACK', etc.)
+  const porNumero: Record<number, AckEvolution["estado"]> = {
+    0: "error",
+    1: "pendiente",
+    2: "server_ack",
+    3: "entregado",
+    4: "leido",
+    5: "leido",
+  };
+  const estado =
+    typeof statusBruto === "number"
+      ? porNumero[statusBruto]
+      : MAPA_STATUS[String(statusBruto).toUpperCase()];
+  if (!estado) return null;
+
+  return { instancia, waId, estado };
 }

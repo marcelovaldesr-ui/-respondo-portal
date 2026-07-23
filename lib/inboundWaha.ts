@@ -1,10 +1,10 @@
 import { db } from "@/lib/db";
 import {
-  parsearEvolution,
-  parsearAckEvolution,
-  clientePorInstancia,
-  enviarTextoEvolution,
-} from "@/lib/evolution";
+  parsearWaha,
+  parsearAckWaha,
+  clientePorInstanciaWaha,
+  enviarTextoWaha,
+} from "@/lib/waha";
 import { tinoDe } from "@/lib/whatsapp";
 import {
   guardarMensaje,
@@ -19,72 +19,58 @@ import { responderSiBot } from "@/lib/responderBot";
 export type ResultadoEntrante = { accion: string; detalle?: string };
 
 /**
- * Orquesta un evento entrante de Evolution (WhatsApp Opción A). Es el corazón
- * de la CONVIVENCIA Tino + persona. Separado de la ruta HTTP para poder probarlo
- * de forma directa (ver scripts/_test_hibrido.ts).
+ * Orquesta un evento entrante de WAHA (WhatsApp Opción A — motor GOWS).
+ * Gemelo de lib/inboundEvolution.ts: MISMO cerebro, MISMA convivencia
+ * Tino+persona, MISMO tracking de ACKs. Solo cambia el parser del transporte.
  *
- * Flujo:
- *  0) ACK de entrega (MESSAGES_UPDATE): actualizar estado_envio del mensaje y
- *     salir. Es la señal de la Fase 5 — con esto el portal sabe qué mensaje se
- *     entregó de verdad y cuál quedó en ERROR (Tino "mudo").
- *  1) Parsear. Si no hay texto / es grupo / estado → ignorar.
- *  2) Resolver cliente (por instancia) y Tino.
- *  3) IDEMPOTENCIA: si el id de WhatsApp ya se procesó → salir. Esto cubre a la
- *     vez los reenvíos de Evolution y el ECO de los propios envíos de Tino
- *     (guardamos el id que Evolution devuelve al enviar).
- *  4) Si el mensaje es fromMe y su id NO estaba registrado → lo escribió una
- *     PERSONA desde el WhatsApp del negocio: TOMA DE CONTROL HUMANA. Se guarda
- *     como contexto (rol=humano), se pausa Tino (modo=humano) y NO se responde.
- *  5) Si es del cliente → se guarda, se toca la ventana y responde el cerebro
- *     (que a su vez respeta el modo: si hay humano/pausado, calla).
+ *  0) ACK (message.ack) → actualizar estado_envio y salir.
+ *  1) Parsear message. Si no hay texto / es grupo → ignorar.
+ *  2) Resolver cliente (por instancia lógica) y Tino.
+ *  3) Idempotencia por id (cubre reenvíos y eco de Tino).
+ *  4) fromMe con id desconocido = persona (Cecilia) → toma de control humana.
+ *  5) Mensaje del cliente → guardar, tocar ventana, responder (respeta el modo).
  */
-export async function manejarEntranteEvolution(
+export async function manejarEntranteWaha(
   payload: unknown,
   opts?: {
-    /** Inyección del transporte (para pruebas: evita enviar WhatsApp real). */
     enviar?: (
       chatId: string,
       texto: string,
     ) => Promise<{ ok: boolean; waId?: string; error?: string }>;
   },
 ): Promise<ResultadoEntrante> {
-  // 0) ACK de entrega (Fase 5).
-  const ack = parsearAckEvolution(payload);
+  // 0) ACK de entrega.
+  const ack = parsearAckWaha(payload);
   if (ack) {
-    const clienteId = await clientePorInstancia(ack.instancia);
+    const clienteId = await clientePorInstanciaWaha(ack.instancia);
     if (!clienteId) return { accion: "ack_sin_cliente", detalle: ack.instancia };
     const empleadoId = await tinoDe(clienteId);
     if (!empleadoId) return { accion: "ack_sin_tino" };
     const r = await actualizarEstadoEnvio(db(), empleadoId, ack.waId, ack.estado);
-    if (ack.estado === "error") {
-      // Señal crítica: WhatsApp NO entregó un mensaje de Tino. Queda en la DB
-      // (estado_envio='error') para la ficha y para el watchdog/reportes.
-      console.error("[evolution ack] envío NO entregado:", ack.waId);
-    }
+    if (ack.estado === "error") console.error("[waha ack] envío NO entregado:", ack.waId);
     return {
       accion: "ack",
-      detalle: `${ack.estado}${r.encontrado === false ? " (mensaje ajeno)" : ""}`,
+      detalle: `${ack.estado}${r.encontrado === false ? " (ajeno)" : ""}`,
     };
   }
 
-  const m = parsearEvolution(payload);
+  const m = parsearWaha(payload);
   if (!m) return { accion: "ignorado" };
 
-  const clienteId = await clientePorInstancia(m.instancia);
+  const clienteId = await clientePorInstanciaWaha(m.instancia);
   if (!clienteId) return { accion: "sin_cliente", detalle: m.instancia };
   const empleadoId = await tinoDe(clienteId);
   if (!empleadoId) return { accion: "sin_tino" };
 
   const supa = db();
 
-  // 3) Idempotencia + eco de Tino (ambos comparten el mismo id ya guardado).
+  // 3) Idempotencia + eco de Tino.
   if (m.waId && (await yaProcesado(supa, empleadoId, m.waId))) {
     return { accion: "duplicado" };
   }
 
   // 4) fromMe con id desconocido = mensaje humano → toma de control.
   if (m.fromMe) {
-    // Red de seguridad ante la carrera "eco antes de guardar el id del envío".
     if (await esEcoReciente(supa, empleadoId, m.chatId, m.texto)) {
       return { accion: "eco" };
     }
@@ -128,17 +114,14 @@ export async function manejarEntranteEvolution(
   const enviar =
     opts?.enviar ??
     (async (chatId: string, texto: string) => {
-      // FASE 5 — freno de ritmo humano: si el empleado ya envió ≥8 mensajes en
-      // el último minuto (perfil anti-ban de la vía no oficial), se espera unos
-      // segundos antes de enviar. Para el volumen del piloto esto basta; con
-      // más volumen se migra a una cola real.
+      // Freno de ritmo humano ≥8/min (reutiliza la lógica de la Fase 5).
       const enUltimoMinuto = await enviosUltimoMinuto(supa, empleadoId);
       if (enUltimoMinuto >= 8) {
         const pausa = 8000 + Math.floor(Math.random() * 4000);
         console.log(`[ritmo] ${enUltimoMinuto} envíos/min → pausa ${pausa}ms`);
         await new Promise((r) => setTimeout(r, pausa));
       }
-      return enviarTextoEvolution(m.instancia, chatId, texto);
+      return enviarTextoWaha(chatId, texto);
     });
 
   const r = await responderSiBot({
