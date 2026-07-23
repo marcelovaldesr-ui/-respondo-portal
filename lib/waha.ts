@@ -76,6 +76,78 @@ function delayHumano(texto: string): number {
   return Math.min(6000, Math.max(1500, base + jitter));
 }
 
+/** Cache LID→número real (por invocación; evita repetir la consulta). */
+const _lidCache = new Map<string, string>();
+
+/**
+ * IDENTIDAD ESTABLE DEL CONTACTO (fix fragmentación de chats, 23-jul-2026).
+ *
+ * WhatsApp identifica a la misma persona a veces por su NÚMERO (569...@c.us) y
+ * a veces por un LID (223...@lid). Si se usa lo que llega crudo como clave, la
+ * misma persona termina en 2 chats distintos. Esta función resuelve SIEMPRE al
+ * número real (WAHA expone el mapeo en /api/{session}/lids/{lid}) y devuelve ese
+ * número como `chatId` — la clave única de la conversación en la BD.
+ *
+ * Devuelve: chatId (dígitos del número real), telefono (+569...) y numeroReal
+ * (bool: si se pudo resolver). Si NO se puede resolver un LID, cae a usar el LID
+ * como clave (mejor eso que perder el mensaje) — es el peor caso, no el normal.
+ */
+export async function resolverContacto(jid: string): Promise<{
+  chatId: string;
+  telefono: string | null;
+  numeroReal: boolean;
+}> {
+  const digits = jid.replace(/@.*$/, "");
+  if (!jid.endsWith("@lid")) {
+    // Ya es un número real (@c.us / @s.whatsapp.net).
+    return { chatId: digits, telefono: `+${digits}`, numeroReal: true };
+  }
+  // Es un LID: resolver al número real.
+  let pn = _lidCache.get(digits) || null;
+  if (!pn) {
+    const key = process.env.WAHA_API_KEY;
+    if (key && BASE) {
+      try {
+        const r = await fetch(`${BASE}/api/${SESSION}/lids/${digits}`, {
+          headers: { "X-Api-Key": key },
+        });
+        if (r.ok) {
+          const j = (await r.json()) as { pn?: string };
+          const p = (j.pn || "").replace(/@.*$/, "");
+          if (p) {
+            pn = p;
+            _lidCache.set(digits, p);
+          }
+        }
+      } catch {
+        /* cae al fallback */
+      }
+    }
+  }
+  if (pn) return { chatId: pn, telefono: `+${pn}`, numeroReal: true };
+  return { chatId: digits, telefono: null, numeroReal: false }; // fallback: LID
+}
+
+/**
+ * Nombre visible del contacto (pushName), best-effort desde /api/contacts.
+ * Devuelve null si no se puede (no rompe el flujo).
+ */
+export async function nombreDeContacto(jid: string): Promise<string | null> {
+  const key = process.env.WAHA_API_KEY;
+  if (!key || !BASE) return null;
+  try {
+    const r = await fetch(
+      `${BASE}/api/contacts?session=${SESSION}&contactId=${encodeURIComponent(jid)}`,
+      { headers: { "X-Api-Key": key } },
+    );
+    if (!r.ok) return null;
+    const j = (await r.json()) as { pushname?: string; name?: string };
+    return j?.pushname || j?.name || null;
+  } catch {
+    return null;
+  }
+}
+
 /** Resuelve el cliente a partir de la instancia lógica. */
 export async function clientePorInstanciaWaha(
   instancia: string,

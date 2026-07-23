@@ -4,6 +4,8 @@ import {
   parsearAckWaha,
   clientePorInstanciaWaha,
   enviarTextoWaha,
+  resolverContacto,
+  nombreDeContacto,
 } from "@/lib/waha";
 import { tinoDe } from "@/lib/whatsapp";
 import {
@@ -23,12 +25,19 @@ export type ResultadoEntrante = { accion: string; detalle?: string };
  * Gemelo de lib/inboundEvolution.ts: MISMO cerebro, MISMA convivencia
  * Tino+persona, MISMO tracking de ACKs. Solo cambia el parser del transporte.
  *
+ * IDENTIDAD ESTABLE (23-jul-2026): la clave de la conversación (chatId) es
+ * SIEMPRE el número real del contacto, resuelto desde el LID si hace falta
+ * (resolverContacto). Así la misma persona NO se fragmenta en varios chats,
+ * aunque a veces entre como @lid y a veces como @c.us. El ENVÍO se hace a la
+ * dirección original (m.jid), que es la que WhatsApp espera y ya entrega bien.
+ *
  *  0) ACK (message.ack) → actualizar estado_envio y salir.
  *  1) Parsear message. Si no hay texto / es grupo → ignorar.
- *  2) Resolver cliente (por instancia lógica) y Tino.
+ *  2) Resolver cliente (por instancia) y Tino.
+ *  2b) Resolver identidad estable del contacto (número real).
  *  3) Idempotencia por id (cubre reenvíos y eco de Tino).
- *  4) fromMe con id desconocido = persona (Cecilia) → toma de control humana.
- *  5) Mensaje del cliente → guardar, tocar ventana, responder (respeta el modo).
+ *  4) fromMe con id desconocido = persona → toma de control humana.
+ *  5) Mensaje del cliente → guardar, tocar ventana, responder.
  */
 export async function manejarEntranteWaha(
   payload: unknown,
@@ -64,6 +73,10 @@ export async function manejarEntranteWaha(
 
   const supa = db();
 
+  // 2b) Identidad estable: la clave del chat es el NÚMERO REAL (resuelto del LID).
+  const contacto = await resolverContacto(m.jid);
+  const chatId = contacto.chatId; // ← clave única de la conversación en la BD
+
   // 3) Idempotencia + eco de Tino.
   if (m.waId && (await yaProcesado(supa, empleadoId, m.waId))) {
     return { accion: "duplicado" };
@@ -71,45 +84,62 @@ export async function manejarEntranteWaha(
 
   // 4) fromMe con id desconocido = mensaje humano → toma de control.
   if (m.fromMe) {
-    if (await esEcoReciente(supa, empleadoId, m.chatId, m.texto)) {
+    // Detección de ECO (mensaje del propio Tino que WhatsApp devuelve):
+    //  a) por id ya guardado, o b) por texto reciente igual (rol=empleado).
+    if (
+      (m.waId && (await yaProcesado(supa, empleadoId, m.waId))) ||
+      (await esEcoReciente(supa, empleadoId, chatId, m.texto))
+    ) {
+      return { accion: "eco" };
+    }
+    // ANTI-CARRERA (riesgo B de la auditoría): el eco de Tino llega como un
+    // webhook APARTE y puede adelantarse a que se guarde el id/mensaje del envío.
+    // Antes de concluir "toma humana" (que silenciaría a Tino por error),
+    // esperamos un momento y re-verificamos. Un mensaje humano REAL no calzará
+    // ni por id ni por texto reciente, así que esto no lo bloquea.
+    await new Promise((r) => setTimeout(r, 2500));
+    if (
+      (m.waId && (await yaProcesado(supa, empleadoId, m.waId))) ||
+      (await esEcoReciente(supa, empleadoId, chatId, m.texto))
+    ) {
       return { accion: "eco" };
     }
     await guardarMensaje(supa, {
       empleadoId,
-      chatId: m.chatId,
+      chatId,
       rol: "humano",
       texto: m.texto,
       waId: m.waId,
       canal: "whatsapp",
     });
-    await setModo(empleadoId, m.chatId, "humano", supa);
+    await setModo(empleadoId, chatId, "humano", supa);
     return { accion: "toma_humana" };
   }
 
   // 5) Mensaje del cliente.
   await guardarMensaje(supa, {
     empleadoId,
-    chatId: m.chatId,
+    chatId,
     rol: "cliente",
     texto: m.texto,
     waId: m.waId,
     canal: "whatsapp",
   });
 
-  if (m.nombre) {
-    await supa.from("ed_contactos").upsert(
-      {
-        cliente_id: clienteId,
-        chat_id: m.chatId,
-        nombre: m.nombre,
-        telefono: `+${m.chatId}`,
-        etiqueta: "lead",
-      },
-      { onConflict: "cliente_id,chat_id" },
-    );
-  }
+  // Contacto: guardar con el número real + nombre visible (best-effort).
+  const nombre = m.nombre ?? (await nombreDeContacto(m.jid));
+  await supa.from("ed_contactos").upsert(
+    {
+      cliente_id: clienteId,
+      chat_id: chatId,
+      nombre: nombre ?? undefined,
+      telefono: contacto.telefono ?? undefined,
+      etiqueta: "lead",
+    },
+    { onConflict: "cliente_id,chat_id" },
+  );
 
-  await tocarVentanaEntrante(empleadoId, m.chatId, supa);
+  await tocarVentanaEntrante(empleadoId, chatId, supa);
 
   const enviar =
     opts?.enviar ??
@@ -121,16 +151,16 @@ export async function manejarEntranteWaha(
         console.log(`[ritmo] ${enUltimoMinuto} envíos/min → pausa ${pausa}ms`);
         await new Promise((r) => setTimeout(r, pausa));
       }
-      // CLAVE (LID): responder al jid COMPLETO de origen (223...@lid), NO al
-      // número reconstruido con @c.us. Ignoramos el chatId que pasa el cerebro
-      // (dígitos) y usamos m.jid, que preserva el direccionamiento correcto.
+      // Responder a la dirección ORIGINAL (m.jid): es la que WhatsApp espera y
+      // la que ya entrega bien (con @lid o @c.us). La unificación es solo de la
+      // CLAVE del chat (chatId = número real), no del transporte.
       return enviarTextoWaha(m.jid, texto);
     });
 
   const r = await responderSiBot({
     clienteId,
     empleadoId,
-    chatId: m.chatId,
+    chatId,
     enviar,
   });
   return { accion: `cliente:${r.accion}`, detalle: r.detalle };
