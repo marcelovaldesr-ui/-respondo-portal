@@ -113,7 +113,7 @@ export async function manejarEntranteWaha(
 
   const enviar =
     opts?.enviar ??
-    (async (chatId: string, texto: string) => {
+    (async (_chatId: string, texto: string) => {
       // Freno de ritmo humano ≥8/min (reutiliza la lógica de la Fase 5).
       const enUltimoMinuto = await enviosUltimoMinuto(supa, empleadoId);
       if (enUltimoMinuto >= 8) {
@@ -121,7 +121,10 @@ export async function manejarEntranteWaha(
         console.log(`[ritmo] ${enUltimoMinuto} envíos/min → pausa ${pausa}ms`);
         await new Promise((r) => setTimeout(r, pausa));
       }
-      return enviarTextoWaha(chatId, texto);
+      // CLAVE (LID): responder al jid COMPLETO de origen (223...@lid), NO al
+      // número reconstruido con @c.us. Ignoramos el chatId que pasa el cerebro
+      // (dígitos) y usamos m.jid, que preserva el direccionamiento correcto.
+      return enviarTextoWaha(m.jid, texto);
     });
 
   const r = await responderSiBot({

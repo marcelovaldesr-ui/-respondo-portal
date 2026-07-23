@@ -4,44 +4,69 @@ import { db } from "@/lib/db";
  * Integración con WAHA (WhatsApp NO oficial / Opción A — motor GOWS/whatsmeow).
  *
  * Reemplaza a Evolution API como TRANSPORTE tras confirmar (22-jul-2026) que
- * Evolution v2.3.7/Baileys tenía roto el envío 1-a-1 (todos los sendText a
- * terceros → ERROR; grupos OK). WAHA con motor GOWS entrega bien (ack DEVICE).
+ * Evolution v2.3.7/Baileys tenía roto el envío 1-a-1. WAHA con motor GOWS
+ * entrega bien (ack DEVICE).
  *
- * El cerebro de Tino es EXACTAMENTE el mismo (lib/responderBot.ts). Igual que
- * con Evolution, este adaptador solo define: cómo entra el mensaje (parsearWaha),
- * cómo se leen los ACKs (parsearAckWaha) y cómo sale la respuesta (enviarTextoWaha).
- * La orquestación vive en lib/inboundWaha.ts.
+ * El cerebro de Tino es EXACTAMENTE el mismo (lib/responderBot.ts). Este
+ * adaptador solo define: cómo entra el mensaje (parsearWaha), cómo se leen los
+ * ACKs (parsearAckWaha) y cómo sale la respuesta (enviarTextoWaha).
+ *
+ * IMPORTANTE — DIRECCIONAMIENTO LID (23-jul-2026): WhatsApp moderno + GOWS
+ * identifican al contacto por un "LID" (p.ej. 223815175028761@lid) en vez del
+ * número real. Hay que RESPONDER a la MISMA dirección de la que llegó el
+ * mensaje (jid completo, con @lid o @c.us). Forzar @c.us cuando el origen era
+ * @lid envía a un número inexistente → ERROR. Por eso guardamos el jid completo
+ * y respondemos a él tal cual.
  *
  * Config por entorno:
- *   WAHA_API_URL      base de la API (sin slash final), p.ej.
- *                     https://waha-production-003e.up.railway.app
+ *   WAHA_API_URL      base de la API (sin slash final)
  *   WAHA_API_KEY      clave global de WAHA (header `X-Api-Key`)
  *   WAHA_SESSION      nombre de la sesión (default "default")
  *   WAHA_INSTANCIA    nombre lógico que mapea al cliente vía
- *                     ed_clientes.waba_phone_id (default "impresora-color",
- *                     reutiliza el registro que ya existía con Evolution).
+ *                     ed_clientes.waba_phone_id (default "impresora-color").
  */
 
 const BASE = (process.env.WAHA_API_URL || "").replace(/\/+$/, "");
 const SESSION = process.env.WAHA_SESSION || "default";
-/** Sesión WAHA → instancia lógica (para no duplicar el registro del cliente). */
 const INSTANCIA = process.env.WAHA_INSTANCIA || "impresora-color";
 
 /** Mensaje entrante ya normalizado desde el webhook de WAHA. */
 export type EntranteWaha = {
-  instancia: string; // instancia lógica (mapea a cliente) — NO el session name
-  chatId: string; // número del otro extremo, solo dígitos
-  jid: string; // "from" completo de WAHA (56...@c.us)
+  instancia: string; // instancia lógica (mapea a cliente)
+  chatId: string; // solo dígitos del LID/número — clave estable en la BD
+  jid: string; // dirección COMPLETA de origen (223...@lid o 569...@c.us)
   texto: string;
-  nombre?: string; // notifyName / pushName, si viene
+  nombre?: string;
   fromMe: boolean;
-  waId: string | null; // id del mensaje → idempotencia y distinción de eco
+  waId: string | null; // id normalizado (GOWS) → idempotencia/eco/ack
 };
 
-/** Convierte un chatId de dígitos a formato WAHA (56...@c.us). */
-function aChatId(numero: string): string {
-  const limpio = numero.replace(/\D/g, "");
-  return `${limpio}@c.us`;
+/**
+ * Normaliza el id de un mensaje de WAHA a su parte GOWS estable.
+ * WAHA serializa como "true_<chat>_<GOWSID>" o "false_<chat>_<GOWSID>".
+ * Nos quedamos con <GOWSID> (lo que va después del último "_") para que el id
+ * del envío, el del eco y el del ack SIEMPRE calcen, sin importar el envoltorio.
+ */
+export function normalizeWaId(raw: unknown): string | null {
+  let s: string | null = null;
+  if (typeof raw === "string") s = raw;
+  else if (raw && typeof raw === "object") {
+    const o = raw as { _serialized?: string; id?: string };
+    s = o._serialized || o.id || null;
+  }
+  if (!s) return null;
+  const i = s.lastIndexOf("_");
+  return i >= 0 ? s.slice(i + 1) : s;
+}
+
+/**
+ * Formatea una dirección de destino para WAHA. Si ya trae sufijo (@lid, @c.us,
+ * @s.whatsapp.net) se respeta TAL CUAL (clave para responder a LIDs). Si son
+ * solo dígitos, se asume número y se agrega @c.us.
+ */
+function aDestino(x: string): string {
+  if (x.includes("@")) return x.replace("@s.whatsapp.net", "@c.us");
+  return `${x.replace(/\D/g, "")}@c.us`;
 }
 
 /** Delay humano proporcional al texto (1.5–6s con jitter). */
@@ -51,10 +76,7 @@ function delayHumano(texto: string): number {
   return Math.min(6000, Math.max(1500, base + jitter));
 }
 
-/**
- * Resuelve el cliente a partir de la instancia lógica (ed_clientes.waba_phone_id).
- * Reutiliza el mismo registro que usaba Evolution ("impresora-color").
- */
+/** Resuelve el cliente a partir de la instancia lógica. */
 export async function clientePorInstanciaWaha(
   instancia: string,
 ): Promise<string | null> {
@@ -68,27 +90,26 @@ export async function clientePorInstanciaWaha(
 
 /**
  * Envía un mensaje de texto por WAHA (endpoint /api/sendText).
- * Emula el tipeo humano: primero presencia "escribiendo…", luego el texto.
- * Devuelve el id del mensaje (para reconocer su eco y trackear su ACK).
+ * `destino` puede ser el jid completo (223...@lid) o un número; se respeta el
+ * sufijo para responder a LIDs. Emula tipeo humano y devuelve el id normalizado.
  */
 export async function enviarTextoWaha(
-  numero: string,
+  destino: string,
   texto: string,
 ): Promise<{ ok: boolean; waId?: string; error?: string }> {
   const key = process.env.WAHA_API_KEY;
   if (!key || !BASE) return { ok: false, error: "Falta WAHA_API_URL/WAHA_API_KEY" };
-  const chatId = aChatId(numero);
+  const chatId = aDestino(destino);
   const headers = { "Content-Type": "application/json", "X-Api-Key": key };
   try {
     // Presencia "escribiendo…" (best-effort; no bloquea el envío si falla).
-    const espera = delayHumano(texto);
     try {
       await fetch(`${BASE}/api/startTyping`, {
         method: "POST",
         headers,
         body: JSON.stringify({ session: SESSION, chatId }),
       });
-      await new Promise((r) => setTimeout(r, espera));
+      await new Promise((r) => setTimeout(r, delayHumano(texto)));
       await fetch(`${BASE}/api/stopTyping`, {
         method: "POST",
         headers,
@@ -107,12 +128,8 @@ export async function enviarTextoWaha(
       const t = await r.text();
       return { ok: false, error: `HTTP ${r.status}: ${t.slice(0, 200)}` };
     }
-    const j = (await r.json().catch(() => ({}))) as {
-      id?: string | { id?: string; _serialized?: string };
-    };
-    const waId =
-      typeof j.id === "string" ? j.id : j.id?._serialized || j.id?.id;
-    return { ok: true, waId: waId ?? undefined };
+    const j = (await r.json().catch(() => ({}))) as { id?: unknown };
+    return { ok: true, waId: normalizeWaId(j.id) ?? undefined };
   } catch (e) {
     return { ok: false, error: (e as Error).message };
   }
@@ -120,18 +137,15 @@ export async function enviarTextoWaha(
 
 /**
  * Extrae el mensaje de texto de un payload del webhook de WAHA (evento "message").
- * Devuelve null cuando no hay nada que procesar: evento distinto, grupo/estado,
- * o mensaje sin texto (media = fase posterior).
- *
- * Igual que en Evolution, NO se descartan los fromMe: pueden ser el eco de Tino
- * o un mensaje humano (toma de control). Se resuelve aguas abajo por el id.
+ * Devuelve null si no hay nada que procesar (otro evento, grupo/estado, sin texto).
+ * NO descarta fromMe (puede ser eco de Tino o mensaje humano; se resuelve por id).
  */
 export function parsearWaha(payload: unknown): EntranteWaha | null {
   const body = payload as {
     event?: string;
     session?: string;
     payload?: {
-      id?: string;
+      id?: unknown;
       from?: string;
       fromMe?: boolean;
       body?: string;
@@ -151,12 +165,12 @@ export function parsearWaha(payload: unknown): EntranteWaha | null {
 
   return {
     instancia: INSTANCIA,
-    chatId: from.replace(/@.*$/, ""),
-    jid: from,
+    chatId: from.replace(/@.*$/, ""), // dígitos del LID/número → clave BD estable
+    jid: from, // dirección COMPLETA → a ésta se responde
     texto,
     nombre: p.notifyName ?? p._data?.notifyName ?? p._data?.pushName ?? undefined,
     fromMe: p.fromMe === true,
-    waId: p.id ?? null,
+    waId: normalizeWaId(p.id),
   };
 }
 
@@ -171,18 +185,18 @@ export type AckWaha = {
 };
 
 /**
- * Mapea el ack numérico de WAHA/whatsmeow a nuestro estado.
- * WAHA: -1/0 ERROR, 1 PENDING, 2 SERVER, 3 DEVICE(entregado), 4 READ, 5 PLAYED.
- * (En GOWS ack=2 ya llega con ackName "DEVICE" = entregado; se cubre por nombre.)
+ * Mapea el ack de WAHA/whatsmeow a nuestro estado (por nombre o número).
+ * ERROR/-1/0, PENDING/1, SERVER/2, DEVICE(entregado)/3, READ/4, PLAYED/5.
  */
 export function parsearAckWaha(payload: unknown): AckWaha | null {
   const body = payload as {
     event?: string;
-    payload?: { id?: string; ack?: number; ackName?: string };
+    payload?: { id?: unknown; ack?: number; ackName?: string };
   };
   if (body?.event !== "message.ack") return null;
   const p = body?.payload ?? {};
-  if (!p.id) return null;
+  const waId = normalizeWaId(p.id);
+  if (!waId) return null;
 
   const nombre = (p.ackName || "").toUpperCase();
   const porNombre: Record<string, AckWaha["estado"]> = {
@@ -206,5 +220,5 @@ export function parsearAckWaha(payload: unknown): AckWaha | null {
     porNombre[nombre] ??
     (typeof p.ack === "number" ? porNumero[p.ack] : undefined);
   if (!estado) return null;
-  return { instancia: INSTANCIA, waId: p.id, estado };
+  return { instancia: INSTANCIA, waId, estado };
 }
