@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { db } from "@/lib/db";
 import { obtenerUsuarioPortal } from "@/lib/auth";
 import { configPorCliente, enviarTexto } from "@/lib/whatsapp";
+import { enviarTextoWaha, enviarMediaWaha } from "@/lib/waha";
 
 /**
  * Control del cliente sobre una conversación: pausar al asistente, tomar el
@@ -108,9 +109,13 @@ export async function responderComoHumano(formData: FormData): Promise<void> {
     .eq("chat_id", chatId)
     .is("atendida_en", null);
 
-  // Enviar por WhatsApp.
+  // Enviar por WhatsApp: Cloud API si el cliente la tiene configurada; si no,
+  // WAHA (Opción A). Antes solo intentaba Cloud API → para clientes en WAHA
+  // (como Impresora) el mensaje del humano quedaba guardado pero NUNCA se
+  // enviaba al cliente. Este fallback lo corrige.
   const cfg = await configPorCliente(usuario.clienteId);
   if (cfg) await enviarTexto(cfg, chatId, texto);
+  else await enviarTextoWaha(chatId, texto);
 
   // Guardar el mensaje del humano. No se pone 'canal' explícito: lo aporta el
   // default de la migración 210, y así este insert funciona aunque 210 no esté
@@ -123,6 +128,69 @@ export async function responderComoHumano(formData: FormData): Promise<void> {
   });
 
   revalidatePath("/conversaciones");
+}
+
+/**
+ * El humano envía un ARCHIVO al cliente desde el inbox (imagen o documento/PDF).
+ * Toma el control, lo envía por WAHA (sendImage/sendFile) y guarda el registro.
+ * Recibe el archivo como base64 (data) para no depender de storage externo.
+ * Límite defensivo de tamaño para no reventar el request serverless.
+ */
+export async function enviarArchivoComoHumano(formData: FormData): Promise<{ ok: boolean; error?: string }> {
+  const usuario = await obtenerUsuarioPortal();
+  if (!usuario) return { ok: false, error: "Sesión no válida" };
+
+  const empleadoId = String(formData.get("empleadoId") ?? "");
+  const chatId = String(formData.get("chatId") ?? "");
+  const filename = String(formData.get("filename") ?? "archivo");
+  const mimetype = String(formData.get("mimetype") ?? "application/octet-stream");
+  const data = String(formData.get("data") ?? ""); // base64 sin prefijo data:
+  const caption = String(formData.get("caption") ?? "").trim();
+  if (!empleadoId || !chatId || !data) return { ok: false, error: "Faltan datos" };
+
+  // Límite ~16MB en base64 (~12MB de archivo). WhatsApp de todos modos limita.
+  if (data.length > 16_000_000) return { ok: false, error: "Archivo muy grande (máx ~12MB)" };
+
+  const supa = db();
+
+  // Barrera de acceso.
+  const { data: empleado } = await supa
+    .from("ed_empleados")
+    .select("id")
+    .eq("id", empleadoId)
+    .eq("cliente_id", usuario.clienteId)
+    .maybeSingle();
+  if (!empleado) return { ok: false, error: "No encontrado" };
+
+  // Tomar el control (el bot calla) y cerrar escalación pendiente.
+  await supa
+    .from("ed_chat_estado")
+    .upsert(
+      { empleado_id: empleadoId, chat_id: chatId, modo: "humano", actualizado_en: new Date().toISOString() },
+      { onConflict: "empleado_id,chat_id" },
+    );
+  await supa
+    .from("ed_escalaciones")
+    .update({ atendida_en: new Date().toISOString() })
+    .eq("empleado_id", empleadoId)
+    .eq("chat_id", chatId)
+    .is("atendida_en", null);
+
+  // Enviar por WAHA.
+  const envio = await enviarMediaWaha(chatId, { data, mimetype, filename, caption });
+
+  // Registrar en el historial (texto descriptivo para que se vea en el inbox).
+  const esImg = mimetype.startsWith("image/");
+  const etiqueta = esImg ? "📷 Imagen" : "📎 Archivo";
+  await supa.from("ed_mensajes").insert({
+    empleado_id: empleadoId,
+    chat_id: chatId,
+    rol: "humano",
+    texto: caption ? `${etiqueta}: ${caption}` : `${etiqueta} enviado (${filename})`,
+  });
+
+  revalidatePath("/conversaciones");
+  return envio.ok ? { ok: true } : { ok: false, error: envio.error };
 }
 
 /**

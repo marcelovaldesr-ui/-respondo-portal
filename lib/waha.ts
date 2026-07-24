@@ -350,3 +350,47 @@ export function parsearAckWaha(payload: unknown): AckWaha | null {
   if (!estado) return null;
   return { instancia: INSTANCIA, waId, estado };
 }
+
+// ============================================================================
+// ENVÍO DE MEDIA (imagen / documento) — para respuestas del humano desde el portal
+// ============================================================================
+
+/**
+ * Envía un archivo por WAHA. Usa /api/sendImage para imágenes y /api/sendFile
+ * para el resto (PDF, etc). `destino` puede ser jid completo o número.
+ * `data` es base64 SIN el prefijo data: (solo el contenido).
+ */
+export async function enviarMediaWaha(
+  destino: string,
+  media: { data: string; mimetype: string; filename: string; caption?: string },
+): Promise<{ ok: boolean; waId?: string; error?: string }> {
+  const key = process.env.WAHA_API_KEY;
+  if (!key || !BASE) return { ok: false, error: "Falta WAHA_API_URL/WAHA_API_KEY" };
+  const chatId = aDestino(destino);
+  const esImagen = media.mimetype.startsWith("image/");
+  const endpoint = esImagen ? "/api/sendImage" : "/api/sendFile";
+  try {
+    const r = await fetch(`${BASE}${endpoint}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-Api-Key": key },
+      body: JSON.stringify({
+        session: SESSION,
+        chatId,
+        file: {
+          mimetype: media.mimetype,
+          filename: media.filename,
+          data: media.data,
+        },
+        caption: media.caption || undefined,
+      }),
+    });
+    if (!r.ok) {
+      const t = await r.text();
+      return { ok: false, error: `HTTP ${r.status}: ${t.slice(0, 200)}` };
+    }
+    const j = (await r.json().catch(() => ({}))) as { id?: unknown };
+    return { ok: true, waId: normalizeWaId(j.id) ?? undefined };
+  } catch (e) {
+    return { ok: false, error: (e as Error).message };
+  }
+}
