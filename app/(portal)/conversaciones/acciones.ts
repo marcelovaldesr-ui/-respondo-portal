@@ -109,13 +109,18 @@ export async function responderComoHumano(formData: FormData): Promise<void> {
     .eq("chat_id", chatId)
     .is("atendida_en", null);
 
-  // Enviar por WhatsApp: Cloud API si el cliente la tiene configurada; si no,
-  // WAHA (Opción A). Antes solo intentaba Cloud API → para clientes en WAHA
-  // (como Impresora) el mensaje del humano quedaba guardado pero NUNCA se
-  // enviaba al cliente. Este fallback lo corrige.
+  // Enviar por WhatsApp, eligiendo el transporte SEGÚN EL CLIENTE (no global):
+  //  - Si el cliente tiene Cloud API configurada (waba_token) → Meta oficial.
+  //  - Si no → WAHA (no oficial), que es el caso de Impresora Color.
+  // Así un cliente de Meta NUNCA sale por la sesión WAHA de otro, y viceversa.
+  // (Antes SIEMPRE usaba Cloud API → el texto de la persona no llegaba cuando el
+  // cliente está en WAHA, porque configPorCliente devolvía null y no se enviaba.)
   const cfg = await configPorCliente(usuario.clienteId);
-  if (cfg) await enviarTexto(cfg, chatId, texto);
-  else await enviarTextoWaha(chatId, texto);
+  if (cfg) {
+    await enviarTexto(cfg, chatId, texto);
+  } else {
+    await enviarTextoWaha(chatId, texto);
+  }
 
   // Guardar el mensaje del humano. No se pone 'canal' explícito: lo aporta el
   // default de la migración 210, y así este insert funciona aunque 210 no esté
@@ -131,12 +136,18 @@ export async function responderComoHumano(formData: FormData): Promise<void> {
 }
 
 /**
- * El humano envía un ARCHIVO al cliente desde el inbox (imagen o documento/PDF).
- * Toma el control, lo envía por WAHA (sendImage/sendFile) y guarda el registro.
- * Recibe el archivo como base64 (data) para no depender de storage externo.
- * Límite defensivo de tamaño para no reventar el request serverless.
+ * La persona del negocio envía una IMAGEN o un PDF al cliente desde el inbox.
+ * Igual que responderComoHumano: toma el control (el bot calla), manda por WAHA y
+ * deja registro en el historial. `data` llega en base64 (sin prefijo) desde el
+ * navegador. Devuelve {ok} para que el compositor muestre el error si lo hay.
+ *
+ * Límite: 12MB de base64 (~9MB de archivo). El tope real lo fija también
+ * `serverActions.bodySizeLimit` en next.config.mjs; si falta, un archivo grande
+ * falla con "Body exceeded limit" antes de llegar acá.
  */
-export async function enviarArchivoComoHumano(formData: FormData): Promise<{ ok: boolean; error?: string }> {
+export async function enviarArchivoComoHumano(
+  formData: FormData,
+): Promise<{ ok: boolean; error?: string }> {
   const usuario = await obtenerUsuarioPortal();
   if (!usuario) return { ok: false, error: "Sesión no válida" };
 
@@ -144,25 +155,24 @@ export async function enviarArchivoComoHumano(formData: FormData): Promise<{ ok:
   const chatId = String(formData.get("chatId") ?? "");
   const filename = String(formData.get("filename") ?? "archivo");
   const mimetype = String(formData.get("mimetype") ?? "application/octet-stream");
-  const data = String(formData.get("data") ?? ""); // base64 sin prefijo data:
+  const data = String(formData.get("data") ?? "");
   const caption = String(formData.get("caption") ?? "").trim();
-  if (!empleadoId || !chatId || !data) return { ok: false, error: "Faltan datos" };
-
-  // Límite ~16MB en base64 (~12MB de archivo). WhatsApp de todos modos limita.
-  if (data.length > 16_000_000) return { ok: false, error: "Archivo muy grande (máx ~12MB)" };
+  if (!empleadoId || !chatId || !data) {
+    return { ok: false, error: "Faltan datos del archivo" };
+  }
 
   const supa = db();
 
-  // Barrera de acceso.
+  // Barrera de acceso: el empleado tiene que ser de este cliente.
   const { data: empleado } = await supa
     .from("ed_empleados")
     .select("id")
     .eq("id", empleadoId)
     .eq("cliente_id", usuario.clienteId)
     .maybeSingle();
-  if (!empleado) return { ok: false, error: "No encontrado" };
+  if (!empleado) return { ok: false, error: "Sin acceso a este chat" };
 
-  // Tomar el control (el bot calla) y cerrar escalación pendiente.
+  // Tomar el control: el bot no responde mientras la persona está en el chat.
   await supa
     .from("ed_chat_estado")
     .upsert(
@@ -176,21 +186,41 @@ export async function enviarArchivoComoHumano(formData: FormData): Promise<{ ok:
     .eq("chat_id", chatId)
     .is("atendida_en", null);
 
-  // Enviar por WAHA.
-  const envio = await enviarMediaWaha(chatId, { data, mimetype, filename, caption });
+  // Transporte por cliente (mismo criterio que el texto). El envío de media por
+  // Cloud API todavía no está implementado; los clientes de Meta reciben un aviso
+  // claro en vez de un envío silencioso por el canal equivocado.
+  const cfg = await configPorCliente(usuario.clienteId);
+  if (cfg) {
+    return {
+      ok: false,
+      error:
+        "Por ahora los archivos solo se pueden enviar en los números conectados por WAHA. En Meta (Cloud API) llega en una próxima etapa.",
+    };
+  }
 
-  // Registrar en el historial (texto descriptivo para que se vea en el inbox).
-  const esImg = mimetype.startsWith("image/");
-  const etiqueta = esImg ? "📷 Imagen" : "📎 Archivo";
+  // Enviar por WAHA (imagen inline o documento según el mimetype).
+  const r = await enviarMediaWaha(chatId, {
+    data,
+    mimetype,
+    filename,
+    caption: caption || undefined,
+  });
+  if (!r.ok) return { ok: false, error: r.error || "No se pudo enviar el archivo" };
+
+  // Registro en el historial. El portal todavía no renderiza media en la línea de
+  // tiempo, así que se guarda un texto descriptivo (y el caption si lo hubo).
+  const etiqueta = mimetype.startsWith("image/")
+    ? "📷 Imagen enviada"
+    : `📎 Archivo enviado: ${filename}`;
   await supa.from("ed_mensajes").insert({
     empleado_id: empleadoId,
     chat_id: chatId,
     rol: "humano",
-    texto: caption ? `${etiqueta}: ${caption}` : `${etiqueta} enviado (${filename})`,
+    texto: caption ? `${etiqueta} — ${caption}` : etiqueta,
   });
 
   revalidatePath("/conversaciones");
-  return envio.ok ? { ok: true } : { ok: false, error: envio.error };
+  return { ok: true };
 }
 
 /**

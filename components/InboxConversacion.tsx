@@ -4,6 +4,7 @@ import { useEffect, useRef, useState, useTransition, useCallback } from "react";
 import {
   responderComoHumano,
   cambiarModo,
+  enviarArchivoComoHumano,
 } from "@/app/(portal)/conversaciones/acciones";
 
 type Msg = { rol: string; texto: string; creadoEn: string };
@@ -53,7 +54,10 @@ export default function InboxConversacion({
   const [texto, setTexto] = useState("");
   const [pendiente, startTransition] = useTransition();
   const [cambiando, setCambiando] = useState(false);
+  const [subiendo, setSubiendo] = useState(false);
+  const [aviso, setAviso] = useState<string | null>(null);
   const areaRef = useRef<HTMLTextAreaElement>(null);
+  const fileRef = useRef<HTMLInputElement>(null);
   const finRef = useRef<HTMLDivElement>(null);
 
   const bajar = () => finRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -119,6 +123,57 @@ export default function InboxConversacion({
       }
     });
   }
+
+  /** Lee un File como base64 (sin el prefijo data:) para mandarlo al server. */
+  function leerBase64(file: File): Promise<string> {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => {
+        const res = String(reader.result || "");
+        const coma = res.indexOf(",");
+        resolve(coma >= 0 ? res.slice(coma + 1) : res);
+      };
+      reader.onerror = () => reject(new Error("No se pudo leer el archivo"));
+      reader.readAsDataURL(file);
+    });
+  }
+
+  async function onArchivo(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (file) e.target.value = ""; // permitir re-elegir el mismo archivo
+    if (!file || subiendo) return;
+    if (file.size > 12 * 1024 * 1024) {
+      setAviso("El archivo supera los 12MB. Prueba con uno más liviano.");
+      return;
+    }
+    setAviso(null);
+    setSubiendo(true);
+    // Al adjuntar, la persona toma el control y Tino se calla (igual que al escribir).
+    setModo("humano");
+    try {
+      const data = await leerBase64(file);
+      const fd = new FormData();
+      fd.set("empleadoId", empleadoId);
+      fd.set("chatId", chatId);
+      fd.set("filename", file.name);
+      fd.set("mimetype", file.type || "application/octet-stream");
+      fd.set("data", data);
+      if (texto.trim()) fd.set("caption", texto.trim()); // el texto va como pie de foto
+      const r = await enviarArchivoComoHumano(fd);
+      if (r.ok) {
+        setTexto("");
+        refrescar();
+      } else {
+        setAviso(r.error || "No se pudo enviar el archivo.");
+      }
+    } catch {
+      setAviso("No se pudo leer el archivo.");
+    } finally {
+      setSubiendo(false);
+    }
+  }
+
+  const ocupado = pendiente || subiendo;
 
   return (
     <div className="mt-4 flex flex-col">
@@ -207,6 +262,15 @@ export default function InboxConversacion({
           </div>
         )}
 
+        {aviso && (
+          <div
+            className="mb-2 rounded-lg px-3 py-2 text-[12.5px]"
+            style={{ background: "var(--alerta-suave)", color: "var(--alerta)" }}
+          >
+            {aviso}
+          </div>
+        )}
+
         {/* Respuestas rápidas de Cecilia */}
         <div className="mb-2 flex flex-wrap gap-1.5">
           {RAPIDAS.map((r) => (
@@ -223,6 +287,26 @@ export default function InboxConversacion({
         </div>
 
         <div className="flex items-end gap-2">
+          {/* Adjuntar imagen o PDF */}
+          <input
+            ref={fileRef}
+            type="file"
+            accept="image/*,application/pdf"
+            onChange={onArchivo}
+            className="hidden"
+          />
+          <button
+            type="button"
+            onClick={() => fileRef.current?.click()}
+            disabled={ocupado}
+            title="Adjuntar imagen o PDF"
+            aria-label="Adjuntar archivo"
+            className="btn-suave shrink-0 disabled:opacity-50"
+            style={{ padding: "0 12px", height: 42 }}
+          >
+            {subiendo ? "…" : "📎"}
+          </button>
+
           <textarea
             ref={areaRef}
             value={texto}
@@ -234,12 +318,12 @@ export default function InboxConversacion({
               }
             }}
             rows={2}
-            placeholder="Escríbele al cliente…  (Enter envía · Shift+Enter salta línea)"
+            placeholder="Escríbele al cliente…  (Enter envía · 📎 adjunta imagen/PDF)"
             className="campo flex-1 resize-none"
           />
           <button
             onClick={enviar}
-            disabled={pendiente || !texto.trim()}
+            disabled={ocupado || !texto.trim()}
             className="btn-primario shrink-0 disabled:opacity-50"
           >
             {pendiente ? "Enviando…" : "Enviar"}
