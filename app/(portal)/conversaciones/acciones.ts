@@ -23,6 +23,35 @@ import { enviarTextoWaha, enviarMediaWaha } from "@/lib/waha";
 const MODOS = ["bot", "humano", "pausado"] as const;
 type Modo = (typeof MODOS)[number];
 
+/**
+ * Decide el transporte de SALIDA de un cliente para las respuestas del inbox.
+ *
+ * Regla: un cliente sale por Meta (Cloud API) SOLO si está marcado explícitamente
+ * como transporte 'cloud'. Por defecto — y mientras dure la migración — todo sale
+ * por WAHA. Tener credenciales de Meta cargadas NO alcanza: durante la migración
+ * un cliente puede tener Meta ya preparado pero seguir ATENDIENDO por WAHA (es el
+ * caso de Impresora Color). Basarse solo en "¿tiene token de Meta?" mandaba las
+ * respuestas por el canal equivocado.
+ *
+ * Devuelve la config de Cloud API si corresponde usar Meta; null → usar WAHA.
+ *
+ * Defensivo: si la columna ed_clientes.transporte todavía no existe, la consulta
+ * falla y se asume 'waha' (el comportamiento correcto hoy), así que esto funciona
+ * aunque no se haya aplicado la migración.
+ */
+async function transporteCloud(
+  clienteId: string,
+): Promise<import("@/lib/whatsapp").ConfigWhatsApp | null> {
+  const { data, error } = await db()
+    .from("ed_clientes")
+    .select("transporte")
+    .eq("id", clienteId)
+    .maybeSingle();
+  const transporte = error ? "waha" : ((data?.transporte as string | null) ?? "waha");
+  if (transporte !== "cloud") return null;
+  return configPorCliente(clienteId);
+}
+
 export async function cambiarModo(formData: FormData) {
   const usuario = await obtenerUsuarioPortal();
   if (!usuario) throw new Error("Sesión no válida");
@@ -109,13 +138,12 @@ export async function responderComoHumano(formData: FormData): Promise<void> {
     .eq("chat_id", chatId)
     .is("atendida_en", null);
 
-  // Enviar por WhatsApp, eligiendo el transporte SEGÚN EL CLIENTE (no global):
-  //  - Si el cliente tiene Cloud API configurada (waba_token) → Meta oficial.
-  //  - Si no → WAHA (no oficial), que es el caso de Impresora Color.
-  // Así un cliente de Meta NUNCA sale por la sesión WAHA de otro, y viceversa.
+  // Enviar por WhatsApp, eligiendo el transporte SEGÚN EL CLIENTE:
+  //  - Cliente marcado como 'cloud' → Meta oficial.
+  //  - Resto (por defecto) → WAHA, que es el caso de Impresora Color.
   // (Antes SIEMPRE usaba Cloud API → el texto de la persona no llegaba cuando el
-  // cliente está en WAHA, porque configPorCliente devolvía null y no se enviaba.)
-  const cfg = await configPorCliente(usuario.clienteId);
+  // cliente está en WAHA.)
+  const cfg = await transporteCloud(usuario.clienteId);
   if (cfg) {
     await enviarTexto(cfg, chatId, texto);
   } else {
@@ -187,9 +215,9 @@ export async function enviarArchivoComoHumano(
     .is("atendida_en", null);
 
   // Transporte por cliente (mismo criterio que el texto). El envío de media por
-  // Cloud API todavía no está implementado; los clientes de Meta reciben un aviso
-  // claro en vez de un envío silencioso por el canal equivocado.
-  const cfg = await configPorCliente(usuario.clienteId);
+  // Cloud API todavía no está implementado; los clientes marcados como 'cloud'
+  // reciben un aviso claro en vez de un envío silencioso por el canal equivocado.
+  const cfg = await transporteCloud(usuario.clienteId);
   if (cfg) {
     return {
       ok: false,
