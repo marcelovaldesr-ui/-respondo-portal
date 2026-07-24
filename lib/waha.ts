@@ -39,6 +39,7 @@ export type EntranteWaha = {
   nombre?: string;
   fromMe: boolean;
   waId: string | null; // id normalizado (GOWS) → idempotencia/eco/ack
+  esMedia?: boolean; // true si el mensaje era imagen/audio/doc (texto sintético)
 };
 
 /**
@@ -69,11 +70,12 @@ function aDestino(x: string): string {
   return `${x.replace(/\D/g, "")}@c.us`;
 }
 
-/** Delay humano proporcional al texto (1.5–6s con jitter). */
+/** Delay humano proporcional al texto (1–3s con jitter). Acotado para no sumar
+ *  demasiada latencia al webhook (ya hay una ventana de debounce aguas arriba). */
 function delayHumano(texto: string): number {
-  const base = 1500 + texto.length * 35;
-  const jitter = Math.floor(Math.random() * 1200);
-  return Math.min(6000, Math.max(1500, base + jitter));
+  const base = 1000 + texto.length * 20;
+  const jitter = Math.floor(Math.random() * 800);
+  return Math.min(3000, Math.max(1000, base + jitter));
 }
 
 /** Cache LID→número real (por invocación; evita repetir la consulta). */
@@ -221,8 +223,10 @@ export function parsearWaha(payload: unknown): EntranteWaha | null {
       from?: string;
       fromMe?: boolean;
       body?: string;
+      type?: string;
+      hasMedia?: boolean;
       notifyName?: string;
-      _data?: { notifyName?: string; pushName?: string };
+      _data?: { notifyName?: string; pushName?: string; Message?: unknown };
     };
   };
 
@@ -232,8 +236,19 @@ export function parsearWaha(payload: unknown): EntranteWaha | null {
   if (!from || from.endsWith("@g.us") || from.endsWith("@broadcast") || from.includes("status@"))
     return null;
 
-  const texto = (p.body ?? "").trim();
-  if (!texto) return null;
+  let texto = (p.body ?? "").trim();
+  let esMedia = false;
+
+  // MEDIA (fix estabilización 24-jul): si no hay texto pero es un mensaje real
+  // (imagen/audio/documento/etc), NO lo descartamos: generamos un texto
+  // sintético con el tipo para que el cerebro de Tino responda con gracia
+  // (acuse recibo / pedir descripción / escalar) en vez de quedarse mudo.
+  if (!texto) {
+    const tipo = detectarTipoMedia(p);
+    if (!tipo) return null; // no es media ni texto → nada que procesar
+    esMedia = true;
+    texto = MARCADOR_MEDIA[tipo] ?? "[El cliente envió un archivo adjunto]";
+  }
 
   return {
     instancia: INSTANCIA,
@@ -243,7 +258,48 @@ export function parsearWaha(payload: unknown): EntranteWaha | null {
     nombre: p.notifyName ?? p._data?.notifyName ?? p._data?.pushName ?? undefined,
     fromMe: p.fromMe === true,
     waId: normalizeWaId(p.id),
+    esMedia,
   };
+}
+
+/** Texto sintético por tipo de media (lo lee el cerebro de Tino). */
+const MARCADOR_MEDIA: Record<string, string> = {
+  image: "[El cliente envió una IMAGEN 🖼️ (posible diseño/referencia)]",
+  video: "[El cliente envió un VIDEO 🎬]",
+  audio: "[El cliente envió un mensaje de VOZ 🎤]",
+  ptt: "[El cliente envió un mensaje de VOZ 🎤]",
+  document: "[El cliente envió un DOCUMENTO/PDF 📄]",
+  sticker: "[El cliente envió un sticker]",
+  location: "[El cliente compartió una UBICACIÓN 📍]",
+  contact: "[El cliente compartió un CONTACTO]",
+};
+
+/**
+ * Detecta el tipo de un mensaje sin texto. Robusto entre formas de WAHA/GOWS:
+ * usa payload.type, hasMedia, o las claves del RawMessage de whatsmeow.
+ * Devuelve null si no parece un mensaje de media manejable.
+ */
+function detectarTipoMedia(p: {
+  type?: string;
+  hasMedia?: boolean;
+  _data?: { Message?: unknown };
+}): string | null {
+  const t = (p.type || "").toLowerCase();
+  if (t && MARCADOR_MEDIA[t]) return t;
+  // whatsmeow: _data.Message.{imageMessage,audioMessage,documentMessage,...}
+  const msg = (p._data?.Message ?? {}) as Record<string, unknown>;
+  const claves = Object.keys(msg).map((k) => k.toLowerCase());
+  if (claves.some((k) => k.includes("image"))) return "image";
+  if (claves.some((k) => k.includes("video"))) return "video";
+  if (claves.some((k) => k.includes("audio") || k.includes("ptt"))) return "audio";
+  if (claves.some((k) => k.includes("document"))) return "document";
+  if (claves.some((k) => k.includes("sticker"))) return "sticker";
+  if (claves.some((k) => k.includes("location"))) return "location";
+  if (claves.some((k) => k.includes("contact"))) return "contact";
+  // Señal genérica de media sin tipo claro.
+  if (p.hasMedia === true || (t && t !== "chat" && t !== "text" && t !== "notification_template"))
+    return "document";
+  return null;
 }
 
 // ============================================================================

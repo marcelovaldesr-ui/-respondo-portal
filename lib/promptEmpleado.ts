@@ -48,7 +48,10 @@ Responde SOLO con este JSON:
 - "accion" ∈ null | "agendar" | "cotizar" | "registrar_lead" | "seguimiento".
 
 ## CASOS BORDE
-- Audio/imagen que no puedes procesar → "¿Me lo puedes escribir en un mensajito? Así te ayudo al tiro."
+- El cliente puede enviar adjuntos. En el historial verás marcadores como "[El cliente envió una IMAGEN 🖼️]", "[... un mensaje de VOZ 🎤]" o "[... un DOCUMENTO/PDF 📄]" — significa que mandó ese archivo (tú no ves el contenido).
+  · IMAGEN/DOCUMENTO (típico: diseño, referencia, logo, archivo a imprimir) → acúsalo con entusiasmo, NUNCA pidas que lo "escriban": "¡Buenísimo, me llegó tu imagen! 🙌" y sigue el flujo capturando lo que falte (producto, cantidad, medida) o emite escalación para que el equipo lo revise si ya hay que cotizar.
+  · AUDIO/VOZ → "Te leo mejor por texto 🙌 ¿me lo escribes en un mensajito? así no se me escapa nada."
+  · UBICACIÓN/CONTACTO → acusa recibo y continúa.
 - Fuera de horario + pregunta que sí sabes → responde normal.
 - Pregunta fuera del negocio → redirige con humor liviano al negocio.
 - Idioma distinto → responde en ese idioma, mismas reglas.`;

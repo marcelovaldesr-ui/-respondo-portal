@@ -141,6 +141,28 @@ export async function manejarEntranteWaha(
 
   await tocarVentanaEntrante(empleadoId, chatId, supa);
 
+  // DEBOUNCE (fix estabilización 24-jul): agrupar mensajes rápidos seguidos.
+  // Esperamos una ventana corta; si en ese lapso el cliente manda un mensaje
+  // MÁS NUEVO, esta invocación se retira y deja que la del último responda —
+  // su historial ya incluirá todos. Evita respuestas solapadas y desordenadas.
+  const DEBOUNCE_MS = 6000;
+  if (m.waId) {
+    await new Promise((r) => setTimeout(r, DEBOUNCE_MS));
+    const { data: ultimo } = await supa
+      .from("ed_mensajes")
+      .select("wa_message_id")
+      .eq("empleado_id", empleadoId)
+      .eq("chat_id", chatId)
+      .eq("rol", "cliente")
+      .order("creado_en", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (ultimo?.wa_message_id && ultimo.wa_message_id !== m.waId) {
+      // Llegó un mensaje más nuevo: que responda esa invocación, no ésta.
+      return { accion: "debounce_superseded" };
+    }
+  }
+
   const enviar =
     opts?.enviar ??
     (async (_chatId: string, texto: string) => {
