@@ -25,7 +25,9 @@ export default function FormularioLogin({ error }: { error?: string }) {
       const supa = supabaseNavegador();
       const { error: err } = await supa.auth.signInWithOtp({
         email: email.trim().toLowerCase(),
-        options: { emailRedirectTo: `${window.location.origin}/auth/callback` },
+        // Flujo implicit → /auth/entrar (página cliente). Funciona desde
+        // cualquier dispositivo, no solo el que pidió el enlace.
+        options: { emailRedirectTo: `${window.location.origin}/auth/entrar` },
       });
       if (err) throw err;
       setEstado("enviado");
@@ -54,8 +56,8 @@ export default function FormularioLogin({ error }: { error?: string }) {
         <div className="titular text-[19px] font-bold">Revisa tu correo</div>
         <p className="mt-2 text-[14.5px]" style={{ color: "var(--muted)" }}>
           Enviamos un enlace de acceso a{" "}
-          <strong style={{ color: "var(--tinta)" }}>{email}</strong>. Ábrelo desde este
-          mismo dispositivo y entrarás directo, sin contraseña.
+          <strong style={{ color: "var(--tinta)" }}>{email}</strong>. Ábrelo desde
+          cualquier dispositivo y entrarás directo, sin contraseña.
         </p>
         <button
           onClick={() => {

@@ -9,6 +9,13 @@ import { createBrowserClient } from "@supabase/ssr";
  * del cliente y Next falla al compilar. No volver a juntarlos.
  *
  * Usa la llave publicable (anon), que es pública por diseño.
+ *
+ * FLUJO IMPLICIT (24-jul-2026): usamos flowType "implicit" en vez de PKCE. El
+ * PKCE guarda una "llave" en el navegador que PIDE el enlace, así que abrir el
+ * enlace en otro navegador/celular (o en el navegador interno del correo) fallaba
+ * con "PKCE code verifier not found". Con implicit, el enlace trae la sesión en
+ * el fragmento de la URL y funciona desde CUALQUIER dispositivo. La sesión se
+ * procesa en /auth/entrar (página cliente) y se guarda en cookies para el SSR.
  */
 export function supabaseNavegador() {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
@@ -18,5 +25,12 @@ export function supabaseNavegador() {
       "Faltan NEXT_PUBLIC_SUPABASE_URL o NEXT_PUBLIC_SUPABASE_ANON_KEY",
     );
   }
-  return createBrowserClient(url, key);
+  return createBrowserClient(url, key, {
+    auth: {
+      flowType: "implicit",
+      detectSessionInUrl: true,
+      persistSession: true,
+      autoRefreshToken: true,
+    },
+  });
 }

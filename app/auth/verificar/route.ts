@@ -3,19 +3,23 @@ import { NextResponse, type NextRequest } from "next/server";
 import type { EmailOtpType } from "@supabase/supabase-js";
 
 /**
- * Valida un enlace de acceso por `token_hash` (flujo del lado del servidor).
- * Sirve para enlaces generados desde el admin de Supabase, sin pasar por correo
- * — útil cuando el envío de mails está bloqueado por límite de tasa.
+ * Valida un enlace de acceso por `token_hash` (flujo del lado del SERVIDOR, sin
+ * PKCE). Es el flujo recomendado para SSR: funciona desde CUALQUIER dispositivo
+ * o app de correo, porque no depende de una "llave" guardada en el navegador que
+ * pidió el enlace (eso es lo que rompía el login desde el celular).
+ *
+ * Robustez: el `type` del enlace puede venir como "magiclink", "email" o
+ * "recovery" según cómo se generó. Probamos el que llega y, si falla, hacemos
+ * fallback entre magiclink/email — así un desajuste de plantilla no bloquea el
+ * acceso.
  *
  * IMPORTANTE — patrón de cookies: la cookie de sesión se escribe SOBRE el objeto
- * `respuesta` que se va a devolver, no con cookies() de next/headers. Al redirigir
- * se crea una respuesta nueva y las cookies escritas por fuera pueden perderse,
- * dejando al usuario "autenticado" pero sin sesión: vuelve al login sin explicación.
+ * `respuesta` que se devuelve, no con cookies() de next/headers.
  */
 export async function GET(request: NextRequest) {
   const { searchParams, origin } = new URL(request.url);
   const token_hash = searchParams.get("token_hash");
-  const type = (searchParams.get("type") ?? "magiclink") as EmailOtpType;
+  const typeUrl = (searchParams.get("type") ?? "magiclink") as EmailOtpType;
   const destino = searchParams.get("volver") ?? "/inicio";
 
   if (!token_hash) {
@@ -38,15 +42,21 @@ export async function GET(request: NextRequest) {
     },
   );
 
-  const { error } = await supabase.auth.verifyOtp({ token_hash, type });
+  // Orden de intento: el tipo del enlace primero, luego los alternativos.
+  const tipos: EmailOtpType[] = Array.from(
+    new Set<EmailOtpType>([typeUrl, "magiclink", "email"]),
+  );
 
-  if (error) {
-    // Se propaga el motivo real: sin esto, un enlace vencido se veía como
-    // "no pasó nada" y era imposible diagnosticar.
-    return NextResponse.redirect(
-      `${origin}/login?error=${encodeURIComponent(error.message)}`,
-    );
+  let ultimoError = "";
+  for (const type of tipos) {
+    const { error } = await supabase.auth.verifyOtp({ token_hash, type });
+    if (!error) return respuesta; // sesión creada
+    ultimoError = error.message;
+    // Si el token ya se consumió o expiró, no tiene sentido probar otros tipos.
+    if (/expired|invalid|not found|consumed|already/i.test(error.message)) break;
   }
 
-  return respuesta;
+  return NextResponse.redirect(
+    `${origin}/login?error=${encodeURIComponent(ultimoError || "enlace-invalido")}`,
+  );
 }
