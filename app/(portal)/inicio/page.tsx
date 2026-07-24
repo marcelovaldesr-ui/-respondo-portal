@@ -156,7 +156,10 @@ export default async function Inicio() {
           </svg>
           <div>
             <strong>
-              {pendientes} conversación{pendientes > 1 ? "es" : ""} te está esperando
+              {pendientes}{" "}
+              {pendientes > 1
+                ? "conversaciones te están esperando"
+                : "conversación te está esperando"}
             </strong>
             <div className="text-[14px]" style={{ color: "var(--muted)" }}>
               Tu asistente las derivó porque necesitan a una persona.

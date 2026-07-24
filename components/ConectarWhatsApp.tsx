@@ -103,10 +103,14 @@ export default function ConectarWhatsApp() {
   // Cargar el SDK de Facebook una sola vez.
   useEffect(() => {
     if (!APP_ID || !CONFIG_ID) {
+      // Detalle técnico solo a consola; al usuario un mensaje entendible.
+      console.warn(
+        "[ConectarWhatsApp] faltan NEXT_PUBLIC_WHATSAPP_APP_ID / NEXT_PUBLIC_WHATSAPP_CONFIG_ID",
+      );
       setEstado({
         fase: "error",
         detalle:
-          "Falta configurar NEXT_PUBLIC_WHATSAPP_APP_ID / NEXT_PUBLIC_WHATSAPP_CONFIG_ID.",
+          "La conexión de WhatsApp se está terminando de habilitar. Escríbenos y lo activamos para tu número.",
       });
       return;
     }

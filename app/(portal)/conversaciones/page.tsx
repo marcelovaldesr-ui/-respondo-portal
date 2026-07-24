@@ -172,7 +172,7 @@ export default async function Conversaciones({
         </div>
       )}
 
-      <div className="mt-5 grid gap-5 lg:grid-cols-[380px_1fr]">
+      <div className="mt-5 grid gap-5 lg:grid-cols-[380px_minmax(0,1fr)]">
         {/* Lista — en móvil se oculta cuando hay una conversación abierta,
             porque los dos paneles lado a lado no caben en un teléfono. */}
         <div
@@ -261,7 +261,7 @@ export default async function Conversaciones({
             sentido en escritorio, donde convive con la lista. */}
         <div
           className={
-            "tarjeta-plana p-4 sm:p-5 " + (seleccion ? "block" : "hidden lg:block")
+            "tarjeta-plana min-w-0 p-4 sm:p-5 " + (seleccion ? "block" : "hidden lg:block")
           }
           style={{ background: "var(--fondo)" }}
         >
