@@ -1,26 +1,24 @@
 import { NextResponse, type NextRequest } from "next/server";
-import { db } from "@/lib/db";
-import {
-  parsearWebhook,
-  configPorPhoneId,
-  tinoDe,
-  type ConfigWhatsApp,
-  type EntranteNormalizado,
-} from "@/lib/whatsapp";
-import { responderSiBot } from "@/lib/responderBot";
+import { manejarEntranteMeta } from "@/lib/inboundMeta";
 
 export const dynamic = "force-dynamic";
+// Debounce (6s) + Gemini (~5-10s) + envío: holgura para no cortar a mitad.
+export const maxDuration = 60;
 
 /**
- * Webhook de la WhatsApp Cloud API.
+ * Webhook de la WhatsApp Cloud API OFICIAL (Opción B).
  *
  * GET  → verificación inicial de Meta (responde el hub.challenge).
- * POST → mensajes entrantes.
+ * POST → eventos: messages (cliente), statuses (ACKs) y message_echoes
+ *        (Coexistencia: mensajes salientes desde la app del negocio).
  *
- * REGLA DE META: hay que responder 200 rápido. Si el procesamiento demora,
- * Meta reintenta y duplica. Por eso acá se guarda el entrante y se responde;
- * la respuesta del bot (Gemini) se cablea en la Fase 2, idealmente disparada
- * sin bloquear este 200.
+ * La ruta es DELGADA (igual que webhook-waha): toda la orquestación —
+ * idempotencia ante reintentos de Meta, toma de control humana, tracking de
+ * entregas, debounce y respuesta del cerebro — vive en lib/inboundMeta.ts.
+ *
+ * NOTA sobre el 200: Meta reintenta si el 200 tarda. Los reintentos son
+ * INOFENSIVOS porque el entrante queda guardado con su wamid apenas llega
+ * (idempotencia por índice único). Con más volumen, mover a una cola.
  */
 
 // --- GET: verificación del webhook ---
@@ -36,7 +34,7 @@ export async function GET(request: NextRequest) {
   return new NextResponse("Forbidden", { status: 403 });
 }
 
-// --- POST: mensajes entrantes ---
+// --- POST: eventos entrantes ---
 export async function POST(request: NextRequest) {
   let payload: unknown;
   try {
@@ -45,93 +43,12 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ ok: true }); // 200 igual, para que Meta no reintente
   }
 
-  const entrantes = parsearWebhook(payload);
-
-  // Procesar sin romper el 200: si algo falla, se loguea y se sigue.
-  for (const m of entrantes) {
-    try {
-      await guardarEntrante(m);
-    } catch (e) {
-      console.error("[whatsapp webhook] error guardando entrante:", (e as Error).message);
-    }
+  try {
+    const resultados = await manejarEntranteMeta(payload);
+    return NextResponse.json({ ok: true, resultados });
+  } catch (e) {
+    // Nunca romper el 200: si algo falla, se loguea y Meta no reintenta en loop.
+    console.error("[meta webhook] error:", (e as Error).message);
+    return NextResponse.json({ ok: true });
   }
-
-  return NextResponse.json({ ok: true });
-}
-
-/**
- * Guarda un mensaje entrante: resuelve cliente por phone_number_id, ubica al
- * Tino de ese cliente, registra el mensaje y el contacto, y actualiza la marca
- * de la ventana de 24h.
- */
-async function guardarEntrante(m: EntranteNormalizado) {
-  const cfg = await configPorPhoneId(m.phoneNumberId);
-  if (!cfg) {
-    console.warn(`[whatsapp webhook] phone_number_id sin cliente: ${m.phoneNumberId}`);
-    return;
-  }
-  const empleadoId = await tinoDe(cfg.clienteId);
-  if (!empleadoId) {
-    console.warn(`[whatsapp webhook] cliente ${cfg.clienteId} sin Tino activo`);
-    return;
-  }
-
-  const supa = db();
-  const ahora = new Date().toISOString();
-
-  await supa.from("ed_mensajes").insert({
-    empleado_id: empleadoId,
-    chat_id: m.de,
-    rol: "cliente",
-    texto: m.texto,
-  });
-
-  // Contacto (upsert por cliente_id+chat_id): guarda el nombre de perfil.
-  if (m.nombre) {
-    await supa
-      .from("ed_contactos")
-      .upsert(
-        {
-          cliente_id: cfg.clienteId,
-          chat_id: m.de,
-          nombre: m.nombre,
-          telefono: `+${m.de}`,
-          etiqueta: "lead",
-        },
-        { onConflict: "cliente_id,chat_id" },
-      );
-  }
-
-  // Marca de ventana de 24h: el cliente acaba de escribir. NO se pisa el modo
-  // (bot/humano/pausado) si ya existe — solo se actualiza la marca de tiempo.
-  const { data: estado } = await supa
-    .from("ed_chat_estado")
-    .select("modo")
-    .eq("empleado_id", empleadoId)
-    .eq("chat_id", m.de)
-    .maybeSingle();
-
-  if (estado) {
-    await supa
-      .from("ed_chat_estado")
-      .update({ ultimo_entrante_en: ahora })
-      .eq("empleado_id", empleadoId)
-      .eq("chat_id", m.de);
-  } else {
-    await supa.from("ed_chat_estado").insert({
-      empleado_id: empleadoId,
-      chat_id: m.de,
-      modo: "bot",
-      ultimo_entrante_en: ahora,
-    });
-  }
-
-  // Fase 2: si el chat está en modo bot, el asistente responde. Se procesa acá
-  // (Gemini ~5s). Para producción de alto volumen conviene moverlo a una cola.
-  await responderSiBot({
-    clienteId: cfg.clienteId,
-    empleadoId,
-    chatId: m.de,
-    cfg,
-  });
 }

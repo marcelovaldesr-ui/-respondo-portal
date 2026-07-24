@@ -11,6 +11,9 @@ const Icono = {
     <path d="M12 3v3m0 12v3M5.6 5.6l2.1 2.1m8.6 8.6 2.1 2.1M3 12h3m12 0h3M5.6 18.4l2.1-2.1m8.6-8.6 2.1-2.1M12 8.5A3.5 3.5 0 1 0 12 15.5 3.5 3.5 0 1 0 12 8.5z" />
   ),
   info: <path d="M5 4h11l3 3v13a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1zM8 11h8M8 15h5" />,
+  enchufe: (
+    <path d="M9 7V3M15 7V3M7 7h10v4a5 5 0 0 1-5 5 5 5 0 0 1-5-5zM12 16v5" />
+  ),
 };
 
 const ITEMS = [
@@ -18,6 +21,7 @@ const ITEMS = [
   { href: "/conversaciones", label: "Conversaciones", icono: Icono.chat },
   { href: "/probar", label: "Probar ahora", icono: Icono.probar },
   { href: "/informacion", label: "Información", icono: Icono.info },
+  { href: "/whatsapp", label: "WhatsApp", icono: Icono.enchufe },
 ];
 
 /**
