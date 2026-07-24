@@ -17,12 +17,16 @@ const hora = (iso: string) => {
   }
 };
 
-/** Respuestas rápidas de Cecilia (atajos suyos, no IA). Editable a futuro. */
-const RAPIDAS = [
+/**
+ * Respuestas rápidas por defecto (atajos de la persona, no IA). Son NEUTRALES:
+ * sirven para cualquier negocio. Cada cliente puede pasar las suyas por la prop
+ * `rapidas` (p. ej. con su dirección de retiro), sin tocar el código.
+ */
+const RAPIDAS_DEFECTO = [
   "¡Hola! ¿En qué te puedo ayudar?",
   "Te confirmo y te aviso a la brevedad 👍",
-  "¿Me pasas producto, cantidad y medidas?",
-  "Los pedidos se retiran en Arauco 1060, Chillán.",
+  "¿Me cuentas un poco más para ayudarte mejor?",
+  "¡Gracias por escribirnos! 🙌",
 ];
 
 /**
@@ -40,6 +44,7 @@ export default function InboxConversacion({
   ventana,
   mensajesIniciales,
   modoInicial,
+  rapidas,
 }: {
   empleadoId: string;
   chatId: string;
@@ -48,7 +53,10 @@ export default function InboxConversacion({
   ventana: "abierta" | "cerrada" | "desconocida";
   mensajesIniciales: Msg[];
   modoInicial: string;
+  /** Respuestas rápidas del negocio; si no vienen, se usan las neutrales. */
+  rapidas?: string[];
 }) {
+  const RAPIDAS = rapidas && rapidas.length > 0 ? rapidas : RAPIDAS_DEFECTO;
   const [mensajes, setMensajes] = useState<Msg[]>(mensajesIniciales);
   const [modo, setModo] = useState(modoInicial);
   const [texto, setTexto] = useState("");
