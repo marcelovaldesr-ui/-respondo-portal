@@ -1,13 +1,25 @@
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 
 /**
- * Límite de error del portal. Reemplaza el "Application error" en blanco de
- * Next por un mensaje amable con recarga. Cubre, entre otros, el caso típico
- * tras un deploy nuevo en Vercel: una pestaña abierta con chunks viejos lanza
- * una excepción de cliente al navegar; una recarga completa lo resuelve.
+ * Límite de error del portal.
+ *
+ * El caso más común es un error de "chunk" tras un deploy nuevo: una pestaña
+ * abierta con la versión anterior pide un archivo JS que ya cambió. Para eso NO
+ * mostramos un cartel (queda feo, y peor si estás grabando): detectamos ese tipo
+ * de error y **recargamos la página solos**, una sola vez (guardia anti-loop en
+ * sessionStorage). El usuario ve, como mucho, un parpadeo de "Actualizando…".
+ *
+ * Para cualquier otro error mostramos el mensaje amable con recarga manual.
  */
+function esErrorDeChunk(error: Error): boolean {
+  const txt = `${error?.name ?? ""} ${error?.message ?? ""}`;
+  return /ChunkLoadError|Loading chunk|dynamically imported module|Importing a module script failed|Failed to fetch dynamically|error loading dynamically/i.test(
+    txt,
+  );
+}
+
 export default function ErrorPortal({
   error,
   reset,
@@ -15,9 +27,38 @@ export default function ErrorPortal({
   error: Error & { digest?: string };
   reset: () => void;
 }) {
+  // Decidir en el primer render si vamos a auto-recargar (para no parpadear el cartel).
+  const [autorecarga] = useState(() => {
+    if (typeof window === "undefined") return false;
+    if (!esErrorDeChunk(error)) return false;
+    // Guardia anti-loop: no recargar más de una vez cada 12s.
+    const ahora = Date.now();
+    const ultima = Number(sessionStorage.getItem("portal_chunk_reload") || 0);
+    if (ahora - ultima < 12000) return false; // ya se recargó recién → mostrar cartel
+    sessionStorage.setItem("portal_chunk_reload", String(ahora));
+    return true;
+  });
+
   useEffect(() => {
     console.error("[portal error boundary]", error);
-  }, [error]);
+    if (autorecarga) {
+      // Recarga completa: trae la última versión y resuelve el desajuste de chunks.
+      window.location.reload();
+    }
+  }, [error, autorecarga]);
+
+  if (autorecarga) {
+    return (
+      <main
+        className="flex min-h-[70vh] items-center justify-center px-6"
+        style={{ background: "var(--fondo)" }}
+      >
+        <div className="text-center" style={{ color: "var(--muted)" }}>
+          <div className="titular text-[16px] font-bold">Actualizando…</div>
+        </div>
+      </main>
+    );
+  }
 
   return (
     <main
