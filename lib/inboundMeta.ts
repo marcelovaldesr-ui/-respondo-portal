@@ -147,7 +147,7 @@ export async function manejarEntranteMeta(
       continue;
     }
 
-    await guardarMensaje(supa, {
+    const guardado = await guardarMensaje(supa, {
       empleadoId,
       chatId,
       rol: "cliente",
@@ -155,6 +155,13 @@ export async function manejarEntranteMeta(
       waId: m.waId,
       canal: "whatsapp",
     });
+    // ANTI-DOBLE-RESPUESTA: si el índice único rechazó el insert, es una entrega
+    // duplicada del mismo mensaje (Meta reintenta el webhook). La que sí guardó
+    // responde; ésta se retira para no generar una segunda respuesta.
+    if (guardado.dup) {
+      resultados.push({ accion: "duplicado_carrera" });
+      continue;
+    }
 
     if (m.nombre) {
       await supa.from("ed_contactos").upsert(

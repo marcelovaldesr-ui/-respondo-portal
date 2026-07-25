@@ -117,7 +117,7 @@ export async function manejarEntranteWaha(
   }
 
   // 5) Mensaje del cliente.
-  await guardarMensaje(supa, {
+  const guardado = await guardarMensaje(supa, {
     empleadoId,
     chatId,
     rol: "cliente",
@@ -125,6 +125,14 @@ export async function manejarEntranteWaha(
     waId: m.waId,
     canal: "whatsapp",
   });
+  // ANTI-DOBLE-RESPUESTA (fix 24-jul): si el índice único (empleado_id,
+  // wa_message_id) rechazó el insert, este webhook es una ENTREGA DUPLICADA del
+  // mismo mensaje (WAHA a veces reenvía el evento, o el webhook quedó suscrito
+  // dos veces). La entrega que SÍ guardó el mensaje es la que responde; ésta se
+  // retira, para no disparar una segunda respuesta de Gemini. Cubre la carrera
+  // que la idempotencia por lectura (yaProcesado) no alcanza cuando ambas
+  // entregas llegan casi simultáneas.
+  if (guardado.dup) return { accion: "duplicado_carrera" };
 
   // Contacto: guardar con el número real + nombre visible (best-effort).
   const nombre = m.nombre ?? (await nombreDeContacto(m.jid));
