@@ -221,6 +221,7 @@ export function parsearWaha(payload: unknown): EntranteWaha | null {
       from?: string;
       fromMe?: boolean;
       body?: string;
+      timestamp?: number;
       notifyName?: string;
       _data?: { notifyName?: string; pushName?: string };
     };
@@ -234,6 +235,16 @@ export function parsearWaha(payload: unknown): EntranteWaha | null {
 
   const texto = (p.body ?? "").trim();
   if (!texto) return null;
+
+  // GUARDIA DE FRESCURA (clave al conectar un número REAL con historial):
+  // al vincular por QR, WhatsApp puede re-entregar mensajes RECIENTES del
+  // historial como si fueran nuevos. Sin esto, Tino respondería en masa a
+  // conversaciones viejas. Un mensaje "de verdad" llega en segundos; si trae
+  // timestamp y tiene más de 3 minutos, se ignora por completo.
+  if (typeof p.timestamp === "number" && p.timestamp > 0) {
+    const edadSeg = Date.now() / 1000 - p.timestamp;
+    if (edadSeg > 180) return null;
+  }
 
   return {
     instancia: INSTANCIA,

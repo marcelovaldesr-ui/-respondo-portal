@@ -137,11 +137,27 @@ export default async function Conversaciones({
   const metaSel = seleccion ? metaEmpleado(seleccion.empleadoRol) : null;
   const colorSel = metaSel?.color ?? "var(--indigo)";
   const esperando = nEspera;
+
+  // URLs que COMBINAN filtros: cambiar uno no borra los demás (clave con
+  // muchos chats: puedes buscar "rodrigo" Y filtrar "te esperan" a la vez).
+  const urlCon = (cambios: Record<string, string | undefined>) => {
+    const p = new URLSearchParams();
+    const merged: Record<string, string | undefined> = { q, estado, etiqueta: filtro, ...cambios };
+    for (const [k, v] of Object.entries(merged)) if (v) p.set(k, v);
+    const s = p.toString();
+    return s ? `/conversaciones?${s}` : "/conversaciones";
+  };
+
   // Chip de estado: helper para el estilo activo/inactivo.
   const chipEstado = (val: string | undefined, label: string, activoBg: string) => {
     const activo = estado === val;
-    const href = val ? `/conversaciones?estado=${val}` : "/conversaciones";
-    return { label, href, style: activo ? { background: activoBg, color: "#fff" } : { background: "#F1F2F7", color: "var(--muted)" } };
+    return {
+      label,
+      href: urlCon({ estado: val }),
+      style: activo
+        ? { background: activoBg, color: "#fff" }
+        : { background: "#F1F2F7", color: "var(--muted)" },
+    };
   };
   const chips = [
     chipEstado(undefined, `Todas (${todas.length})`, "var(--indigo)"),
@@ -168,8 +184,11 @@ export default async function Conversaciones({
         )}
       </p>
 
-      {/* Buscador: por nombre o número (clave con muchos chats) */}
+      {/* Buscador: por nombre o número (clave con muchos chats).
+          Los hidden conservan estado/etiqueta para que buscar no borre los filtros. */}
       <form action="/conversaciones" method="get" className="mt-5 flex gap-2">
+        {estado && <input type="hidden" name="estado" value={estado} />}
+        {filtro && <input type="hidden" name="etiqueta" value={filtro} />}
         <input
           type="search"
           name="q"
@@ -182,7 +201,7 @@ export default async function Conversaciones({
         </button>
         {q && (
           <Link
-            href="/conversaciones"
+            href={urlCon({ q: undefined })}
             className="btn-suave flex shrink-0 items-center px-3 text-[13px]"
           >
             Limpiar
@@ -208,7 +227,7 @@ export default async function Conversaciones({
       {etiquetasBarra.length > 0 && (
         <div className="mt-5 flex flex-wrap items-center gap-2">
           <Link
-            href="/conversaciones"
+            href={urlCon({ etiqueta: undefined })}
             className="rounded-full px-3 py-1.5 text-[12.5px] font-bold"
             style={
               filtro
@@ -224,7 +243,7 @@ export default async function Conversaciones({
             return (
               <Link
                 key={valor}
-                href={`/conversaciones?etiqueta=${valor}`}
+                href={urlCon({ etiqueta: valor })}
                 className="rounded-full px-3 py-1.5 text-[12.5px] font-bold"
                 style={
                   activa
