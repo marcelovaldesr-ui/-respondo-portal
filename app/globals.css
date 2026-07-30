@@ -197,6 +197,22 @@ h3,
     color: var(--indigo);
   }
 
+  /* Esqueleto de carga con brillo (percepción de velocidad) */
+  .esqueleto {
+    @apply rounded-lg;
+    background: linear-gradient(90deg, #eceef4 25%, #f5f6fa 50%, #eceef4 75%);
+    background-size: 200% 100%;
+    animation: brillo 1.4s ease-in-out infinite;
+  }
+  @keyframes brillo {
+    0% {
+      background-position: 200% 0;
+    }
+    100% {
+      background-position: -200% 0;
+    }
+  }
+
   /* Avatar circular del empleado */
   .avatar {
     @apply shrink-0 rounded-full object-cover;
