@@ -1,0 +1,8 @@
+{
+  "name": "respondo-watchdog-waha",
+  "version": "1.0.0",
+  "description": "Watchdog de la sesión WAHA (motor GOWS) de Tino — vigila 24/7 y alerta por Telegram",
+  "main": "index.js",
+  "scripts": { "start": "node index.js" },
+  "engines": { "node": ">=18" }
+}
