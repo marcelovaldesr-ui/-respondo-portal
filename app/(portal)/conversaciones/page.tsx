@@ -11,6 +11,7 @@ import {
 import { cambiarModo } from "./acciones";
 import InboxConversacion from "@/components/InboxConversacion";
 import EtiquetasEditor from "@/components/EtiquetasEditor";
+import RefrescarLista from "@/components/RefrescarLista";
 import { metaEtiqueta } from "@/lib/etiquetas";
 
 export const dynamic = "force-dynamic";
@@ -168,6 +169,8 @@ export default async function Conversaciones({
 
   return (
     <main className="px-5 py-7 sm:px-8 lg:px-10 lg:py-10">
+      {/* La lista se actualiza sola cada 25s (el chat abierto ya lo hacía cada 4s) */}
+      <RefrescarLista />
       <div className="eyebrow">Bandeja</div>
       <h1 className="mt-1.5 text-[26px] font-extrabold leading-tight lg:text-[32px]">
         Conversaciones
