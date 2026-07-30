@@ -25,10 +25,10 @@ const ITEMS = [
 ];
 
 /**
- * En escritorio es una barra lateral; bajo 1024px se convierte en una barra
- * superior con la navegación en fila. Sin cajón desplegable a propósito: un
- * menú hamburguesa necesita estado y se rompe de formas raras — con 4 ítems,
- * una fila que se desplaza es más simple y no falla.
+ * Navegación premium en riel oscuro (patrón Linear/Notion/Slack): el marco
+ * oscuro hace que el contenido blanco se lea como "el producto" y el portal
+ * gane jerarquía. En escritorio es barra lateral; bajo 1024px, barra superior
+ * con la navegación en fila (misma lógica de siempre, solo cambia la piel).
  */
 export default function Sidebar({
   clienteNombre,
@@ -43,8 +43,8 @@ export default function Sidebar({
 
   return (
     <aside
-      className="flex shrink-0 flex-col border-b bg-white px-4 py-3 lg:min-h-screen lg:w-[252px] lg:border-b-0 lg:border-r lg:py-5"
-      style={{ borderColor: "var(--borde)" }}
+      className="flex shrink-0 flex-col px-4 py-3 lg:min-h-screen lg:w-[252px] lg:py-5"
+      style={{ background: "var(--nav-bg)" }}
     >
       {/* Marca + salida rápida en móvil */}
       <div className="flex items-center justify-between gap-3">
@@ -52,12 +52,12 @@ export default function Sidebar({
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img src="/brand/isotipo.svg" alt="" width={34} height={34} className="shrink-0" />
           <div className="leading-tight">
-            <div className="titular text-[18px] font-extrabold tracking-tight">
+            <div className="titular text-[18px] font-extrabold tracking-tight text-white">
               Respondo
             </div>
             <div
               className="text-[10.5px] font-bold uppercase"
-              style={{ color: "var(--muted-2)", letterSpacing: "0.1em" }}
+              style={{ color: "#6b7394", letterSpacing: "0.1em" }}
             >
               Portal del cliente
             </div>
@@ -66,12 +66,12 @@ export default function Sidebar({
 
         {/* En móvil el negocio va aquí, a la derecha, para no gastar una fila */}
         <div className="text-right lg:hidden">
-          <div className="truncate text-[14px] font-bold">{clienteNombre}</div>
+          <div className="truncate text-[14px] font-bold text-white">{clienteNombre}</div>
           <form action="/auth/salir" method="post">
             <button
               type="submit"
               className="text-[12px] font-semibold underline"
-              style={{ color: "var(--muted-2)" }}
+              style={{ color: "var(--nav-texto)" }}
             >
               Salir
             </button>
@@ -79,14 +79,20 @@ export default function Sidebar({
         </div>
       </div>
 
-      {/* Negocio (solo escritorio) */}
+      {/* Negocio (solo escritorio) — con punto de actividad en vivo */}
       <div
         className="mt-5 hidden rounded-xl px-3 py-3 lg:block"
-        style={{ background: "var(--fondo)" }}
+        style={{ background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.07)" }}
       >
-        <div className="truncate text-[15px] font-bold">{clienteNombre}</div>
+        <div className="flex items-center gap-2">
+          <span className="punto-vivo" aria-hidden="true" />
+          <div className="truncate text-[15px] font-bold text-white">{clienteNombre}</div>
+        </div>
         {clienteRubro && (
-          <div className="truncate text-[12px] capitalize" style={{ color: "var(--muted)" }}>
+          <div
+            className="mt-0.5 truncate pl-4 text-[12px] capitalize"
+            style={{ color: "var(--nav-texto)" }}
+          >
             {clienteRubro}
           </div>
         )}
@@ -100,11 +106,24 @@ export default function Sidebar({
             <Link
               key={it.href}
               href={it.href}
-              className={
-                "flex shrink-0 items-center gap-2 whitespace-nowrap rounded-xl px-3 py-2.5 text-[14.5px] font-semibold transition lg:gap-3 lg:text-[15px] " +
-                (activo ? "text-white" : "hover:bg-[#F3F4F9]")
+              className="flex shrink-0 items-center gap-2 whitespace-nowrap rounded-xl px-3 py-2.5 text-[14.5px] font-semibold transition-all duration-150 lg:gap-3 lg:text-[15px]"
+              style={
+                activo
+                  ? {
+                      background: "var(--indigo)",
+                      color: "var(--nav-texto-activo)",
+                      boxShadow: "var(--glow-indigo)",
+                    }
+                  : { color: "var(--nav-texto)" }
               }
-              style={activo ? { background: "var(--indigo)" } : { color: "var(--tinta)" }}
+              onMouseEnter={(e) => {
+                if (!activo) e.currentTarget.style.background = "var(--nav-hover)";
+                if (!activo) e.currentTarget.style.color = "#e6e8f4";
+              }}
+              onMouseLeave={(e) => {
+                if (!activo) e.currentTarget.style.background = "transparent";
+                if (!activo) e.currentTarget.style.color = "var(--nav-texto)";
+              }}
             >
               <svg
                 width="19"
@@ -115,7 +134,7 @@ export default function Sidebar({
                 strokeWidth="1.7"
                 strokeLinecap="round"
                 strokeLinejoin="round"
-                className={activo ? "opacity-95" : "opacity-55"}
+                className={activo ? "opacity-95" : "opacity-60"}
               >
                 {it.icono}
               </svg>
@@ -127,12 +146,12 @@ export default function Sidebar({
 
       {/* Pie (solo escritorio) */}
       <div
-        className="mt-auto hidden border-t pt-4 lg:block"
-        style={{ borderColor: "var(--borde)" }}
+        className="mt-auto hidden pt-4 lg:block"
+        style={{ borderTop: "1px solid rgba(255,255,255,0.08)" }}
       >
         <div
           className="truncate px-1 text-[12px]"
-          style={{ color: "var(--muted-2)" }}
+          style={{ color: "#6b7394" }}
           title={email}
         >
           {email}
@@ -140,8 +159,8 @@ export default function Sidebar({
         <form action="/auth/salir" method="post">
           <button
             type="submit"
-            className="mt-1.5 px-1 text-[13px] font-semibold transition hover:underline"
-            style={{ color: "var(--muted)" }}
+            className="mt-1.5 px-1 text-[13px] font-semibold transition hover:text-white"
+            style={{ color: "var(--nav-texto)" }}
           >
             Cerrar sesión
           </button>

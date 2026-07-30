@@ -33,6 +33,13 @@
   --r-input: 12px;
   --sombra: 0 1px 2px rgba(15, 23, 42, 0.04), 0 10px 30px -18px rgba(15, 23, 42, 0.25);
   --sombra-alta: 0 1px 2px rgba(15, 23, 42, 0.05), 0 18px 40px -22px rgba(15, 23, 42, 0.35);
+
+  /* Tokens premium */
+  --nav-bg: linear-gradient(180deg, #12142e 0%, #0d0f24 100%);
+  --nav-texto: #a7adc9;
+  --nav-texto-activo: #ffffff;
+  --nav-hover: rgba(255, 255, 255, 0.06);
+  --glow-indigo: 0 10px 26px -10px rgba(79, 70, 229, 0.65);
 }
 
 * {
@@ -55,6 +62,22 @@ h3,
 .titular {
   font-family: Montserrat, ui-sans-serif, system-ui, sans-serif;
   letter-spacing: -0.02em;
+  font-variant-numeric: tabular-nums; /* métricas alineadas, look de dashboard pro */
+}
+
+/* Selección de texto con tinte de marca (detalle Stripe/Linear) */
+::selection {
+  background: rgba(79, 70, 229, 0.16);
+}
+
+/* Anillo de foco accesible y consistente en TODO el portal (tab navigation) */
+:focus-visible {
+  outline: 2px solid var(--indigo);
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+.campo:focus-visible {
+  outline: none; /* el campo ya tiene su propio anillo */
 }
 
 @layer components {
@@ -77,28 +100,51 @@ h3,
     color: var(--muted-2);
   }
 
-  /* Botones */
+  /* Botones — con profundidad, brillo y estado de presión (detalle premium) */
   .btn {
-    @apply inline-flex items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-[15px] font-bold transition;
+    @apply inline-flex items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-[15px] font-bold;
+    transition:
+      transform 0.15s ease,
+      box-shadow 0.2s ease,
+      filter 0.15s ease,
+      background 0.15s ease,
+      border-color 0.15s ease;
+  }
+  .btn:active {
+    transform: translateY(1px) scale(0.99);
   }
   .btn-primario {
     @apply btn text-white;
-    background: var(--indigo);
+    background: linear-gradient(180deg, #5a51f0 0%, #4f46e5 100%);
+    box-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, 0.18),
+      0 1px 2px rgba(15, 23, 42, 0.12),
+      var(--glow-indigo);
   }
   .btn-primario:hover {
-    filter: brightness(1.07);
+    filter: brightness(1.06);
+    transform: translateY(-1px);
+    box-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, 0.18),
+      0 2px 4px rgba(15, 23, 42, 0.12),
+      0 14px 32px -10px rgba(79, 70, 229, 0.7);
   }
   .btn-primario:disabled {
     opacity: 0.55;
+    transform: none;
+    box-shadow: none;
   }
   .btn-suave {
     @apply btn border bg-white;
     border-color: var(--borde);
     color: var(--tinta);
+    box-shadow: 0 1px 2px rgba(15, 23, 42, 0.05);
   }
   .btn-suave:hover {
     border-color: var(--borde-fuerte);
     background: #fbfbfe;
+    transform: translateY(-1px);
+    box-shadow: 0 3px 8px -2px rgba(15, 23, 42, 0.12);
   }
 
   /* Campo de texto */
@@ -111,9 +157,29 @@ h3,
     box-shadow: 0 0 0 4px var(--indigo-suave);
   }
 
-  /* Píldoras */
+  /* Píldoras — con anillo interior sutil para que se lean nítidas */
   .pildora {
     @apply inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-bold;
+    box-shadow: inset 0 0 0 1px rgba(15, 23, 42, 0.05);
+  }
+
+  /* Punto de estado "en vivo" con pulso (para conexión/actividad) */
+  .punto-vivo {
+    @apply inline-block h-2 w-2 shrink-0 rounded-full;
+    background: #34d399;
+    box-shadow: 0 0 0 0 rgba(52, 211, 153, 0.55);
+    animation: pulso-vivo 2.2s ease-out infinite;
+  }
+  @keyframes pulso-vivo {
+    0% {
+      box-shadow: 0 0 0 0 rgba(52, 211, 153, 0.55);
+    }
+    70% {
+      box-shadow: 0 0 0 6px rgba(52, 211, 153, 0);
+    }
+    100% {
+      box-shadow: 0 0 0 0 rgba(52, 211, 153, 0);
+    }
   }
   .pildora-alerta {
     @apply pildora;
