@@ -31,12 +31,32 @@ export default function Entrar() {
       if (session) ir();
     });
 
+    // PROCESO EXPLÍCITO DEL ENLACE (fix 30-jul): si el usuario tenía una sesión
+    // VIEJA expirada en cookies, el cliente intenta refrescarla con un token
+    // muerto ANTES de procesar el hash del enlace nuevo — y el flujo se traba
+    // ("No pudimos validar el enlace" con un enlace perfectamente bueno).
+    // Solución: leer el token del hash y hacer setSession directo, sin competir
+    // con la recuperación automática.
+    (async () => {
+      try {
+        const hash = new URLSearchParams(window.location.hash.replace(/^#/, ""));
+        const access_token = hash.get("access_token");
+        const refresh_token = hash.get("refresh_token");
+        if (access_token && refresh_token) {
+          const { data, error } = await supa.auth.setSession({ access_token, refresh_token });
+          if (data?.session && !error) ir();
+        }
+      } catch {
+        /* caen las redes de seguridad de abajo */
+      }
+    })();
+
     // Chequeo inmediato por si la sesión ya se procesó al instanciar el cliente.
     supa.auth.getSession().then(({ data }) => {
       if (data.session) ir();
     });
 
-    // Red de seguridad: si en 6s no hubo sesión, mostrar error con salida.
+    // Red de seguridad: si en 12s no hubo sesión, mostrar error con salida.
     const t = setTimeout(async () => {
       const { data } = await supa.auth.getSession();
       if (data.session) ir();
@@ -44,7 +64,7 @@ export default function Entrar() {
         hecho = true;
         setEstado("error");
       }
-    }, 6000);
+    }, 12000);
 
     return () => {
       sub.subscription.unsubscribe();
