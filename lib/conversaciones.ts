@@ -18,6 +18,7 @@ export type ItemConversacion = {
   contacto: string;
   ultimoMensaje: string;
   ultimoEn: string;
+  ultimoRol: string;
   mensajes: number;
   modo: string;
   esperandoHumano: boolean;
@@ -106,7 +107,7 @@ export async function listarConversaciones(
       .select("empleado_id, chat_id, rol, texto, creado_en")
       .in("empleado_id", ids)
       .order("creado_en", { ascending: false })
-      .limit(2000),
+      .limit(4000),
     supa
       .from("ed_contactos")
       .select("chat_id, nombre, etiqueta")
@@ -151,6 +152,7 @@ export async function listarConversaciones(
       contacto: nombrePorChat.get(m.chat_id as string) ?? `+${m.chat_id}`,
       ultimoMensaje: m.texto as string,
       ultimoEn: m.creado_en as string,
+      ultimoRol: m.rol as string,
       mensajes: 1,
       modo: modoPorChat.get(clave) ?? "bot",
       esperandoHumano: pendientes.has(clave),

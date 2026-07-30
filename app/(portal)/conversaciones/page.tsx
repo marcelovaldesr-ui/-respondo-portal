@@ -94,16 +94,35 @@ function Burbuja({
 export default async function Conversaciones({
   searchParams,
 }: {
-  searchParams: { emp?: string; chat?: string; etiqueta?: string };
+  searchParams: { emp?: string; chat?: string; etiqueta?: string; q?: string; estado?: string };
 }) {
   const usuario = await exigirUsuarioPortal();
   const todas = await listarConversaciones(usuario.clienteId);
 
-  // Filtro por etiqueta (si viene en la URL).
+  // Filtros: etiqueta, estado (triage) y búsqueda (?q=).
   const filtro = searchParams.etiqueta;
-  const lista = filtro
-    ? todas.filter((c) => c.etiquetas.includes(filtro))
-    : todas;
+  const estado = searchParams.estado;
+  const q = (searchParams.q ?? "").trim();
+  const qDigits = q.replace(/\D/g, "");
+  let lista = todas;
+  if (filtro) lista = lista.filter((c) => c.etiquetas.includes(filtro));
+  if (estado === "espera") lista = lista.filter((c) => c.esperandoHumano);
+  else if (estado === "humano") lista = lista.filter((c) => c.modo === "humano" && !c.esperandoHumano);
+  else if (estado === "bot") lista = lista.filter((c) => c.modo === "bot" && !c.esperandoHumano);
+  if (q) {
+    const ql = q.toLowerCase();
+    lista = lista.filter(
+      (c) =>
+        c.contacto.toLowerCase().includes(ql) ||
+        (!!qDigits && c.chatId.includes(qDigits)) ||
+        c.ultimoMensaje.toLowerCase().includes(ql),
+    );
+  }
+
+  // Conteos para los chips de estado (siempre sobre el total, no sobre el filtro).
+  const nEspera = todas.filter((c) => c.esperandoHumano).length;
+  const nHumano = todas.filter((c) => c.modo === "humano" && !c.esperandoHumano).length;
+  const nBot = todas.filter((c) => c.modo === "bot" && !c.esperandoHumano).length;
 
   // Etiquetas presentes en las conversaciones, con su conteo, para la barra.
   const conteo = new Map<string, number>();
@@ -117,7 +136,19 @@ export default async function Conversaciones({
 
   const metaSel = seleccion ? metaEmpleado(seleccion.empleadoRol) : null;
   const colorSel = metaSel?.color ?? "var(--indigo)";
-  const esperando = todas.filter((c) => c.esperandoHumano).length;
+  const esperando = nEspera;
+  // Chip de estado: helper para el estilo activo/inactivo.
+  const chipEstado = (val: string | undefined, label: string, activoBg: string) => {
+    const activo = estado === val;
+    const href = val ? `/conversaciones?estado=${val}` : "/conversaciones";
+    return { label, href, style: activo ? { background: activoBg, color: "#fff" } : { background: "#F1F2F7", color: "var(--muted)" } };
+  };
+  const chips = [
+    chipEstado(undefined, `Todas (${todas.length})`, "var(--indigo)"),
+    chipEstado("espera", `Te esperan (${nEspera})`, "var(--alerta)"),
+    chipEstado("humano", `Con tu equipo (${nHumano})`, "#334155"),
+    chipEstado("bot", `Atiende Tino (${nBot})`, "var(--indigo)"),
+  ];
 
   return (
     <main className="px-5 py-7 sm:px-8 lg:px-10 lg:py-10">
@@ -136,6 +167,42 @@ export default async function Conversaciones({
           </>
         )}
       </p>
+
+      {/* Buscador: por nombre o número (clave con muchos chats) */}
+      <form action="/conversaciones" method="get" className="mt-5 flex gap-2">
+        <input
+          type="search"
+          name="q"
+          defaultValue={q}
+          placeholder="Buscar por nombre o número…"
+          className="campo w-full max-w-[420px]"
+        />
+        <button type="submit" className="btn-suave shrink-0 px-4 text-[14px]">
+          Buscar
+        </button>
+        {q && (
+          <Link
+            href="/conversaciones"
+            className="btn-suave flex shrink-0 items-center px-3 text-[13px]"
+          >
+            Limpiar
+          </Link>
+        )}
+      </form>
+
+      {/* Chips de estado (triage rápido) */}
+      <div className="mt-3 flex flex-wrap items-center gap-2">
+        {chips.map((ch) => (
+          <Link
+            key={ch.label}
+            href={ch.href}
+            className="rounded-full px-3 py-1.5 text-[12.5px] font-bold"
+            style={ch.style}
+          >
+            {ch.label}
+          </Link>
+        ))}
+      </div>
 
       {/* Barra de filtro por etiqueta */}
       {etiquetasBarra.length > 0 && (
@@ -183,7 +250,9 @@ export default async function Conversaciones({
         >
           {lista.length === 0 && (
             <div className="p-10 text-center" style={{ color: "var(--muted)" }}>
-              Todavía no hay conversaciones registradas.
+              {q || estado || filtro
+                ? "No hay conversaciones que coincidan con la búsqueda o el filtro."
+                : "Todavía no hay conversaciones registradas."}
             </div>
           )}
           {lista.map((c) => {
@@ -227,7 +296,10 @@ export default async function Conversaciones({
                       {c.empleadoNombre}
                     </span>
                     {c.esperandoHumano && <span className="pildora-alerta">Te espera</span>}
-                    {c.modo === "humano" && !c.esperandoHumano && (
+                    {c.modo === "humano" && !c.esperandoHumano && c.ultimoRol === "cliente" && (
+                      <span className="pildora-alerta">Responder</span>
+                    )}
+                    {c.modo === "humano" && !c.esperandoHumano && c.ultimoRol !== "cliente" && (
                       <span className="pildora-indigo">Con tu equipo</span>
                     )}
                     {c.modo === "pausado" && (
