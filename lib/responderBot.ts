@@ -120,7 +120,41 @@ export async function responderSiBot(params: {
   try {
     datos = JSON.parse(await generarJSON(prompt));
   } catch (e) {
-    return { accion: "error_llm", detalle: (e as Error).message };
+    // ── RED DE SEGURIDAD (auditoría 30-jul): el cliente NUNCA queda en silencio ──
+    // Antes, si el modelo fallaba (caído, saturado, timeout), la función salía
+    // acá y el cliente que acababa de escribir NO recibía absolutamente nada,
+    // y nadie del negocio se enteraba. Es el peor fallo posible: peor que una
+    // respuesta mediocre, porque parece que el negocio lo ignora.
+    // Ahora: se le responde con honestidad, se deriva a una persona y queda
+    // registrada la escalación para que aparezca en "Te esperan".
+    const supaF = db();
+    const aviso =
+      "Disculpa, se me complicó revisar eso en este momento 🙈 Le aviso al equipo para que te responda a la brevedad.";
+    const envioF = params.enviar
+      ? await params.enviar(chatId, aviso)
+      : cfg
+        ? await enviarTexto(cfg, chatId, aviso)
+        : { ok: false as const, error: "sin transporte" };
+
+    await guardarMensaje(supaF, {
+      empleadoId,
+      chatId,
+      rol: "empleado",
+      texto: aviso,
+      waId: "waId" in envioF ? (envioF as { waId?: string }).waId : undefined,
+      canal: "whatsapp",
+    });
+    await setModo(empleadoId, chatId, "humano", supaF);
+    await supaF.from("ed_escalaciones").insert({
+      empleado_id: empleadoId,
+      chat_id: chatId,
+      trigger: "incertidumbre",
+      resumen:
+        "El asistente no pudo responder por un problema técnico momentáneo. La conversación quedó esperando a una persona.",
+      notificado_a: [],
+    });
+    console.error("[responderBot] fallo del modelo:", (e as Error).message);
+    return { accion: "error_llm_derivado", detalle: (e as Error).message };
   }
 
   const texto =
