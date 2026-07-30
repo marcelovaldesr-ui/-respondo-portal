@@ -104,6 +104,13 @@ export async function responderSiBot(params: {
     chatId: string,
     texto: string,
   ) => Promise<{ ok: boolean; waId?: string; error?: string }>;
+  /**
+   * Guardia de vigencia, evaluada JUSTO ANTES de enviar (tras la llamada al
+   * modelo). Devuelve false si la respuesta ya quedó obsoleta — típicamente
+   * porque el cliente escribió otro mensaje mientras el modelo pensaba.
+   * Ver el comentario de la anti-carrera más abajo.
+   */
+  sigueVigente?: () => Promise<boolean>;
 }): Promise<{ accion: string; detalle?: string }> {
   const { clienteId, empleadoId, chatId, cfg } = params;
 
@@ -169,6 +176,18 @@ export async function responderSiBot(params: {
   const modoAhora = await modoDe(empleadoId, chatId, supa);
   if (modoAhora !== "bot") {
     return { accion: "silencio_carrera", detalle: `modo cambió a ${modoAhora}` };
+  }
+
+  // ANTI-CARRERA 2 (bug real visto en producción el 30-jul, primer día de Tino
+  // con el número de la imprenta): el debounce agrupa mensajes rápidos ANTES de
+  // llamar al modelo, pero el modelo tarda ~9s. Si el cliente escribe de nuevo
+  // en esa ventana, arranca un segundo ciclo y el cliente recibe DOS respuestas
+  // seguidas (se vio: "Cotizar" a las 23:14:36 → respuestas a las :41 y :50).
+  // Solución: revalidar aquí, ya con la respuesta en mano. Si llegó un mensaje
+  // más nuevo, esta respuesta se descarta: la del ciclo más reciente contesta
+  // con el historial completo y queda mejor.
+  if (params.sigueVigente && !(await params.sigueVigente())) {
+    return { accion: "silencio_obsoleto", detalle: "llegó un mensaje más nuevo" };
   }
 
   // Enviar por WhatsApp. Opción A: usa el sender pasado (Evolution). Opción B:

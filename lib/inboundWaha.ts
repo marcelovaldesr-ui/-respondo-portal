@@ -198,6 +198,21 @@ export async function manejarEntranteWaha(
     empleadoId,
     chatId,
     enviar,
+    // Se re-evalúa DESPUÉS de que el modelo respondió: si mientras pensaba
+    // entró otro mensaje del cliente, esta respuesta ya no es la buena.
+    sigueVigente: async () => {
+      if (!m.waId) return true;
+      const { data } = await supa
+        .from("ed_mensajes")
+        .select("wa_message_id")
+        .eq("empleado_id", empleadoId)
+        .eq("chat_id", chatId)
+        .eq("rol", "cliente")
+        .order("creado_en", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      return !data?.wa_message_id || data.wa_message_id === m.waId;
+    },
   });
   return { accion: `cliente:${r.accion}`, detalle: r.detalle };
 }
