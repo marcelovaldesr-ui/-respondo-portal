@@ -1,5 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { manejarEntranteWaha } from "@/lib/inboundWaha";
+import { secretoValido } from "@/lib/seguridad";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -12,10 +13,11 @@ export const maxDuration = 60;
  * definido, se exige ?k=<secret> (se reutiliza el mismo secreto ya generado).
  */
 export async function POST(request: NextRequest) {
+  // Secreto comparado en tiempo constante (anti timing attack).
   const secret = process.env.EVOLUTION_WEBHOOK_SECRET;
   if (secret) {
     const k = new URL(request.url).searchParams.get("k");
-    if (k !== secret) return new NextResponse("Forbidden", { status: 403 });
+    if (!secretoValido(k, secret)) return new NextResponse("Forbidden", { status: 403 });
   }
 
   let payload: unknown;

@@ -2,6 +2,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import { obtenerUsuarioPortal } from "@/lib/auth";
 import { armarPrompt, type MensajePrueba } from "@/lib/promptEmpleado";
 import { generarJSON } from "@/lib/gemini";
+import { limitar } from "@/lib/seguridad";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 30;
@@ -20,6 +21,16 @@ export async function POST(request: NextRequest) {
   const usuario = await obtenerUsuarioPortal();
   if (!usuario) {
     return NextResponse.json({ error: "Sesión no válida" }, { status: 401 });
+  }
+
+  // COSTO: cada llamada consume créditos de IA. Un usuario con sesión podría
+  // (por error o a propósito) disparar miles en bucle. Tope por usuario.
+  const cuota = limitar(`probar:${usuario.email}`, 30, 60);
+  if (!cuota.ok) {
+    return NextResponse.json(
+      { error: "Demasiadas pruebas seguidas. Espera un momento y vuelve a intentar." },
+      { status: 429 },
+    );
   }
 
   let cuerpo: { empleadoId?: string; historial?: MensajePrueba[] };

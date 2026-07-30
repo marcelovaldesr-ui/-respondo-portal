@@ -1,5 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { manejarEntranteMeta } from "@/lib/inboundMeta";
+import { firmaMetaValida, secretoValido } from "@/lib/seguridad";
 
 export const dynamic = "force-dynamic";
 // Debounce (6s) + Gemini (~5-10s) + envío: holgura para no cortar a mitad.
@@ -28,7 +29,8 @@ export async function GET(request: NextRequest) {
   const token = searchParams.get("hub.verify_token");
   const challenge = searchParams.get("hub.challenge");
 
-  if (modo === "subscribe" && token === process.env.WHATSAPP_VERIFY_TOKEN) {
+  // Comparación en tiempo constante (evita adivinar el token por timing).
+  if (modo === "subscribe" && secretoValido(token, process.env.WHATSAPP_VERIFY_TOKEN)) {
     return new NextResponse(challenge ?? "", { status: 200 });
   }
   return new NextResponse("Forbidden", { status: 403 });
@@ -36,9 +38,20 @@ export async function GET(request: NextRequest) {
 
 // --- POST: eventos entrantes ---
 export async function POST(request: NextRequest) {
+  // ── SEGURIDAD: verificar que el payload viene REALMENTE de Meta ────────────
+  // Sin esto, cualquiera con la URL puede inyectar mensajes falsos y hacer que
+  // el asistente responda a números arbitrarios (con costo) o envenenar la base.
+  // La firma se calcula sobre el cuerpo CRUDO, así que se lee como texto.
+  const crudo = await request.text();
+  const firma = request.headers.get("x-hub-signature-256");
+  if (!firmaMetaValida(crudo, firma)) {
+    console.warn("[meta webhook] firma inválida — payload descartado");
+    return new NextResponse("Forbidden", { status: 403 });
+  }
+
   let payload: unknown;
   try {
-    payload = await request.json();
+    payload = JSON.parse(crudo);
   } catch {
     return NextResponse.json({ ok: true }); // 200 igual, para que Meta no reintente
   }

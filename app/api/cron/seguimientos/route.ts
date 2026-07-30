@@ -3,6 +3,7 @@ import { db } from "@/lib/db";
 import { procesarSeguimientos } from "@/lib/seguimientos";
 import { enviarTextoWaha } from "@/lib/waha";
 import { configPorCliente, enviarTexto } from "@/lib/whatsapp";
+import { secretoValido } from "@/lib/seguridad";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -23,7 +24,7 @@ export async function GET(request: NextRequest) {
   const secreto = process.env.CRON_SECRET || process.env.EVOLUTION_WEBHOOK_SECRET;
   if (secreto) {
     const k = new URL(request.url).searchParams.get("k");
-    if (k !== secreto) return new NextResponse("Forbidden", { status: 403 });
+    if (!secretoValido(k, secreto)) return new NextResponse("Forbidden", { status: 403 });
   }
 
   const supa = db();

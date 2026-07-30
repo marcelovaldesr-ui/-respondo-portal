@@ -27,3 +27,11 @@ next-env.d.ts
 # NO deben ir al repo del portal.
 flow_v2.json
 flow_*.json
+
+# Respaldos de conversaciones: contienen DATOS PERSONALES de clientes reales
+# (números de teléfono, nombres, mensajes). Nunca deben salir a GitHub.
+/_backups/
+
+# Scripts de prueba temporales (se crean y borran durante el desarrollo).
+scripts/_t*.ts
+scripts/_dbg*.ts
