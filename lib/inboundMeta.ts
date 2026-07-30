@@ -16,6 +16,7 @@ import {
 } from "@/lib/mensajes";
 import { setModo, tocarVentanaEntrante } from "@/lib/estadoChat";
 import { responderSiBot } from "@/lib/responderBot";
+import { empleadoParaEntrante } from "@/lib/seguimientos";
 
 export type ResultadoMeta = { accion: string; detalle?: string };
 
@@ -137,8 +138,12 @@ export async function manejarEntranteMeta(
       resultados.push({ accion: "sin_cliente", detalle: m.phoneNumberId });
       continue;
     }
-    const { cfg, empleadoId } = ctx;
+    const { cfg } = ctx;
     const chatId = m.de;
+    // RUTEO: chat con seguimiento activo (<72h) → responde el empleado que lo
+    // inició (Beto/Vera); sin seguimiento → Tino.
+    const empleadoId =
+      (await empleadoParaEntrante(cfg.clienteId, chatId, ctx.empleadoId, supa)) ?? ctx.empleadoId;
 
     // IDEMPOTENCIA: Meta reintenta el webhook si el 200 tarda → sin esto, Tino
     // respondería DOS veces al mismo mensaje.

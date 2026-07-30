@@ -17,6 +17,7 @@ import {
 } from "@/lib/mensajes";
 import { setModo, tocarVentanaEntrante } from "@/lib/estadoChat";
 import { responderSiBot } from "@/lib/responderBot";
+import { empleadoParaEntrante } from "@/lib/seguimientos";
 
 export type ResultadoEntrante = { accion: string; detalle?: string };
 
@@ -68,14 +69,19 @@ export async function manejarEntranteWaha(
 
   const clienteId = await clientePorInstanciaWaha(m.instancia);
   if (!clienteId) return { accion: "sin_cliente", detalle: m.instancia };
-  const empleadoId = await tinoDe(clienteId);
-  if (!empleadoId) return { accion: "sin_tino" };
+  const tinoId = await tinoDe(clienteId);
+  if (!tinoId) return { accion: "sin_tino" };
 
   const supa = db();
 
   // 2b) Identidad estable: la clave del chat es el NÚMERO REAL (resuelto del LID).
   const contacto = await resolverContacto(m.jid);
   const chatId = contacto.chatId; // ← clave única de la conversación en la BD
+
+  // 2c) RUTEO: si este chat tiene un seguimiento activo (Beto/Vera le
+  // escribieron hace <72h), la conversación es de ESE empleado — la respuesta
+  // no debe caer en Tino ni partir el hilo. Sin seguimiento → Tino (fallback).
+  const empleadoId = (await empleadoParaEntrante(clienteId, chatId, tinoId, supa)) ?? tinoId;
 
   // 3) Idempotencia + eco de Tino.
   if (m.waId && (await yaProcesado(supa, empleadoId, m.waId))) {

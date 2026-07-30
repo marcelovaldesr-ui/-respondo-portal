@@ -1,0 +1,241 @@
+import { db } from "@/lib/db";
+import type { SupabaseClient } from "@supabase/supabase-js";
+
+/**
+ * MOTOR DE SEGUIMIENTOS PROGRAMADOS (tabla ed_seguimientos).
+ *
+ * Es la pieza que comparten dos features vendibles:
+ *  - Recordatorio/confirmación de citas (feature #1 de compra del vertical
+ *    clínicas según el análisis competitivo del 30-jul).
+ *  - Reactivación de cotizaciones sin respuesta (rol de Beto).
+ *
+ * DISEÑO (patrón del prompt de Beto/rita: "el primer mensaje siempre es una
+ * plantilla del sistema — tú entras cuando la persona RESPONDE"):
+ *  1. Algo (una feature, una persona, un flujo) INSERTA una fila en
+ *     ed_seguimientos con programado_para y el texto en variables.texto.
+ *  2. El cron (app/api/cron/seguimientos) envía los vencidos respetando
+ *     horario hábil de Chile, tope diario y max_intentos.
+ *  3. Cuando el cliente RESPONDE, el inbound rutea la conversación al
+ *     empleado del seguimiento (Beto/Vera) — no a Tino — y su cerebro
+ *     continúa (ver empleadoParaEntrante).
+ *
+ * El motor es INERTE por defecto: no genera seguimientos solo. Para la
+ * imprenta (solo Tino) simplemente no se programan filas.
+ */
+
+export type Seguimiento = {
+  id: string;
+  empleado_id: string;
+  chat_id: string;
+  tipo: string;
+  plantilla_meta: string | null;
+  variables: Record<string, unknown> | null;
+  programado_para: string;
+  enviado_en: string | null;
+  respuesta_recibida: boolean | null; // boolean en el esquema (no timestamp)
+  max_intentos: number | null;
+  intento: number | null;
+};
+
+/** Hora local de Chile (maneja DST vía Intl). */
+export function horaChile(d = new Date()): number {
+  const s = new Intl.DateTimeFormat("es-CL", {
+    timeZone: "America/Santiago",
+    hour: "numeric",
+    hour12: false,
+  }).format(d);
+  return Number(s);
+}
+
+/** ¿Estamos en horario hábil para mensajes proactivos? (10:00–18:59 Chile) */
+export function enHorarioHabil(d = new Date()): boolean {
+  const h = horaChile(d);
+  return h >= 10 && h < 19;
+}
+
+/** Programa un seguimiento. `texto` es el mensaje saliente (vía no oficial). */
+export async function programarSeguimiento(params: {
+  empleadoId: string;
+  chatId: string;
+  tipo: string; // ej: 'recordatorio_cita' | 'cotizacion_sin_respuesta'
+  texto: string;
+  programadoPara: Date;
+  plantillaMeta?: string; // nombre de plantilla Meta (vía oficial, futuro)
+  maxIntentos?: number;
+  supa?: SupabaseClient;
+}): Promise<{ ok: boolean; error?: string }> {
+  const supa = params.supa ?? db();
+  const { error } = await supa.from("ed_seguimientos").insert({
+    empleado_id: params.empleadoId,
+    chat_id: params.chatId,
+    tipo: params.tipo,
+    // NOT NULL en el esquema; 'texto_libre' marca envío por vía no oficial
+    // (con variables.texto). Con la vía oficial irá el nombre de la plantilla.
+    plantilla_meta: params.plantillaMeta ?? "texto_libre",
+    variables: { texto: params.texto },
+    programado_para: params.programadoPara.toISOString(),
+    max_intentos: params.maxIntentos ?? 1,
+    intento: 0,
+  });
+  return error ? { ok: false, error: error.message } : { ok: true };
+}
+
+/**
+ * Procesa los seguimientos vencidos y los envía.
+ *
+ * Salvaguardas (innegociables para la vía no oficial):
+ *  - Solo en horario hábil de Chile (si no, no hace nada y lo dice).
+ *  - Tope diario de envíos proactivos (SEGUIMIENTOS_MAX_DIA, default 15).
+ *  - Respeta max_intentos y no reenvía lo ya enviado.
+ *  - Respeta la etiqueta 'no_contactar' del contacto.
+ *
+ * `enviar` se inyecta (mismo patrón de responderBot): en producción es el
+ * transporte real; en tests, un mock. Devuelve el resumen de lo hecho.
+ */
+export async function procesarSeguimientos(opts: {
+  enviar: (
+    empleadoId: string,
+    chatId: string,
+    texto: string,
+  ) => Promise<{ ok: boolean; waId?: string; error?: string }>;
+  ahora?: Date;
+  limite?: number;
+  supa?: SupabaseClient;
+}): Promise<{ enviados: number; detalle: string[] }> {
+  const supa = opts.supa ?? db();
+  const ahora = opts.ahora ?? new Date();
+  const detalle: string[] = [];
+
+  if (!enHorarioHabil(ahora)) {
+    return { enviados: 0, detalle: [`fuera_horario (hora Chile: ${horaChile(ahora)})`] };
+  }
+
+  // Tope diario (los enviados desde la medianoche UTC de hoy; conservador).
+  const maxDia = Number(process.env.SEGUIMIENTOS_MAX_DIA ?? 15);
+  const hoy = new Date(ahora);
+  hoy.setUTCHours(0, 0, 0, 0);
+  const { count: yaHoy } = await supa
+    .from("ed_seguimientos")
+    .select("id", { count: "exact", head: true })
+    .gte("enviado_en", hoy.toISOString());
+  const presupuesto = Math.max(0, maxDia - (yaHoy ?? 0));
+  if (presupuesto === 0) return { enviados: 0, detalle: ["tope_diario_alcanzado"] };
+
+  const { data: pendientes, error } = await supa
+    .from("ed_seguimientos")
+    .select("*")
+    .is("enviado_en", null)
+    .lte("programado_para", ahora.toISOString())
+    .order("programado_para", { ascending: true })
+    .limit(Math.min(opts.limite ?? 10, presupuesto));
+  if (error) return { enviados: 0, detalle: [`error_lectura: ${error.message}`] };
+  if (!pendientes?.length) return { enviados: 0, detalle: ["sin_pendientes"] };
+
+  let enviados = 0;
+  for (const s of pendientes as Seguimiento[]) {
+    const intento = (s.intento ?? 0) + 1;
+    if (intento > (s.max_intentos ?? 1)) {
+      detalle.push(`${s.id.slice(0, 8)}: max_intentos superado, omitido`);
+      continue;
+    }
+
+    // Respeto de 'no_contactar' (etiqueta del contacto del cliente dueño).
+    const { data: emp } = await supa
+      .from("ed_empleados")
+      .select("cliente_id")
+      .eq("id", s.empleado_id)
+      .maybeSingle();
+    if (emp?.cliente_id) {
+      const { data: cont } = await supa
+        .from("ed_contactos")
+        .select("etiquetas")
+        .eq("cliente_id", emp.cliente_id)
+        .eq("chat_id", s.chat_id)
+        .maybeSingle();
+      const etiquetas = (cont?.etiquetas as string[] | null) ?? [];
+      if (etiquetas.includes("no_contactar")) {
+        // Se marca como enviado con nota para que no se reintente jamás.
+        await supa
+          .from("ed_seguimientos")
+          .update({ enviado_en: ahora.toISOString(), intento })
+          .eq("id", s.id);
+        detalle.push(`${s.id.slice(0, 8)}: no_contactar, cancelado`);
+        continue;
+      }
+    }
+
+    const texto = String((s.variables as { texto?: string } | null)?.texto ?? "").trim();
+    if (!texto) {
+      detalle.push(`${s.id.slice(0, 8)}: sin variables.texto, omitido`);
+      continue;
+    }
+
+    const r = await opts.enviar(s.empleado_id, s.chat_id, texto);
+    if (!r.ok) {
+      detalle.push(`${s.id.slice(0, 8)}: envío falló (${r.error ?? "?"})`);
+      continue;
+    }
+
+    // Guardar el mensaje en el hilo del EMPLEADO del seguimiento (así la
+    // conversación aparece bajo Beto/Vera en el portal, no bajo Tino).
+    await supa.from("ed_mensajes").insert({
+      empleado_id: s.empleado_id,
+      chat_id: s.chat_id,
+      rol: "empleado",
+      texto,
+      canal: "whatsapp",
+      ...(r.waId ? { wa_message_id: r.waId } : {}),
+    });
+
+    await supa
+      .from("ed_seguimientos")
+      .update({ enviado_en: ahora.toISOString(), intento })
+      .eq("id", s.id);
+
+    enviados += 1;
+    detalle.push(`${s.id.slice(0, 8)}: enviado (${s.tipo})`);
+  }
+
+  return { enviados, detalle };
+}
+
+/**
+ * RUTEO DE RESPUESTAS: decide qué empleado atiende un mensaje ENTRANTE.
+ *
+ * Si el chat tiene un seguimiento enviado hace <72h sin respuesta registrada,
+ * la conversación es de ESE empleado (Beto/Vera continúan lo que iniciaron) y
+ * se marca respuesta_recibida. Si no, se usa el fallback (Tino).
+ *
+ * Defensivo: ante cualquier error devuelve el fallback — jamás se pierde un
+ * mensaje por culpa del ruteo.
+ */
+export async function empleadoParaEntrante(
+  clienteId: string,
+  chatId: string,
+  fallback: string | null,
+  supa?: SupabaseClient,
+): Promise<string | null> {
+  try {
+    const s = supa ?? db();
+    const desde = new Date(Date.now() - 72 * 3600 * 1000).toISOString();
+    const { data } = await s
+      .from("ed_seguimientos")
+      .select("id, empleado_id, ed_empleados!inner(cliente_id)")
+      .eq("chat_id", chatId)
+      .eq("ed_empleados.cliente_id", clienteId)
+      .not("enviado_en", "is", null)
+      .eq("respuesta_recibida", false) // boolean en el esquema
+      .gte("enviado_en", desde)
+      .order("enviado_en", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (!data) return fallback;
+    await s
+      .from("ed_seguimientos")
+      .update({ respuesta_recibida: true })
+      .eq("id", data.id);
+    return data.empleado_id as string;
+  } catch {
+    return fallback;
+  }
+}
