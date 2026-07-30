@@ -5,6 +5,7 @@ import { db } from "@/lib/db";
 import { obtenerUsuarioPortal } from "@/lib/auth";
 import { configPorCliente, enviarTexto } from "@/lib/whatsapp";
 import { enviarTextoWaha, enviarMediaWaha } from "@/lib/waha";
+import { limitar } from "@/lib/seguridad";
 
 /**
  * Control del cliente sobre una conversación: pausar al asistente, tomar el
@@ -22,6 +23,33 @@ import { enviarTextoWaha, enviarMediaWaha } from "@/lib/waha";
 
 const MODOS = ["bot", "humano", "pausado"] as const;
 type Modo = (typeof MODOS)[number];
+
+/**
+ * TIPOS DE ARCHIVO PERMITIDOS (lista blanca).
+ *
+ * El navegador ya filtra con accept="image/*,application/pdf", pero eso es solo
+ * una sugerencia de la UI: una petición manipulada (o una sesión robada) puede
+ * mandar cualquier cosa. Si dejáramos pasar ejecutables o HTML, el número de
+ * WhatsApp del NEGOCIO podría usarse para distribuir malware — y WhatsApp
+ * suspende números por eso. La lista blanca se valida en el servidor.
+ */
+const MIME_PERMITIDOS = new Set([
+  "image/jpeg",
+  "image/png",
+  "image/webp",
+  "image/gif",
+  "application/pdf",
+]);
+
+/** Tope real del archivo (el base64 pesa ~33% más que el binario). */
+const MAX_BASE64 = 12 * 1024 * 1024; // ~9 MB de archivo
+
+/** Nombre de archivo seguro: sin rutas, sin caracteres raros, con largo acotado. */
+function nombreSeguro(nombre: string): string {
+  const base = nombre.split(/[/\\]/).pop() ?? "archivo"; // corta cualquier ruta
+  const limpio = base.replace(/[^\w.\- ]/g, "_").slice(0, 120);
+  return limpio || "archivo";
+}
 
 /**
  * Decide el transporte de SALIDA de un cliente para las respuestas del inbox.
@@ -111,6 +139,12 @@ export async function responderComoHumano(formData: FormData): Promise<void> {
   const texto = String(formData.get("texto") ?? "").trim();
   if (!empleadoId || !chatId || !texto) return;
 
+  // Anti-abuso: si una sesión se ve comprometida, esto impide usar el número de
+  // WhatsApp del negocio para spam masivo (y que WhatsApp lo suspenda).
+  if (!limitar(`enviar:${usuario.email}`, 40, 60).ok) {
+    throw new Error("Demasiados mensajes seguidos. Espera un momento.");
+  }
+
   const supa = db();
 
   // Barrera de acceso: el empleado tiene que ser de este cliente.
@@ -181,12 +215,27 @@ export async function enviarArchivoComoHumano(
 
   const empleadoId = String(formData.get("empleadoId") ?? "");
   const chatId = String(formData.get("chatId") ?? "");
-  const filename = String(formData.get("filename") ?? "archivo");
+  const filename = nombreSeguro(String(formData.get("filename") ?? "archivo"));
   const mimetype = String(formData.get("mimetype") ?? "application/octet-stream");
   const data = String(formData.get("data") ?? "");
   const caption = String(formData.get("caption") ?? "").trim();
   if (!empleadoId || !chatId || !data) {
     return { ok: false, error: "Faltan datos del archivo" };
+  }
+
+  // ── VALIDACIÓN DEL ARCHIVO EN EL SERVIDOR (no confiar en el navegador) ──────
+  if (!MIME_PERMITIDOS.has(mimetype)) {
+    return {
+      ok: false,
+      error: "Solo se pueden enviar imágenes (JPG, PNG, WEBP, GIF) o archivos PDF.",
+    };
+  }
+  if (data.length > MAX_BASE64) {
+    return { ok: false, error: "El archivo supera los 9 MB. Prueba con uno más liviano." };
+  }
+  if (!/^[A-Za-z0-9+/]+={0,2}$/.test(data.slice(0, 512))) {
+    // El contenido debe ser base64 puro (sin el prefijo data: ni binario suelto).
+    return { ok: false, error: "El archivo no se pudo leer correctamente. Intenta de nuevo." };
   }
 
   const supa = db();
