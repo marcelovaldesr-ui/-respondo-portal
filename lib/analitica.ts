@@ -17,7 +17,29 @@ import { ZONA } from "@/lib/fechas";
  * horario de septiembre y abril solo).
  */
 
-/** Supuestos del cálculo de ahorro. Se muestran en pantalla, no se esconden. */
+/**
+ * Supuestos del cálculo de ahorro. Se muestran en pantalla, no se esconden.
+ *
+ * VALOR HORA — se usa el SUELDO MÍNIMO de Chile a propósito: es el piso legal,
+ * público y verificable, así nadie puede acusarnos de inflar el beneficio. El
+ * ahorro real es mayor (quien atiende suele ganar más que el mínimo, y el costo
+ * para el empleador incluye cotizaciones), pero preferimos quedarnos cortos y
+ * que el número aguante cualquier cuestionamiento.
+ *
+ * Cálculo (fórmula de la Dirección del Trabajo):
+ *   (sueldo mensual / 30) × 28 / (horas semanales × 4)
+ *   (539.000 / 30) × 28 / 168 = $2.994 por hora
+ *
+ * Datos usados (verificados 31-jul-2026):
+ *   · Ingreso Mínimo Mensual: $539.000
+ *   · Jornada: 42 h/semana (Ley 40 Horas, vigente desde el 26-abr-2026) → 168 h/mes
+ *
+ * ⚠ REVISAR cuando cambie el sueldo mínimo (se reajusta por ley) o cuando la
+ * jornada baje a 40 h en 2028. Basta con actualizar las dos constantes.
+ */
+const SUELDO_MINIMO_CLP = 539_000;
+const HORAS_MES = 168; // 42 h/semana × 4
+
 export const SUPUESTOS = {
   /**
    * Minutos que le toma a una persona atender un mensaje: leerlo, buscar el
@@ -26,12 +48,9 @@ export const SUPUESTOS = {
    * atendido con calma toma más).
    */
   minutosPorMensaje: 2,
-  /**
-   * Valor de una hora de trabajo de quien atiende, en pesos.
-   * ⚠ Es un valor por defecto y debe confirmarse con el cliente: cambia según
-   * quién atienda (dueño, vendedor, administrativo).
-   */
-  valorHoraCLP: 5000,
+  /** Valor de la hora según el sueldo mínimo vigente (ver cálculo arriba). */
+  valorHoraCLP: Math.round((SUELDO_MINIMO_CLP / 30) * 28 / HORAS_MES),
+  sueldoMinimoCLP: SUELDO_MINIMO_CLP,
 } as const;
 
 /** Horario laboral de referencia para "carga fuera de horario". */

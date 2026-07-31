@@ -177,10 +177,13 @@ export default async function Analitica({
       </div>
 
       {/* Supuestos a la vista: la cuenta se puede rehacer en una servilleta */}
-      <p className="mt-3 text-[12px]" style={{ color: "var(--muted-2)" }}>
-        El ahorro es una estimación: {SUPUESTOS.minutosPorMensaje} minutos por mensaje
-        atendido × {formatearCLP(SUPUESTOS.valorHoraCLP)} la hora de trabajo. Horario
-        de referencia: {horas}. Si tus valores son otros, los ajustamos.
+      <p className="mt-3 text-[12px] leading-relaxed" style={{ color: "var(--muted-2)" }}>
+        El ahorro es una estimación conservadora:{" "}
+        <strong>{SUPUESTOS.minutosPorMensaje} minutos por mensaje</strong> atendido ×{" "}
+        <strong>{formatearCLP(SUPUESTOS.valorHoraCLP)} la hora</strong>, que es el valor
+        hora del sueldo mínimo en Chile ({formatearCLP(SUPUESTOS.sueldoMinimoCLP)} al mes,
+        jornada de 42 horas). Usamos el mínimo legal a propósito: tu ahorro real es mayor.
+        Horario de referencia: {horas}.
       </p>
 
       <div className="mt-6 grid gap-5 lg:grid-cols-2">
