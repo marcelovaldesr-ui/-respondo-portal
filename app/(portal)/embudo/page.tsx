@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { exigirUsuarioPortal } from "@/lib/auth";
 import { cargarEmbudo, ETAPAS } from "@/lib/embudo";
 import { db } from "@/lib/db";
@@ -5,10 +6,28 @@ import TarjetaEmbudo from "@/components/TarjetaEmbudo";
 
 export const dynamic = "force-dynamic";
 
-export default async function Embudo() {
+/** Máximo de tarjetas visibles por columna (el resto se ve en la bandeja). */
+const TOPE_COLUMNA = 12;
+
+const PERIODOS = [
+  { d: 7, label: "7 días" },
+  { d: 14, label: "14 días" },
+  { d: 30, label: "30 días" },
+  { d: 0, label: "Todas" },
+];
+
+export default async function Embudo({
+  searchParams,
+}: {
+  searchParams: { dias?: string };
+}) {
   const usuario = await exigirUsuarioPortal();
+  const dias = PERIODOS.some((p) => String(p.d) === searchParams.dias)
+    ? Number(searchParams.dias)
+    : 14;
+
   const [tarjetas, empleadoR] = await Promise.all([
-    cargarEmbudo(usuario.clienteId),
+    cargarEmbudo(usuario.clienteId, dias),
     db()
       .from("ed_empleados")
       .select("id")
@@ -19,8 +38,13 @@ export default async function Embudo() {
   const empleadoId = (empleadoR.data?.id as string) ?? "";
 
   const porEtapa = new Map(ETAPAS.map((e) => [e.valor, tarjetas.filter((t) => t.etapa === e.valor)]));
-  const activas = tarjetas.filter((t) => t.etapa !== "perdido" && t.etapa !== "ganado").length;
+  // "Por cerrar" son las oportunidades REALES: alguien que mostró interés o ya
+  // tiene una cotización. Contar también las "Nuevo" infla el número y le hace
+  // perder credibilidad al tablero.
+  const porCerrar =
+    (porEtapa.get("interesado")?.length ?? 0) + (porEtapa.get("cotizado")?.length ?? 0);
   const ganadas = porEtapa.get("ganado")?.length ?? 0;
+  const esperan = tarjetas.filter((t) => t.esperandoHumano).length;
 
   return (
     <main className="px-5 py-7 sm:px-8 lg:px-10 lg:py-10">
@@ -31,22 +55,50 @@ export default async function Embudo() {
         puedes moverlas cuando quieras y ahí se quedan.
       </p>
 
+      {/* Corte por actividad: sin esto el tablero se llena de conversaciones ya
+          terminadas y el número de "por cerrar" deja de significar algo. */}
+      <div className="mt-5 flex flex-wrap items-center gap-2">
+        <span className="text-[12.5px] font-semibold" style={{ color: "var(--muted-2)" }}>
+          Con actividad en:
+        </span>
+        {PERIODOS.map((p) => (
+          <Link
+            key={p.d}
+            href={`/embudo?dias=${p.d}`}
+            className="rounded-full px-3.5 py-1.5 text-[12.5px] font-bold"
+            style={
+              p.d === dias
+                ? { background: "var(--indigo)", color: "#fff" }
+                : { background: "#F1F2F7", color: "var(--muted)" }
+            }
+          >
+            {p.label}
+          </Link>
+        ))}
+      </div>
+
       {tarjetas.length === 0 ? (
         <div className="tarjeta mt-6 p-10 text-center" style={{ color: "var(--muted)" }}>
-          Todavía no hay conversaciones en el embudo. Aparecen solas a medida que tus
-          clientes escriben.
+          No hay conversaciones con actividad en este período. Prueba con un rango más
+          amplio.
         </div>
       ) : (
         <>
           <div className="mt-4 flex flex-wrap gap-x-6 gap-y-1 text-[13.5px]">
             <span style={{ color: "var(--muted)" }}>
-              <strong style={{ color: "var(--tinta)" }}>{activas}</strong> por cerrar
+              <strong style={{ color: "var(--tinta)" }}>{porCerrar}</strong> oportunidades por
+              cerrar
             </span>
+            {esperan > 0 && (
+              <span style={{ color: "var(--muted)" }}>
+                <strong style={{ color: "var(--alerta)" }}>{esperan}</strong> te esperan
+              </span>
+            )}
             <span style={{ color: "var(--muted)" }}>
               <strong style={{ color: "#166534" }}>{ganadas}</strong> ganadas
             </span>
             <span style={{ color: "var(--muted)" }}>
-              <strong style={{ color: "var(--tinta)" }}>{tarjetas.length}</strong> en total
+              <strong style={{ color: "var(--tinta)" }}>{tarjetas.length}</strong> activas
             </span>
           </div>
 
@@ -74,6 +126,10 @@ export default async function Embudo() {
                       </p>
                     </div>
 
+                    {/* Tope de tarjetas por columna: una columna con decenas de
+                        tarjetas no se lee, y las que importan quedan enterradas.
+                        Se muestran las más recientes y el resto se ve en la
+                        bandeja, que es la pantalla hecha para recorrer volumen. */}
                     <div className="mt-3 space-y-2.5">
                       {items.length === 0 ? (
                         <div
@@ -83,9 +139,20 @@ export default async function Embudo() {
                           Sin conversaciones
                         </div>
                       ) : (
-                        items.map((t) => (
-                          <TarjetaEmbudo key={t.chatId} {...t} empleadoId={empleadoId} />
-                        ))
+                        <>
+                          {items.slice(0, TOPE_COLUMNA).map((t) => (
+                            <TarjetaEmbudo key={t.chatId} {...t} empleadoId={empleadoId} />
+                          ))}
+                          {items.length > TOPE_COLUMNA && (
+                            <Link
+                              href="/conversaciones"
+                              className="block rounded-xl border border-dashed px-3 py-3 text-center text-[12.5px] font-semibold"
+                              style={{ borderColor: "var(--borde-fuerte)", color: "var(--muted)" }}
+                            >
+                              +{items.length - TOPE_COLUMNA} más · verlas en la bandeja
+                            </Link>
+                          )}
+                        </>
                       )}
                     </div>
                   </section>

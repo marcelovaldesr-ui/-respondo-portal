@@ -30,7 +30,7 @@ export const ETAPAS: {
   {
     valor: "nuevo",
     label: "Nuevo",
-    descripcion: "Escribió, todavía sin definir",
+    descripcion: "Escribió; el asistente aún no detecta intención",
     color: "#475569",
     fondo: "#F1F5F9",
   },
@@ -113,6 +113,16 @@ export type TarjetaEmbudo = {
  */
 export async function cargarEmbudo(
   clienteId: string,
+  /**
+   * Solo conversaciones con actividad en los últimos N días (0 = todas).
+   *
+   * POR QUÉ EXISTE: sin este corte, el tablero se llena de conversaciones que
+   * ya terminaron ("muchas gracias", "recibido") y que quedaron en Nuevo porque
+   * son historial importado que nunca pasó por el asistente. El dueño abría el
+   * embudo, veía "55 por cerrar" cuando en verdad tenía 7, y dejaba de creerle
+   * al panel. Un tablero de ventas sirve por lo que DEJA FUERA.
+   */
+  diasActividad = 14,
   supaOpt?: SupabaseClient,
 ): Promise<TarjetaEmbudo[]> {
   const supa = supaOpt ?? db();
@@ -219,6 +229,14 @@ export async function cargarEmbudo(
 
   // Más recientes primero dentro de cada columna.
   tarjetas.sort((a, b) => (b.ultimoEn ?? "").localeCompare(a.ultimoEn ?? ""));
+
+  // Corte por actividad. Se aplica DESPUÉS de recalcular las etapas para que el
+  // estado quede guardado igual, aunque la tarjeta no se muestre hoy: si el
+  // cliente vuelve a escribir, reaparece en la etapa correcta.
+  if (diasActividad > 0) {
+    const corte = new Date(Date.now() - diasActividad * 86400_000).toISOString();
+    return tarjetas.filter((t) => (t.ultimoEn ?? "") >= corte);
+  }
   return tarjetas;
 }
 
