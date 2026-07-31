@@ -18,12 +18,16 @@ const Icono = {
     <path d="M8 3v3m8-3v3M4 9h16M6 5h12a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2zM9 14l2 2 4-4" />
   ),
   analitica: <path d="M4 20V10m5 10V4m5 16v-7m5 7V8" />,
+  informe: (
+    <path d="M9 4h6a1 1 0 0 1 1 1v1h2a1 1 0 0 1 1 1v13a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h2V5a1 1 0 0 1 1-1zM9 12h6M9 16h4" />
+  ),
 };
 
 const ITEMS = [
   { href: "/inicio", label: "Inicio", icono: Icono.inicio },
   { href: "/conversaciones", label: "Conversaciones", icono: Icono.chat },
   { href: "/analitica", label: "Analítica", icono: Icono.analitica },
+  { href: "/insights", label: "Informe", icono: Icono.informe },
   { href: "/agenda", label: "Agenda", icono: Icono.agenda },
   { href: "/probar", label: "Probar ahora", icono: Icono.probar },
   { href: "/informacion", label: "Información", icono: Icono.info },

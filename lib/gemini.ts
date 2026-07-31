@@ -10,11 +10,11 @@ const MODELO_RESPALDO = "gemini-2.5-flash";
  */
 const TIMEOUT_MS = 20_000;
 
-async function llamar(modelo: string, prompt: string): Promise<Response> {
+async function llamar(modelo: string, prompt: string, timeoutMs = TIMEOUT_MS): Promise<Response> {
   const key = process.env.GEMINI_API_KEY;
   if (!key) throw new Error("Falta GEMINI_API_KEY");
   const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), TIMEOUT_MS);
+  const timer = setTimeout(() => ctrl.abort(), timeoutMs);
   try {
     return await fetch(`${BASE}/${modelo}:generateContent?key=${key}`, {
       method: "POST",
@@ -56,18 +56,30 @@ function esTransitorio(status: number): boolean {
  *     mayoría sin que el cliente note nada.
  *  3. Modelo de respaldo si el principal sigue sin responder.
  */
-export async function generarJSON(prompt: string): Promise<string> {
+export async function generarJSON(
+  prompt: string,
+  /**
+   * Ajustes para usos que NO son una conversación en vivo. El default (20s, 2
+   * intentos) está pensado para que un cliente en WhatsApp no espere: si el
+   * modelo se cuelga, mejor derivar. Pero una tarea de fondo —como el informe
+   * semanal, que razona sobre cientos de mensajes y demora ~25s— necesita más
+   * aire y no gana nada reintentando.
+   */
+  opciones?: { timeoutMs?: number; intentosPorModelo?: number },
+): Promise<string> {
   const principal = process.env.GEMINI_MODEL || MODELO_RESPALDO;
   const modelos = principal === MODELO_RESPALDO ? [principal] : [principal, MODELO_RESPALDO];
+  const timeoutMs = opciones?.timeoutMs ?? TIMEOUT_MS;
+  const maxIntentos = opciones?.intentosPorModelo ?? 2;
 
   let ultimoError = "";
   for (const modelo of modelos) {
-    for (let intento = 1; intento <= 2; intento++) {
+    for (let intento = 1; intento <= maxIntentos; intento++) {
       try {
-        const r = await llamar(modelo, prompt);
+        const r = await llamar(modelo, prompt, timeoutMs);
         if (!r.ok) {
           ultimoError = `${modelo}: HTTP ${r.status}`;
-          if (esTransitorio(r.status) && intento === 1) {
+          if (esTransitorio(r.status) && intento < maxIntentos) {
             await new Promise((s) => setTimeout(s, 900)); // respiro y reintento
             continue;
           }
@@ -79,7 +91,7 @@ export async function generarJSON(prompt: string): Promise<string> {
         break;
       } catch (e) {
         ultimoError = `${modelo}: ${(e as Error).message}`;
-        if (intento === 1) {
+        if (intento < maxIntentos) {
           await new Promise((s) => setTimeout(s, 900));
           continue; // timeout o red: un reintento
         }

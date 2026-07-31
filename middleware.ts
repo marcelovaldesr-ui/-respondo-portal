@@ -5,6 +5,7 @@ const RUTAS_PROTEGIDAS = [
   "/inicio",
   "/conversaciones",
   "/analitica",
+  "/insights",
   "/agenda",
   "/probar",
   "/informacion",
