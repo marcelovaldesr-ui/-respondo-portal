@@ -14,11 +14,15 @@ const Icono = {
   enchufe: (
     <path d="M9 7V3M15 7V3M7 7h10v4a5 5 0 0 1-5 5 5 5 0 0 1-5-5zM12 16v5" />
   ),
+  agenda: (
+    <path d="M8 3v3m8-3v3M4 9h16M6 5h12a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2zM9 14l2 2 4-4" />
+  ),
 };
 
 const ITEMS = [
   { href: "/inicio", label: "Inicio", icono: Icono.inicio },
   { href: "/conversaciones", label: "Conversaciones", icono: Icono.chat },
+  { href: "/agenda", label: "Agenda", icono: Icono.agenda },
   { href: "/probar", label: "Probar ahora", icono: Icono.probar },
   { href: "/informacion", label: "Información", icono: Icono.info },
   { href: "/whatsapp", label: "WhatsApp", icono: Icono.enchufe },

@@ -1,0 +1,81 @@
+import { notFound } from "next/navigation";
+import type { Metadata } from "next";
+import { db } from "@/lib/db";
+import ReservaPublica from "@/components/ReservaPublica";
+
+export const dynamic = "force-dynamic";
+
+/**
+ * PÁGINA PÚBLICA DE RESERVAS (F1) — sin login. Solo existe para clientes con
+ * reservas_online = true y slug configurado (se activa en /agenda del portal).
+ * Las reservas entran por la misma vía que las citas de WhatsApp: mismos
+ * cupos, misma garantía anti doble-reserva.
+ */
+
+type Props = { params: { slug: string } };
+
+async function clientePorSlug(slug: string) {
+  const { data } = await db()
+    .from("ed_clientes")
+    .select("id, nombre, rubro")
+    .eq("slug", slug)
+    .eq("reservas_online", true)
+    .eq("activo", true)
+    .maybeSingle();
+  return data as { id: string; nombre: string; rubro: string | null } | null;
+}
+
+export async function generateMetadata({ params }: Props): Promise<Metadata> {
+  const cliente = await clientePorSlug(params.slug);
+  return {
+    title: cliente ? `Reserva tu hora · ${cliente.nombre}` : "Reservas",
+    robots: { index: true },
+  };
+}
+
+export default async function PaginaReservas({ params }: Props) {
+  const cliente = await clientePorSlug(params.slug);
+  if (!cliente) notFound();
+
+  const { data: servicios } = await db()
+    .from("ed_servicios")
+    .select("id, nombre, descripcion, duracion_min, precio_clp")
+    .eq("cliente_id", cliente.id)
+    .eq("activo", true)
+    .order("orden", { ascending: true });
+
+  if (!servicios || servicios.length === 0) notFound();
+
+  return (
+    <main className="mx-auto max-w-xl px-5 py-8 sm:py-12">
+      <header className="text-center">
+        <div className="eyebrow">Reserva online</div>
+        <h1 className="titular mt-1.5 text-[28px] font-extrabold leading-tight">
+          {cliente.nombre}
+        </h1>
+        <p className="mt-1 text-[14.5px]" style={{ color: "var(--muted)" }}>
+          Elige tu servicio y tu hora — te llegará la confirmación y el
+          recordatorio por WhatsApp.
+        </p>
+      </header>
+
+      <ReservaPublica
+        slug={params.slug}
+        servicios={servicios.map((s) => ({
+          id: s.id as string,
+          nombre: s.nombre as string,
+          descripcion: (s.descripcion as string) ?? null,
+          duracionMin: s.duracion_min as number,
+          precioClp: (s.precio_clp as number) ?? null,
+        }))}
+      />
+
+      <footer className="mt-10 text-center text-[12px]" style={{ color: "var(--muted-2)" }}>
+        Reservas con empleados IA por{" "}
+        <a href="https://respon-do.com" className="font-bold underline">
+          Respondo
+        </a>
+      </footer>
+    </main>
+  );
+}

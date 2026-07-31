@@ -1,7 +1,7 @@
 import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
 
-const RUTAS_PROTEGIDAS = ["/inicio", "/conversaciones", "/probar", "/informacion"];
+const RUTAS_PROTEGIDAS = ["/inicio", "/conversaciones", "/probar", "/informacion", "/agenda", "/whatsapp"];
 
 /**
  * Refresca la sesión de Supabase en cada request (las cookies de auth solo se

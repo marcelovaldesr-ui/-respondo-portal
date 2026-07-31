@@ -99,6 +99,13 @@ export async function armarPrompt(
   clienteId: string,
   empleadoId: string,
   historial: MensajePrueba[],
+  /**
+   * Bloque adicional opcional (ej. "AGENDA REAL" de lib/agendaBot.ts, F2).
+   * Se inserta después de la información del negocio. Si no se pasa, el
+   * prompt queda EXACTAMENTE igual que siempre — cero cambio para los
+   * clientes sin agenda.
+   */
+  bloqueExtra?: string,
 ): Promise<string | null> {
   const supa = db();
 
@@ -165,7 +172,7 @@ export async function armarPrompt(
 ${ROLES[empleado.rol as string] ?? ROLES.tino}${bloqueFicha}
 
 ## INFORMACIÓN DEL NEGOCIO (única fuente de verdad)
-${bloqueConocimiento || "(sin información cargada todavía)"}${bloqueCorrecciones}
+${bloqueConocimiento || "(sin información cargada todavía)"}${bloqueCorrecciones}${bloqueExtra ? `\n\n${bloqueExtra}` : ""}
 
 ## CONVERSACIÓN HASTA AHORA
 ${conversacion}

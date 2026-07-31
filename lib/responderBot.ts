@@ -5,6 +5,12 @@ import { enviarTexto, type ConfigWhatsApp } from "@/lib/whatsapp";
 import { etiquetasDesdeMotor } from "@/lib/etiquetas";
 import { guardarMensaje } from "@/lib/mensajes";
 import { modoDe, setModo } from "@/lib/estadoChat";
+import {
+  contextoAgenda,
+  ejecutarAccionAgenda,
+  confirmacionRapida,
+  type CitaDelMotor,
+} from "@/lib/agendaBot";
 
 /**
  * Cerebro de Tino sobre WhatsApp real (Opción B, Fase 2).
@@ -22,6 +28,8 @@ type RespuestaMotor = {
   resumen_para_humano?: string | null;
   accion?: string | null;
   lead?: { clasificacion?: string } | null;
+  /** F2 (agenda): tokens elegidos por el modelo desde el bloque AGENDA REAL. */
+  cita?: CitaDelMotor | null;
 };
 
 /**
@@ -120,7 +128,42 @@ export async function responderSiBot(params: {
   const hist = await historial(empleadoId, chatId);
   if (hist.length === 0) return { accion: "sin_historial" };
 
-  const prompt = await armarPrompt(clienteId, empleadoId, hist);
+  // ── AGENDA (F2) ────────────────────────────────────────────────────────────
+  // Solo existe si el cliente tiene agenda configurada (migración 220 aplicada
+  // + servicios activos). Para un cliente SIN agenda (ej. Impresora Color)
+  // `agenda` es null y TODO este flujo queda idéntico al de siempre.
+  const agenda = await contextoAgenda(clienteId, chatId).catch(() => null);
+
+  // Confirmación rápida de cita: si el último mensaje es un "SÍ" inequívoco y
+  // hay una confirmación pendiente, se confirma POR CÓDIGO (sin modelo).
+  if (agenda) {
+    const ultimo = hist[hist.length - 1];
+    if (ultimo?.rol === "cliente") {
+      const rapida = await confirmacionRapida(clienteId, chatId, ultimo.texto);
+      if (rapida) {
+        const supaC = db();
+        const envioC = params.enviar
+          ? await params.enviar(chatId, rapida)
+          : cfg
+            ? await enviarTexto(cfg, chatId, rapida)
+            : { ok: false as const, error: "sin transporte" };
+        await guardarMensaje(supaC, {
+          empleadoId,
+          chatId,
+          rol: "empleado",
+          texto: rapida,
+          waId: "waId" in envioC ? (envioC as { waId?: string }).waId : undefined,
+          canal: "whatsapp",
+        });
+        return {
+          accion: "confirmacion_cita",
+          detalle: envioC.ok ? "enviado" : `guardado sin enviar (${envioC.error ?? "?"})`,
+        };
+      }
+    }
+  }
+
+  const prompt = await armarPrompt(clienteId, empleadoId, hist, agenda?.texto);
   if (!prompt) return { accion: "sin_prompt" };
 
   let datos: RespuestaMotor;
@@ -164,7 +207,7 @@ export async function responderSiBot(params: {
     return { accion: "error_llm_derivado", detalle: (e as Error).message };
   }
 
-  const texto =
+  let texto =
     datos.respuesta?.trim() ||
     "Prefiero confirmar eso con el equipo para no darte un dato malo 👍";
 
@@ -188,6 +231,27 @@ export async function responderSiBot(params: {
   // con el historial completo y queda mejor.
   if (params.sigueVigente && !(await params.sigueVigente())) {
     return { accion: "silencio_obsoleto", detalle: "llegó un mensaje más nuevo" };
+  }
+
+  // ── AGENDA (F2): ejecutar la acción que eligió el modelo ──────────────────
+  // Va DESPUÉS de las anti-carreras a propósito: una respuesta que no se va a
+  // enviar jamás debe crear una cita. La cita la valida y la crea CÓDIGO
+  // (tokens de la lista ofrecida + constraint anti doble-reserva en Postgres);
+  // la línea de confirmación final también la redacta código, no el modelo.
+  if (agenda) {
+    const rAgenda = await ejecutarAccionAgenda({
+      ctx: agenda,
+      accion: datos.accion,
+      cita: datos.cita,
+      clienteId,
+      empleadoId,
+      chatId,
+    });
+    if (rAgenda.tipo === "cupo_tomado") {
+      texto = rAgenda.textoReemplazo;
+    } else if ("textoExtra" in rAgenda && rAgenda.textoExtra) {
+      texto = `${texto}\n\n${rAgenda.textoExtra}`;
+    }
   }
 
   // Enviar por WhatsApp. Opción A: usa el sender pasado (Evolution). Opción B:
