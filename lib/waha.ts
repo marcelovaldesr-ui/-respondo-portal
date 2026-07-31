@@ -227,7 +227,16 @@ export function parsearWaha(payload: unknown): EntranteWaha | null {
     };
   };
 
-  if (body?.event && body.event !== "message") return null;
+  // WAHA distingue dos eventos y la diferencia es CRÍTICA:
+  //   "message"     → SOLO lo que entra (excluye los mensajes propios).
+  //   "message.any" → todo, incluidos los que escribe la persona del negocio
+  //                   desde su propio teléfono (fromMe).
+  // Bug real (31-jul): la sesión estaba suscrita solo a "message", así que las
+  // respuestas que Cecilia escribía desde su WhatsApp NO llegaban al portal. La
+  // conversación se veía a medias y —peor— Tino no las tenía en su historial,
+  // con riesgo de contradecir lo que ella acababa de acordar.
+  const evento = body?.event;
+  if (evento && evento !== "message" && evento !== "message.any") return null;
   const p = body?.payload ?? {};
   const from = p.from ?? "";
   if (!from || from.endsWith("@g.us") || from.endsWith("@broadcast") || from.includes("status@"))
