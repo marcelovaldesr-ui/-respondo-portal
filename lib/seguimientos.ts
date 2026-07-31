@@ -110,16 +110,9 @@ export async function procesarSeguimientos(opts: {
     return { enviados: 0, detalle: [`fuera_horario (hora Chile: ${horaChile(ahora)})`] };
   }
 
-  // Tope diario (los enviados desde la medianoche UTC de hoy; conservador).
   const maxDia = Number(process.env.SEGUIMIENTOS_MAX_DIA ?? 15);
   const hoy = new Date(ahora);
   hoy.setUTCHours(0, 0, 0, 0);
-  const { count: yaHoy } = await supa
-    .from("ed_seguimientos")
-    .select("id", { count: "exact", head: true })
-    .gte("enviado_en", hoy.toISOString());
-  const presupuesto = Math.max(0, maxDia - (yaHoy ?? 0));
-  if (presupuesto === 0) return { enviados: 0, detalle: ["tope_diario_alcanzado"] };
 
   const { data: pendientes, error } = await supa
     .from("ed_seguimientos")
@@ -127,9 +120,45 @@ export async function procesarSeguimientos(opts: {
     .is("enviado_en", null)
     .lte("programado_para", ahora.toISOString())
     .order("programado_para", { ascending: true })
-    .limit(Math.min(opts.limite ?? 10, presupuesto));
+    .limit(opts.limite ?? 10);
   if (error) return { enviados: 0, detalle: [`error_lectura: ${error.message}`] };
   if (!pendientes?.length) return { enviados: 0, detalle: ["sin_pendientes"] };
+
+  /**
+   * TOPE DIARIO POR CLIENTE (corregido en la auditoría del 31-jul).
+   *
+   * Antes se contaban los envíos del día de TODOS los clientes contra un mismo
+   * tope. Con un cliente no se notaba, pero al entrar el segundo los envíos de
+   * uno le habrían consumido la cuota al otro —y el afectado nunca se enteraría
+   * de por qué su asistente dejó de hacer seguimientos—. El tope existe para
+   * cuidar CADA número de WhatsApp, así que tiene que contarse por cliente.
+   */
+  const enviadosHoyPorCliente = new Map<string, number>();
+  const clientePorEmpleado = new Map<string, string>();
+  const empleadosDeLaTanda = [...new Set((pendientes as Seguimiento[]).map((s) => s.empleado_id))];
+  if (empleadosDeLaTanda.length) {
+    const { data: emps } = await supa
+      .from("ed_empleados")
+      .select("id, cliente_id")
+      .in("id", empleadosDeLaTanda);
+    for (const e of emps ?? []) clientePorEmpleado.set(e.id as string, e.cliente_id as string);
+
+    const clientes = [...new Set(clientePorEmpleado.values())];
+    for (const cid of clientes) {
+      const { data: susEmpleados } = await supa
+        .from("ed_empleados")
+        .select("id")
+        .eq("cliente_id", cid);
+      const ids = (susEmpleados ?? []).map((x) => x.id as string);
+      if (!ids.length) continue;
+      const { count } = await supa
+        .from("ed_seguimientos")
+        .select("id", { count: "exact", head: true })
+        .in("empleado_id", ids)
+        .gte("enviado_en", hoy.toISOString());
+      enviadosHoyPorCliente.set(cid, count ?? 0);
+    }
+  }
 
   let enviados = 0;
   for (const s of pendientes as Seguimiento[]) {
@@ -137,6 +166,16 @@ export async function procesarSeguimientos(opts: {
     if (intento > (s.max_intentos ?? 1)) {
       detalle.push(`${s.id.slice(0, 8)}: max_intentos superado, omitido`);
       continue;
+    }
+
+    // Cuota del cliente dueño de este seguimiento (no una bolsa compartida).
+    const cidDueno = clientePorEmpleado.get(s.empleado_id);
+    if (cidDueno) {
+      const yaHoy = enviadosHoyPorCliente.get(cidDueno) ?? 0;
+      if (yaHoy >= maxDia) {
+        detalle.push(`${s.id.slice(0, 8)}: tope diario del cliente alcanzado`);
+        continue;
+      }
     }
 
     // Respeto de 'no_contactar' (etiqueta del contacto del cliente dueño).
@@ -193,6 +232,9 @@ export async function procesarSeguimientos(opts: {
       .eq("id", s.id);
 
     enviados += 1;
+    if (cidDueno) {
+      enviadosHoyPorCliente.set(cidDueno, (enviadosHoyPorCliente.get(cidDueno) ?? 0) + 1);
+    }
     detalle.push(`${s.id.slice(0, 8)}: enviado (${s.tipo})`);
   }
 

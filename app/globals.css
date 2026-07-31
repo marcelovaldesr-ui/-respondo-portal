@@ -3,8 +3,25 @@
 @tailwind utilities;
 
 /* ===========================================================================
-   Sistema visual del portal — alineado con la web viva (Astro).
-   Referencias: Stripe, Linear, Vercel. Sobrio, mucho aire, jerarquía clara.
+   SISTEMA VISUAL DEL PORTAL
+   ---------------------------------------------------------------------------
+   Criterio (revisión 31-jul): esto es una HERRAMIENTA DE TRABAJO, no una
+   landing. Se usa muchas horas al día, así que manda la información y no la
+   decoración.
+
+   Lo que se sacó, y por qué:
+    · Resplandor de color (glow) en botones y navegación → ninguna herramienta
+      seria lo usa; grita "plantilla de dashboard".
+    · Gradientes decorativos en tarjetas de métrica → no aportan dato y hacen
+      que dos números con el mismo peso se vean distintos sin motivo.
+    · Animación de pulso permanente → distrae en una pantalla que se mira todo
+      el día.
+    · Titulares de 32 px → escala de página de marketing. Una herramienta usa
+      títulos discretos y le da el protagonismo al contenido.
+
+   Lo que se conserva: paleta de marca (azul profundo + coral como acento),
+   riel oscuro de navegación (patrón de Linear/Notion, aporta jerarquía real) y
+   los esqueletos de carga (son funcionales, no decorativos).
    =========================================================================== */
 
 :root {
@@ -29,17 +46,32 @@
   --alerta-suave: #fff7ed;
   --alerta-borde: #fed7aa;
 
-  --r-card: 16px;
-  --r-input: 12px;
-  --sombra: 0 1px 2px rgba(15, 23, 42, 0.04), 0 10px 30px -18px rgba(15, 23, 42, 0.25);
-  --sombra-alta: 0 1px 2px rgba(15, 23, 42, 0.05), 0 18px 40px -22px rgba(15, 23, 42, 0.35);
+  /* Radios: más contenidos que antes (16px se ve blando para una herramienta). */
+  --r-card: 10px;
+  --r-input: 8px;
 
-  /* Tokens premium */
-  --nav-bg: linear-gradient(180deg, #12142e 0%, #0d0f24 100%);
+  /* Sombras discretas: separan planos sin llamar la atención. */
+  --sombra: 0 1px 2px rgba(15, 23, 42, 0.05);
+  --sombra-alta: 0 4px 12px -2px rgba(15, 23, 42, 0.1), 0 2px 4px rgba(15, 23, 42, 0.05);
+
+  /* Escala tipográfica única (evita que cada página invente su tamaño). */
+  --t-titulo: 22px; /* título de página */
+  --t-seccion: 15px; /* título de bloque */
+  --t-cuerpo: 14px;
+  --t-menor: 13px;
+  --t-micro: 12px;
+
+  /* Navegación */
+  --nav-bg: #12142e;
   --nav-texto: #a7adc9;
   --nav-texto-activo: #ffffff;
   --nav-hover: rgba(255, 255, 255, 0.06);
-  --glow-indigo: 0 10px 26px -10px rgba(79, 70, 229, 0.65);
+  --nav-activo: rgba(255, 255, 255, 0.1);
+
+  /* Compatibilidad: había resplandor de color repartido por varias pantallas.
+     En vez de editar cada archivo (algunos en trabajo activo), la variable pasa
+     a ser una sombra neutra. Desaparece el efecto sin romper nada. */
+  --glow-indigo: 0 1px 2px rgba(15, 23, 42, 0.12);
 }
 
 * {
@@ -95,9 +127,31 @@ h3,
 
   /* Etiqueta pequeña de sección */
   .eyebrow {
-    @apply text-[11px] font-extrabold uppercase;
-    letter-spacing: 0.14em;
+    @apply text-[11px] font-bold uppercase;
+    letter-spacing: 0.1em;
     color: var(--muted-2);
+  }
+
+  /* ── Encabezados de página ──────────────────────────────────────────────
+     Antes cada pantalla elegía su tamaño (26, 30, 31, 32 px) y el resultado
+     era que ninguna se parecía a la otra. Ahora hay dos clases y punto. */
+  .h-pagina {
+    font-family: Montserrat, ui-sans-serif, system-ui, sans-serif;
+    font-size: var(--t-titulo);
+    font-weight: 800;
+    letter-spacing: -0.02em;
+    line-height: 1.2;
+  }
+  .h-seccion {
+    font-size: var(--t-seccion);
+    font-weight: 700;
+    letter-spacing: -0.01em;
+  }
+  /* Bajada del título: una línea, sin sermón. */
+  .sub-pagina {
+    font-size: var(--t-menor);
+    color: var(--muted);
+    margin-top: 4px;
   }
 
   /* Botones — con profundidad, brillo y estado de presión (detalle premium) */
@@ -113,38 +167,38 @@ h3,
   .btn:active {
     transform: translateY(1px) scale(0.99);
   }
+  /* Primario: color plano. Un botón es un botón, no un objeto luminoso. */
   .btn-primario {
     @apply btn text-white;
-    background: linear-gradient(180deg, #5a51f0 0%, #4f46e5 100%);
-    box-shadow:
-      inset 0 1px 0 rgba(255, 255, 255, 0.18),
-      0 1px 2px rgba(15, 23, 42, 0.12),
-      var(--glow-indigo);
+    background: var(--indigo);
+    box-shadow: 0 1px 2px rgba(15, 23, 42, 0.12);
   }
   .btn-primario:hover {
-    filter: brightness(1.06);
-    transform: translateY(-1px);
-    box-shadow:
-      inset 0 1px 0 rgba(255, 255, 255, 0.18),
-      0 2px 4px rgba(15, 23, 42, 0.12),
-      0 14px 32px -10px rgba(79, 70, 229, 0.7);
+    background: #443cd1;
   }
   .btn-primario:disabled {
-    opacity: 0.55;
-    transform: none;
-    box-shadow: none;
+    opacity: 0.5;
+    background: var(--indigo);
   }
   .btn-suave {
     @apply btn border bg-white;
-    border-color: var(--borde);
+    border-color: var(--borde-fuerte);
     color: var(--tinta);
-    box-shadow: 0 1px 2px rgba(15, 23, 42, 0.05);
   }
   .btn-suave:hover {
-    border-color: var(--borde-fuerte);
-    background: #fbfbfe;
-    transform: translateY(-1px);
-    box-shadow: 0 3px 8px -2px rgba(15, 23, 42, 0.12);
+    background: #f8f9fc;
+    border-color: #c7ccda;
+  }
+  /* Destructiva: existía el estado pero no el componente, así que cada pantalla
+     lo resolvía a su manera. Unificado acá. */
+  .btn-peligro {
+    @apply btn border bg-white;
+    border-color: #fecaca;
+    color: #b91c1c;
+  }
+  .btn-peligro:hover {
+    background: #fef2f2;
+    border-color: #fca5a5;
   }
 
   /* Campo de texto */
@@ -163,23 +217,12 @@ h3,
     box-shadow: inset 0 0 0 1px rgba(15, 23, 42, 0.05);
   }
 
-  /* Punto de estado "en vivo" con pulso (para conexión/actividad) */
+  /* Punto de estado "en vivo". Sin pulso: era una animación permanente en una
+     pantalla que se mira todo el día, y el estado no cambia tan seguido como
+     para justificar movimiento constante. El color ya comunica. */
   .punto-vivo {
-    @apply inline-block h-2 w-2 shrink-0 rounded-full;
+    @apply inline-block h-[7px] w-[7px] shrink-0 rounded-full;
     background: #34d399;
-    box-shadow: 0 0 0 0 rgba(52, 211, 153, 0.55);
-    animation: pulso-vivo 2.2s ease-out infinite;
-  }
-  @keyframes pulso-vivo {
-    0% {
-      box-shadow: 0 0 0 0 rgba(52, 211, 153, 0.55);
-    }
-    70% {
-      box-shadow: 0 0 0 6px rgba(52, 211, 153, 0);
-    }
-    100% {
-      box-shadow: 0 0 0 0 rgba(52, 211, 153, 0);
-    }
   }
   .pildora-alerta {
     @apply pildora;

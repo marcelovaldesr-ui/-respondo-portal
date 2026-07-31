@@ -35,21 +35,16 @@ function Metrica({
   extra?: React.ReactNode;
 }) {
   return (
+    /* Sin gradiente: la métrica importante se distingue por una barra de acento
+       a la izquierda, no por un fondo de color. Es más sobrio y no compite con
+       el dato, que es lo único que hay que leer. */
     <div
-      className="tarjeta p-5"
-      style={
-        destacada
-          ? {
-              background:
-                "linear-gradient(160deg, rgba(79,70,229,0.06) 0%, rgba(249,115,98,0.05) 100%)",
-              borderColor: "rgba(79,70,229,0.22)",
-            }
-          : undefined
-      }
+      className="tarjeta p-4"
+      style={destacada ? { borderLeft: "3px solid var(--indigo)" } : undefined}
     >
       <div className="eyebrow">{titulo}</div>
       <div
-        className="titular mt-2 text-[30px] font-extrabold leading-none"
+        className="titular mt-1.5 text-[24px] font-extrabold leading-none"
         style={{ color: color ?? "var(--tinta)" }}
       >
         {valor}
@@ -109,7 +104,7 @@ export default async function Analitica({
     return (
       <main className="px-5 py-7 sm:px-8 lg:px-10 lg:py-10">
         <div className="eyebrow">Resultados</div>
-        <h1 className="mt-1.5 text-[26px] font-extrabold leading-tight lg:text-[32px]">
+        <h1 className="h-pagina mt-1">
           Analítica
         </h1>
         <div className="tarjeta mt-6 p-10 text-center" style={{ color: "var(--muted)" }}>
@@ -126,10 +121,10 @@ export default async function Analitica({
   return (
     <main className="px-5 py-7 sm:px-8 lg:px-10 lg:py-10">
       <div className="eyebrow">Resultados</div>
-      <h1 className="mt-1.5 text-[26px] font-extrabold leading-tight lg:text-[32px]">
+      <h1 className="h-pagina mt-1">
         Analítica
       </h1>
-      <p className="mt-1.5 text-[15px]" style={{ color: "var(--muted)" }}>
+      <p className="sub-pagina" style={{ color: "var(--muted)" }}>
         Lo que hizo tu equipo digital, en números.
       </p>
 
@@ -208,7 +203,7 @@ export default async function Analitica({
       <div className="mt-6 grid gap-5 lg:grid-cols-2">
         {/* Cobertura */}
         <div className="tarjeta p-5">
-          <h2 className="text-[16px] font-extrabold">Quién atendió</h2>
+          <h2 className="h-seccion">Quién atendió</h2>
           <p className="mt-1 text-[13px]" style={{ color: "var(--muted)" }}>
             Respuestas enviadas en el período
           </p>
@@ -238,7 +233,7 @@ export default async function Analitica({
 
         {/* Volumen */}
         <div className="tarjeta p-5">
-          <h2 className="text-[16px] font-extrabold">Volumen</h2>
+          <h2 className="h-seccion">Volumen</h2>
           <p className="mt-1 text-[13px]" style={{ color: "var(--muted)" }}>
             Movimiento del período
           </p>
@@ -295,7 +290,7 @@ export default async function Analitica({
 
       {/* Mapa de calor */}
       <div className="tarjeta mt-5 overflow-x-auto p-5">
-        <h2 className="text-[16px] font-extrabold">Cuándo te escriben</h2>
+        <h2 className="h-seccion">Cuándo te escriben</h2>
         <p className="mt-1 text-[13px]" style={{ color: "var(--muted)" }}>
           Mensajes recibidos por día y hora (hora de Chile). Las zonas oscuras fuera del
           recuadro son las que tu asistente cubre cuando no hay nadie.

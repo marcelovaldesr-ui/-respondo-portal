@@ -172,10 +172,10 @@ export default async function Conversaciones({
       {/* La lista se actualiza sola cada 25s (el chat abierto ya lo hacía cada 4s) */}
       <RefrescarLista />
       <div className="eyebrow">Bandeja</div>
-      <h1 className="mt-1.5 text-[26px] font-extrabold leading-tight lg:text-[32px]">
+      <h1 className="h-pagina mt-1">
         Conversaciones
       </h1>
-      <p className="mt-1.5 text-[15px]" style={{ color: "var(--muted)" }}>
+      <p className="sub-pagina" style={{ color: "var(--muted)" }}>
         Todo lo que atendieron tus empleados, tal como lo vivió el cliente.
         {esperando > 0 && (
           <>

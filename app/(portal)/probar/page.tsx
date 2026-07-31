@@ -20,13 +20,35 @@ export default async function Probar() {
     nombrePublico: (e.nombre_publico as string) ?? "",
   }));
 
+  // Sin empleados el chat de prueba no tiene a quién escribirle: el componente
+  // asumía que siempre había al menos uno y reventaba al leer su nombre. Le
+  // pasaría al primer cliente recién creado.
+  if (empleados.length === 0) {
+    return (
+      <main className="mx-auto max-w-4xl px-5 py-7 sm:px-8 lg:px-10 lg:py-10">
+        <div className="eyebrow">En vivo</div>
+        <h1 className="h-pagina mt-1">Probar ahora</h1>
+        <div className="tarjeta mt-6 p-8 text-center">
+          <h2 className="h-seccion">Todavía no tienes un asistente activo</h2>
+          <p
+            className="mx-auto mt-2 max-w-md text-[13px] leading-relaxed"
+            style={{ color: "var(--muted)" }}
+          >
+            Cuando activemos a tu equipo digital vas a poder conversar con él acá, tal
+            como lo hará un cliente. Escríbenos y lo dejamos andando.
+          </p>
+        </div>
+      </main>
+    );
+  }
+
   return (
     <main className="mx-auto max-w-4xl px-5 py-7 sm:px-8 lg:px-10 lg:py-10">
       <div className="eyebrow">En vivo</div>
-      <h1 className="mt-1.5 text-[26px] font-extrabold leading-tight lg:text-[32px]">
+      <h1 className="h-pagina mt-1">
         Probar ahora
       </h1>
-      <p className="mt-1.5 max-w-2xl text-[15px]" style={{ color: "var(--muted)" }}>
+      <p className="sub-pagina max-w-2xl" style={{ color: "var(--muted)" }}>
         Escríbele a tu asistente como si fueras un cliente. Responde con los precios,
         horarios y políticas reales de {usuario.clienteNombre} — es el mismo cerebro que
         atiende tu WhatsApp.

@@ -56,16 +56,23 @@ function TarjetaFicha({ f }: { f: Ficha }) {
           >
             Eliminar
           </summary>
-          <form action={eliminarFicha} className="mt-2">
-            <input type="hidden" name="id" value={f.id} />
-            <button
-              type="submit"
-              className="btn px-3 py-1.5 text-[12px] text-white"
-              style={{ background: "#B91C1C" }}
-            >
-              Sí, eliminar definitivamente
-            </button>
-          </form>
+          {/* Confirmación en dos pasos, sin JavaScript. Se le agrega lo que
+              faltaba: decir QUÉ se borra y qué consecuencia tiene. Estas fichas
+              son lo que el asistente sabe del negocio; perder una por accidente
+              se traduce en que empieza a fallar y nadie entiende por qué. */}
+          <div className="mt-2">
+            <p className="mb-2 max-w-[280px] text-[11.5px] leading-snug" style={{ color: "var(--muted)" }}>
+              Tu asistente dejará de usar “{f.titulo}” al responder. No se puede deshacer.
+            </p>
+            <form action={eliminarFicha}>
+              <input type="hidden" name="id" value={f.id} />
+              {/* Rojo sobre blanco, no un bloque rojo sólido: un botón rojo
+                  llamativo invita a apretarlo sin leer. */}
+              <button type="submit" className="btn-peligro px-3 py-1.5 text-[12px]">
+                Sí, eliminar
+              </button>
+            </form>
+          </div>
         </details>
       </div>
     </div>
@@ -88,10 +95,10 @@ export default async function Informacion() {
   return (
     <main className="mx-auto max-w-4xl px-5 py-7 sm:px-8 lg:px-10 lg:py-10">
       <div className="eyebrow">Cerebro</div>
-      <h1 className="mt-1.5 text-[26px] font-extrabold leading-tight lg:text-[32px]">
+      <h1 className="h-pagina mt-1">
         Información del negocio
       </h1>
-      <p className="mt-1.5 max-w-2xl text-[15px]" style={{ color: "var(--muted)" }}>
+      <p className="sub-pagina max-w-2xl" style={{ color: "var(--muted)" }}>
         Esto es todo lo que tus empleados saben de {usuario.clienteNombre}. Solo pueden
         afirmar lo que está escrito acá: si algo no aparece, no lo inventan — te derivan
         la conversación.

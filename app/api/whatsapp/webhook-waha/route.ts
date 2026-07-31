@@ -28,8 +28,7 @@ export async function POST(request: NextRequest) {
   }
 
   try {
-    const r = await manejarEntranteWaha(payload);
-    console.log("[waha webhook]", r.accion, r.detalle ?? "");
+    await manejarEntranteWaha(payload);
   } catch (e) {
     console.error("[waha webhook] error:", (e as Error).message);
   }

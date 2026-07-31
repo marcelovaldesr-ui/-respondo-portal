@@ -184,7 +184,7 @@ export async function manejarEntranteWaha(
       const enUltimoMinuto = await enviosUltimoMinuto(supa, empleadoId);
       if (enUltimoMinuto >= 8) {
         const pausa = 8000 + Math.floor(Math.random() * 4000);
-        console.log(`[ritmo] ${enUltimoMinuto} envíos/min → pausa ${pausa}ms`);
+        console.warn(`[ritmo] ${enUltimoMinuto} envíos/min → pausa ${pausa}ms`);
         await new Promise((r) => setTimeout(r, pausa));
       }
       // Responder a la dirección ORIGINAL (m.jid): es la que WhatsApp espera y

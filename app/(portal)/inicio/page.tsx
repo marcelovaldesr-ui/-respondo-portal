@@ -120,10 +120,10 @@ export default async function Inicio() {
   return (
     <main className="mx-auto max-w-5xl px-5 py-7 sm:px-8 lg:px-10 lg:py-10">
       <div className="eyebrow">Resumen</div>
-      <h1 className="mt-1.5 text-[26px] font-extrabold leading-tight lg:text-[32px]">
+      <h1 className="h-pagina mt-1">
         Bienvenido, {usuario.clienteNombre}
       </h1>
-      <p className="mt-1.5 max-w-2xl text-[15px]" style={{ color: "var(--muted)" }}>
+      <p className="sub-pagina max-w-2xl" style={{ color: "var(--muted)" }}>
         {conversacionesMes > 0 ? (
           <>
             Este mes tu equipo digital atendió{" "}

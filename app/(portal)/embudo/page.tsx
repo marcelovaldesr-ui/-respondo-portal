@@ -49,8 +49,8 @@ export default async function Embudo({
   return (
     <main className="px-5 py-7 sm:px-8 lg:px-10 lg:py-10">
       <div className="eyebrow">Ventas</div>
-      <h1 className="mt-1.5 text-[26px] font-extrabold leading-tight lg:text-[32px]">Embudo</h1>
-      <p className="mt-1.5 max-w-2xl text-[15px]" style={{ color: "var(--muted)" }}>
+      <h1 className="h-pagina mt-1">Embudo</h1>
+      <p className="sub-pagina max-w-2xl" style={{ color: "var(--muted)" }}>
         En qué va cada conversación. Tu asistente las mueve solo según lo que pasa; tú
         puedes moverlas cuando quieras y ahí se quedan.
       </p>

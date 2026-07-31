@@ -118,13 +118,17 @@ export default function Sidebar({
             <Link
               key={it.href}
               href={it.href}
-              className="flex shrink-0 items-center gap-2 whitespace-nowrap rounded-xl px-3 py-2.5 text-[14.5px] font-semibold transition-all duration-150 lg:gap-3 lg:text-[15px]"
+              /* Ítem activo: fondo tenue + barra de acento a la izquierda, el
+                 patrón de Linear/Notion. Antes era un bloque índigo sólido con
+                 resplandor: llamaba más la atención que el contenido de la
+                 página, que es lo que el usuario vino a mirar. */
+              className="relative flex shrink-0 items-center gap-2 whitespace-nowrap rounded-lg px-3 py-2 text-[13.5px] font-medium transition-colors duration-100 lg:gap-2.5 lg:text-[14px]"
               style={
                 activo
                   ? {
-                      background: "var(--indigo)",
+                      background: "var(--nav-activo)",
                       color: "var(--nav-texto-activo)",
-                      boxShadow: "var(--glow-indigo)",
+                      fontWeight: 600,
                     }
                   : { color: "var(--nav-texto)" }
               }
@@ -151,6 +155,13 @@ export default function Sidebar({
                 {it.icono}
               </svg>
               {it.label}
+              {activo && (
+                <span
+                  aria-hidden="true"
+                  className="absolute left-0 top-1/2 hidden h-4 w-[3px] -translate-y-1/2 rounded-r lg:block"
+                  style={{ background: "var(--indigo)" }}
+                />
+              )}
             </Link>
           );
         })}

@@ -45,7 +45,7 @@ function Bloque({
         >
           {vinieta}
         </span>
-        <h2 className="text-[16px] font-extrabold">{titulo}</h2>
+        <h2 className="h-seccion">{titulo}</h2>
       </div>
       <p className="mt-1 text-[12.5px]" style={{ color: "var(--muted-2)" }}>
         {descripcion}
@@ -78,10 +78,10 @@ export default async function Insights({
   return (
     <main className="px-5 py-7 sm:px-8 lg:px-10 lg:py-10">
       <div className="eyebrow">Tu semana</div>
-      <h1 className="mt-1.5 text-[26px] font-extrabold leading-tight lg:text-[32px]">
+      <h1 className="h-pagina mt-1">
         Informe
       </h1>
-      <p className="mt-1.5 max-w-2xl text-[15px]" style={{ color: "var(--muted)" }}>
+      <p className="sub-pagina max-w-2xl" style={{ color: "var(--muted)" }}>
         Leemos todas las conversaciones de la semana y te decimos qué pidieron tus
         clientes, dónde se perdieron ventas y qué conviene ajustar.
       </p>
@@ -111,7 +111,7 @@ export default async function Insights({
 
       {!insight ? (
         <div className="tarjeta mt-6 p-8 text-center">
-          <h2 className="text-[17px] font-extrabold">Todavía no hay informe</h2>
+          <h2 className="h-seccion">Todavía no hay informe</h2>
           <p
             className="mx-auto mt-2 max-w-md text-[14px] leading-relaxed"
             style={{ color: "var(--muted)" }}
@@ -127,7 +127,7 @@ export default async function Insights({
         <>
           <div className="mt-6 flex flex-wrap items-center justify-between gap-3">
             <div>
-              <div className="text-[17px] font-extrabold">
+              <div className="h-seccion">
                 Semana del {rango(insight.periodoDesde, insight.periodoHasta)}
               </div>
               <div className="text-[12.5px]" style={{ color: "var(--muted-2)" }}>
@@ -143,11 +143,7 @@ export default async function Insights({
           {/* Resumen ejecutivo — lo primero que se lee */}
           <div
             className="tarjeta mt-5 p-6"
-            style={{
-              background:
-                "linear-gradient(160deg, rgba(79,70,229,0.06) 0%, rgba(249,115,98,0.05) 100%)",
-              borderColor: "rgba(79,70,229,0.22)",
-            }}
+            style={{ borderLeft: "3px solid var(--indigo)" }}
           >
             <div className="eyebrow" style={{ color: "var(--indigo)" }}>
               Lo importante
@@ -195,7 +191,7 @@ export default async function Insights({
           {/* Categorías */}
           {insight.contenido.categorias.length > 0 && (
             <div className="tarjeta mt-5 p-5">
-              <h2 className="text-[16px] font-extrabold">De qué se habló</h2>
+              <h2 className="h-seccion">De qué se habló</h2>
               <p className="mt-1 text-[12.5px]" style={{ color: "var(--muted-2)" }}>
                 Temas detectados en las conversaciones de la semana
               </p>
