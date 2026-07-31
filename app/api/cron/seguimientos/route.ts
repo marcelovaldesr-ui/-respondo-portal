@@ -4,6 +4,7 @@ import { procesarSeguimientos } from "@/lib/seguimientos";
 import { enviarTextoWaha } from "@/lib/waha";
 import { configPorCliente, enviarTexto } from "@/lib/whatsapp";
 import { secretoValido } from "@/lib/seguridad";
+import { generarInformesPendientes } from "@/lib/insightsAuto";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -56,5 +57,19 @@ export async function GET(request: NextRequest) {
     },
   });
 
-  return NextResponse.json(r);
+  // Informe semanal: solo los lunes y solo si falta. Va DESPUÉS de los envíos y
+  // en su propio try: si el análisis falla, los seguimientos ya salieron y no
+  // se ven afectados. Se puede forzar con ?informes=1 para probar.
+  let informes: { generados: number; detalle: string[] } = {
+    generados: 0,
+    detalle: ["no_evaluado"],
+  };
+  try {
+    const forzar = new URL(request.url).searchParams.get("informes") === "1";
+    informes = await generarInformesPendientes({ forzar });
+  } catch (e) {
+    informes = { generados: 0, detalle: [`error: ${(e as Error).message}`] };
+  }
+
+  return NextResponse.json({ ...r, informes });
 }
