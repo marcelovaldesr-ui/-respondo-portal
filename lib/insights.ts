@@ -233,7 +233,13 @@ export async function generarInsight(
   try {
     // Tarea de fondo: se le da aire (mide ~25 s con 40 conversaciones) y no se
     // reintenta, porque un reintento duplicaría el costo sin mejorar nada.
-    const crudo = await generarJSON(prompt, { timeoutMs: 50_000, intentosPorModelo: 1 });
+    const crudo = await generarJSON(prompt, {
+      timeoutMs: 50_000,
+      intentosPorModelo: 1,
+      // Ver el comentario de thinkingBudget en gemini.ts: sin tope esta llamada
+      // es impredecible (25 s a +43 s) y puede pasarse del límite de Vercel.
+      thinkingBudget: 2048,
+    });
     const p = JSON.parse(crudo) as Partial<ContenidoInsight>;
 
     /**

@@ -4,6 +4,12 @@ import { obtenerInsight, listarSemanas, semanaDe } from "@/lib/insights";
 import BotonInforme from "@/components/BotonInforme";
 
 export const dynamic = "force-dynamic";
+/**
+ * Generar el informe implica que el modelo razone sobre cientos de mensajes:
+ * medido en ~25-40 s. Sin esta línea, Vercel corta la función mucho antes y el
+ * botón falla sin explicación. Las Server Actions de esta ruta heredan el tope.
+ */
+export const maxDuration = 60;
 
 /** "27 jul al 2 ago" */
 function rango(desde: string, hasta: string): string {
