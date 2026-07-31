@@ -17,11 +17,13 @@ const Icono = {
   agenda: (
     <path d="M8 3v3m8-3v3M4 9h16M6 5h12a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2zM9 14l2 2 4-4" />
   ),
+  analitica: <path d="M4 20V10m5 10V4m5 16v-7m5 7V8" />,
 };
 
 const ITEMS = [
   { href: "/inicio", label: "Inicio", icono: Icono.inicio },
   { href: "/conversaciones", label: "Conversaciones", icono: Icono.chat },
+  { href: "/analitica", label: "Analítica", icono: Icono.analitica },
   { href: "/agenda", label: "Agenda", icono: Icono.agenda },
   { href: "/probar", label: "Probar ahora", icono: Icono.probar },
   { href: "/informacion", label: "Información", icono: Icono.info },
