@@ -19,6 +19,7 @@ const Icono = {
   ),
   analitica: <path d="M4 20V10m5 10V4m5 16v-7m5 7V8" />,
   embudo: <path d="M3 5h18l-7 8v6l-4 2v-8z" />,
+  clientes: <path d="M16 20v-1.5a3.5 3.5 0 0 0-3.5-3.5h-5A3.5 3.5 0 0 0 4 18.5V20M10 11.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7zM20 20v-1.5a3.5 3.5 0 0 0-2.6-3.4M15.5 4.8a3.5 3.5 0 0 1 0 6.4" />,
   informe: (
     <path d="M9 4h6a1 1 0 0 1 1 1v1h2a1 1 0 0 1 1 1v13a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h2V5a1 1 0 0 1 1-1zM9 12h6M9 16h4" />
   ),
@@ -27,6 +28,7 @@ const Icono = {
 const ITEMS = [
   { href: "/inicio", label: "Inicio", icono: Icono.inicio },
   { href: "/conversaciones", label: "Conversaciones", icono: Icono.chat },
+  { href: "/clientes", label: "Clientes", icono: Icono.clientes },
   { href: "/embudo", label: "Embudo", icono: Icono.embudo },
   { href: "/analitica", label: "Analítica", icono: Icono.analitica },
   { href: "/insights", label: "Informe", icono: Icono.informe },
