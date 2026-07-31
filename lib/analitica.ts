@@ -72,6 +72,15 @@ export type Analitica = {
   conversaciones: number;
   /** Cobertura */
   coberturaIA: number; // % de mensajes salientes que escribió la IA
+  /**
+   * Cobertura de las últimas 24 h. Existe porque el promedio del período puede
+   * mentir por omisión: si el asistente lleva pocos días, o si se importó el
+   * historial anterior (respondido a mano), el promedio lo entierra. Mostrar
+   * ambos números es más honesto que elegir el que conviene.
+   */
+  coberturaReciente: number;
+  recientesIA: number;
+  recientesHumano: number;
   convSoloIA: number;
   convMixtas: number;
   convSoloHumano: number;
@@ -163,6 +172,10 @@ export async function calcularAnalitica(
   let enviadosIA = 0;
   let enviadosHumano = 0;
   let recibidosFueraHorario = 0;
+  // Sub-conteo de las últimas 24 h (mismo recorrido, sin consulta extra).
+  const corte24h = Date.now() - 86400_000;
+  let recientesIA = 0;
+  let recientesHumano = 0;
 
   const contactos = new Set<string>();
   const rolesPorChat = new Map<string, { ia: boolean; humano: boolean }>();
@@ -187,6 +200,11 @@ export async function calcularAnalitica(
       const esIA = rol === "empleado";
       if (esIA) enviadosIA += 1;
       else enviadosHumano += 1;
+
+      if (new Date(m.creado_en as string).getTime() >= corte24h) {
+        if (esIA) recientesIA += 1;
+        else recientesHumano += 1;
+      }
 
       const r = rolesPorChat.get(chat) ?? { ia: false, humano: false };
       if (esIA) r.ia = true;
@@ -222,6 +240,12 @@ export async function calcularAnalitica(
     contactosActivos: contactos.size,
     conversaciones: rolesPorChat.size,
     coberturaIA: salientes ? Math.round((enviadosIA / salientes) * 100) : 0,
+    coberturaReciente:
+      recientesIA + recientesHumano
+        ? Math.round((recientesIA / (recientesIA + recientesHumano)) * 100)
+        : 0,
+    recientesIA,
+    recientesHumano,
     convSoloIA,
     convMixtas,
     convSoloHumano,

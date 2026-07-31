@@ -12,6 +12,7 @@ export const dynamic = "force-dynamic";
 
 const DIAS_NOMBRE = ["Dom", "Lun", "Mar", "Mié", "Jue", "Vie", "Sáb"];
 const PERIODOS = [
+  { d: 1, label: "Hoy" },
   { d: 7, label: "7 días" },
   { d: 30, label: "30 días" },
   { d: 90, label: "90 días" },
@@ -24,12 +25,14 @@ function Metrica({
   pie,
   color,
   destacada,
+  extra,
 }: {
   titulo: string;
   valor: string;
   pie?: string;
   color?: string;
   destacada?: boolean;
+  extra?: React.ReactNode;
 }) {
   return (
     <div
@@ -51,6 +54,7 @@ function Metrica({
       >
         {valor}
       </div>
+      {extra && <div className="mt-2">{extra}</div>}
       {pie && (
         <div className="mt-2 text-[12.5px] leading-snug" style={{ color: "var(--muted)" }}>
           {pie}
@@ -96,7 +100,7 @@ export default async function Analitica({
   searchParams: { dias?: string };
 }) {
   const usuario = await exigirUsuarioPortal();
-  const dias = [7, 30, 90].includes(Number(searchParams.dias))
+  const dias = [1, 7, 30, 90].includes(Number(searchParams.dias))
     ? Number(searchParams.dias)
     : 30;
   const a = await calcularAnalitica(usuario.clienteId, dias);
@@ -167,6 +171,21 @@ export default async function Analitica({
           titulo="Atendido por IA"
           valor={`${a.coberturaIA}%`}
           pie={`${a.enviadosIA} de ${a.enviadosIA + a.enviadosHumano} respuestas las escribió tu asistente`}
+          // El promedio del período puede enterrar el desempeño actual (por
+          // ejemplo si el asistente lleva pocos días). Se muestran los dos.
+          extra={
+            dias > 1 && a.recientesIA + a.recientesHumano > 0 ? (
+              <span
+                className="pildora"
+                style={{
+                  background: "var(--indigo-suave)",
+                  color: "var(--indigo)",
+                }}
+              >
+                Últimas 24 h: {a.coberturaReciente}%
+              </span>
+            ) : undefined
+          }
         />
         <Metrica
           titulo="Fuera de horario"
