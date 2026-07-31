@@ -242,16 +242,57 @@ export async function moverEtapa(
   return error ? { ok: false, error: error.message } : { ok: true };
 }
 
-/** Devuelve el control de la etapa al cálculo automático. */
+/**
+ * Devuelve el control de la etapa al cálculo automático.
+ *
+ * Ojo con un detalle que confunde si no se maneja: como la etapa nunca retrocede
+ * sola, con solo quitar la marca manual la tarjeta se quedaría donde el humano
+ * la dejó y el botón "que la maneje el asistente" no haría nada visible. Por eso
+ * acá SÍ se recalcula de inmediato desde las señales, aunque implique retroceder:
+ * es lo que la persona acaba de pedir explícitamente.
+ */
 export async function liberarEtapa(
   clienteId: string,
   chatId: string,
   supaOpt?: SupabaseClient,
 ): Promise<{ ok: boolean }> {
   const supa = supaOpt ?? db();
+
+  const [contactoR, empleadosR] = await Promise.all([
+    supa
+      .from("ed_contactos")
+      .select("etiquetas")
+      .eq("cliente_id", clienteId)
+      .eq("chat_id", chatId)
+      .maybeSingle(),
+    supa.from("ed_empleados").select("id").eq("cliente_id", clienteId),
+  ]);
+
+  const ids = (empleadosR.data ?? []).map((e) => e.id as string);
+  let tieneAgendamiento = false;
+  let tieneVenta = false;
+  if (ids.length) {
+    const { data: res } = await supa
+      .from("ed_resultados")
+      .select("tipo")
+      .in("empleado_id", ids)
+      .eq("chat_id", chatId);
+    for (const r of res ?? []) {
+      const t = r.tipo as string;
+      if (t === "agendamiento") tieneAgendamiento = true;
+      if (t === "venta_confirmada" || t === "venta_recuperada") tieneVenta = true;
+    }
+  }
+
+  const etapa = etapaSegunSenales({
+    etiquetas: ((contactoR.data?.etiquetas as string[] | null) ?? []),
+    tieneAgendamiento,
+    tieneVenta,
+  });
+
   const { error } = await supa
     .from("ed_contactos")
-    .update({ etapa_manual: false })
+    .update({ etapa_manual: false, etapa, etapa_en: new Date().toISOString() })
     .eq("cliente_id", clienteId)
     .eq("chat_id", chatId);
   return { ok: !error };
