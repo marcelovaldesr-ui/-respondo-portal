@@ -4,7 +4,7 @@ import { revalidatePath } from "next/cache";
 import { db } from "@/lib/db";
 import { obtenerUsuarioPortal } from "@/lib/auth";
 import { horaChileAUtc } from "@/lib/agendaCore";
-import { crearCita, cambiarEstado } from "@/lib/agenda";
+import { crearCita, cambiarEstado, reabrirCita as reabrirCitaDatos } from "@/lib/agenda";
 import {
   programarSeguimientosCita,
   anularSeguimientosDeCita,
@@ -347,20 +347,17 @@ export async function crearCitaManual(formData: FormData) {
  * Completada. Sin esto, un clic equivocado dejaba la cita en un callejón sin
  * salida (todos los botones desaparecían).
  *
- * Puede fallar si en el intertanto otra persona tomó ese cupo: en ese caso el
- * constraint de la base lo impide y la cita se queda como está.
+ * La lógica vive en lib/agenda.ts porque reabrir también tiene que volver a
+ * crear el evento en Google Calendar (una cancelación lo borra) — antes esta
+ * acción hacía el update acá mismo y se saltaba esa sincronización.
  */
 export async function reabrirCita(formData: FormData) {
   const clienteId = await clienteActual();
   const id = texto(formData, "id");
   if (!id) return;
 
-  const { error } = await db()
-    .from("ed_citas")
-    .update({ estado: "agendada", actualizado_en: new Date().toISOString() })
-    .eq("id", id)
-    .eq("cliente_id", clienteId);
-  if (error) console.error("[agenda] reabrirCita:", error.message);
+  const r = await reabrirCitaDatos(clienteId, id);
+  if (!r.ok) console.error("[agenda] reabrirCita:", r.error ?? r.motivo);
   revalidatePath("/agenda", "layout"); // "layout" = también /agenda/configuracion
 }
 

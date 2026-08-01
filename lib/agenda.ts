@@ -356,3 +356,48 @@ export async function cambiarEstado(
   }
   return { ok: true };
 }
+
+/**
+ * Devuelve una cita a "agendada" — el deshacer de Cancelar / No llegó /
+ * Completada. Sin esto, un clic equivocado dejaba la cita en un callejón sin
+ * salida (todos los botones desaparecían).
+ *
+ * Vive acá y no como un update suelto en la Server Action porque una cita
+ * cancelada YA SE BORRÓ del Google Calendar del dueño (ver `cambiarEstado`):
+ * reabrirla tiene que volver a escribir el evento, si no, el portal y Google
+ * quedan desincronizados en silencio — la cita reaparece en la agenda del
+ * negocio pero el dueño no la ve en su calendario.
+ *
+ * Puede fallar si en el intertanto otra persona tomó ese cupo: en ese caso el
+ * constraint de la base lo impide (23P01) y la cita se queda como está.
+ */
+export async function reabrirCita(
+  clienteId: string,
+  citaId: string,
+  supa: SupabaseClient = db(),
+): Promise<{ ok: boolean; error?: string; motivo?: "cupo_tomado" }> {
+  const { data, error } = await supa
+    .from("ed_citas")
+    .update({ estado: "agendada", actualizado_en: new Date().toISOString() })
+    .eq("id", citaId)
+    .eq("cliente_id", clienteId)
+    .select("*")
+    .maybeSingle();
+  if (error) {
+    if (error.code === EXCLUSION_VIOLATION) return { ok: false, motivo: "cupo_tomado" };
+    return { ok: false, error: error.message };
+  }
+  if (!data) return { ok: false, error: "cita no encontrada" };
+
+  const cita = data as Cita;
+  const { data: svc } = await supa
+    .from("ed_servicios")
+    .select("nombre")
+    .eq("id", cita.servicio_id)
+    .maybeSingle();
+  // El evento de Google usa un id derivado del id de la cita: esto lo vuelve
+  // a crear, no lo duplica.
+  await sincronizarCita(cita, (svc?.nombre as string) ?? "Hora reservada", supa);
+
+  return { ok: true };
+}
