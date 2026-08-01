@@ -16,6 +16,57 @@ import { metaEtiqueta } from "@/lib/etiquetas";
 
 export const dynamic = "force-dynamic";
 
+/**
+ * Iniciales del contacto para la lista.
+ *
+ * Sustituye a la foto del empleado, que se repetía idéntica en las 101 filas y
+ * por lo tanto no distinguía nada — que es lo único que un avatar tiene que
+ * hacer en una lista. El color sale del empleado que atiende, así que la
+ * información de "quién atiende" no se pierde del todo.
+ *
+ * Casos borde reales de esta base: nombres que son solo emoji ("🌸🌸"), nombres
+ * vacíos y contactos que son puro número. Por eso se filtran las letras y, si
+ * no queda ninguna, se cae a los últimos dígitos del teléfono.
+ */
+function Iniciales({ nombre, color }: { nombre: string; color: string }) {
+  const letras = (nombre.match(/\p{L}+/gu) ?? [])
+    .slice(0, 2)
+    .map((p) => p[0]!.toUpperCase())
+    .join("");
+  const texto = letras || nombre.replace(/\D/g, "").slice(-2) || "?";
+  return (
+    <span
+      aria-hidden="true"
+      className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center font-semibold"
+      style={{
+        borderRadius: "var(--r-pill)",
+        fontSize: texto.length > 1 ? "var(--t-micro)" : "var(--t-menor)",
+        background: "var(--fondo-hundido)",
+        color,
+      }}
+    >
+      {texto}
+    </span>
+  );
+}
+
+/**
+ * Qué etiqueta merece el único espacio disponible en la fila.
+ *
+ * Menor número = más urgente de saber de un vistazo. Un reclamo cambia lo que
+ * haces al abrir la conversación; "posible comprador" no.
+ */
+const ORDEN_ETIQUETA: Record<string, number> = {
+  reclamo: 0,
+  necesita_atencion: 1,
+  cotizacion: 2,
+  agendado: 3,
+  posible_comprador: 4,
+};
+function prioridadEtiqueta(v: string): number {
+  return ORDEN_ETIQUETA[v] ?? 9;
+}
+
 /** Botón de control del chat: cada uno manda su modo destino. */
 function BotonModo({
   empleadoId,
@@ -168,24 +219,26 @@ export default async function Conversaciones({
   ];
 
   return (
-    <main className="px-5 py-7 sm:px-8 lg:px-10 lg:py-10">
+    <main className="px-5 py-6 sm:px-7 lg:px-8">
       {/* La lista se actualiza sola cada 25s (el chat abierto ya lo hacía cada 4s) */}
       <RefrescarLista />
-      <div className="eyebrow">Bandeja</div>
-      <h1 className="h-pagina mt-1">
-        Conversaciones
-      </h1>
-      <p className="sub-pagina" style={{ color: "var(--muted)" }}>
-        Todo lo que atendieron tus empleados, tal como lo vivió el cliente.
-        {esperando > 0 && (
-          <>
-            {" "}
-            <strong style={{ color: "var(--alerta)" }}>
-              {esperando} te {esperando > 1 ? "esperan" : "espera"}.
-            </strong>
-          </>
-        )}
-      </p>
+      {/* Cabecera en UNA línea. Antes eran tres —rótulo "Bandeja", título y una
+          bajada explicativa— que en la pantalla más usada del portal se leen
+          una vez y después solo roban alto a la lista. */}
+      <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+        <h1 className="h-pagina">Conversaciones</h1>
+        <span className="sub-titulo">
+          {todas.length} en total
+          {esperando > 0 && (
+            <>
+              {" · "}
+              <strong style={{ color: "var(--peligro)" }}>
+                {esperando} te {esperando > 1 ? "esperan" : "espera"}
+              </strong>
+            </>
+          )}
+        </span>
+      </div>
 
       {/* Buscador: por nombre o número (clave con muchos chats).
           Los hidden conservan estado/etiqueta para que buscar no borre los filtros. */}
@@ -261,12 +314,22 @@ export default async function Conversaciones({
         </div>
       )}
 
-      <div className="mt-5 grid gap-5 lg:grid-cols-[380px_minmax(0,1fr)]">
+      {/*
+        ALTURA REAL DE LA PANTALLA.
+
+        La bandeja estaba a max-h-72vh dentro de una página que hace scroll: se
+        veían seis conversaciones y abajo quedaba un vacío muerto. En la pantalla
+        que más se usa, cada fila que entra sin scrollear cuenta.
+
+        Ahora la lista y el chat ocupan lo que queda de viewport y cada uno
+        desplaza por dentro. El 210px descuenta cabecera, buscador y filtros.
+      */}
+      <div className="mt-4 grid gap-4 lg:h-[calc(100vh-210px)] lg:grid-cols-[360px_minmax(0,1fr)]">
         {/* Lista — en móvil se oculta cuando hay una conversación abierta,
             porque los dos paneles lado a lado no caben en un teléfono. */}
         <div
           className={
-            "tarjeta max-h-[72vh] overflow-y-auto p-0 " +
+            "tarjeta overflow-y-auto p-0 max-lg:max-h-[70vh] lg:h-full " +
             (seleccion ? "hidden lg:block" : "block")
           }
         >
@@ -291,60 +354,97 @@ export default async function Conversaciones({
                   background: activo ? "var(--indigo-suave)" : undefined,
                 }}
               >
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img
-                  src={meta.avatar}
-                  alt={c.empleadoNombre}
-                  width={38}
-                  height={38}
-                  className="avatar mt-0.5 h-[38px] w-[38px]"
-                  style={{ ["--anillo" as string]: meta.color }}
-                />
+                {/*
+                  AVATAR = INICIALES DEL CONTACTO.
+
+                  Antes acá iba la foto del empleado. Con 101 conversaciones
+                  atendidas casi todas por Tino, eran 101 fotos idénticas: una
+                  columna entera de píxeles que no distingue una fila de otra,
+                  que es justo lo único que un avatar tiene que hacer en una
+                  lista. Quién atiende ya está en el filtro de arriba y en el
+                  panel de la derecha.
+                */}
+                <Iniciales nombre={c.contacto} color={meta.color} />
+
                 <div className="min-w-0 flex-1">
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="truncate text-[15px] font-bold">{c.contacto}</span>
-                    <span className="shrink-0 text-[11px]" style={{ color: "var(--muted-2)" }}>
+                  <div className="flex items-baseline justify-between gap-2">
+                    <span className="truncate font-semibold" style={{ fontSize: "var(--t-fila)" }}>
+                      {c.contacto}
+                    </span>
+                    <span
+                      className="cifra shrink-0"
+                      style={{ fontSize: "var(--t-micro)", color: "var(--muted-2)" }}
+                    >
                       {fechaCorta(c.ultimoEn)}
                     </span>
                   </div>
                   <div
-                    className="mt-0.5 truncate text-[13px]"
-                    style={{ color: "var(--muted)" }}
+                    className="mt-0.5 truncate"
+                    style={{ fontSize: "var(--t-menor)", color: "var(--muted)" }}
                   >
+                    {/* Quién habló último. Sin esto, "Sí" o "Ya" no dicen si
+                        estás esperando tú o el cliente. */}
+                    {c.ultimoRol !== "cliente" && (
+                      <span style={{ color: "var(--muted-3)" }}>Tú: </span>
+                    )}
                     {c.ultimoMensaje}
                   </div>
-                  <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
-                    <span className="pildora" style={{ background: "#F1F2F7", color: meta.color }}>
-                      {c.empleadoNombre}
-                    </span>
-                    {c.esperandoHumano && <span className="pildora-alerta">Te espera</span>}
-                    {c.modo === "humano" && !c.esperandoHumano && c.ultimoRol === "cliente" && (
-                      <span className="pildora-alerta">Responder</span>
-                    )}
-                    {c.modo === "humano" && !c.esperandoHumano && c.ultimoRol !== "cliente" && (
+
+                  {/*
+                    COMO MÁXIMO DOS PÍLDORAS.
+
+                    Cada fila mostraba el empleado + el estado + TODAS las
+                    etiquetas: cinco o seis píldoras que ocupaban tres líneas y
+                    empujaban el mensaje fuera de vista. Con seis colores por
+                    fila ninguno significa nada.
+
+                    Se conserva el estado —que es lo único que exige una
+                    decisión— y la etiqueta más informativa. El resto se cuenta.
+                  */}
+                  {(() => {
+                    const estadoPill = c.esperandoHumano ? (
+                      <span className="pildora-peligro">Te espera</span>
+                    ) : c.modo === "humano" && c.ultimoRol === "cliente" ? (
+                      <span className="pildora-peligro">Responder</span>
+                    ) : c.modo === "humano" ? (
                       <span className="pildora-indigo">Con tu equipo</span>
-                    )}
-                    {c.modo === "pausado" && (
-                      <span
-                        className="pildora"
-                        style={{ background: "#F1F2F7", color: "var(--muted)" }}
-                      >
-                        Pausado
-                      </span>
-                    )}
-                    {c.etiquetas.map((v) => {
-                      const me = metaEtiqueta(v);
-                      return (
-                        <span
-                          key={v}
-                          className="pildora"
-                          style={{ background: me.fondo, color: me.color }}
-                        >
-                          {me.label}
-                        </span>
-                      );
-                    })}
-                  </div>
+                    ) : c.modo === "pausado" ? (
+                      <span className="pildora-neutra">Pausado</span>
+                    ) : null;
+
+                    const ordenadas = [...c.etiquetas].sort(
+                      (a, b) => prioridadEtiqueta(a) - prioridadEtiqueta(b),
+                    );
+                    const principal = ordenadas[0];
+                    const resto = ordenadas.length - (principal ? 1 : 0);
+                    if (!estadoPill && !principal) return null;
+
+                    return (
+                      <div className="mt-1.5 flex items-center gap-1.5">
+                        {estadoPill}
+                        {principal &&
+                          (() => {
+                            const me = metaEtiqueta(principal);
+                            return (
+                              <span
+                                className="pildora"
+                                style={{ background: me.fondo, color: me.color }}
+                              >
+                                {me.label}
+                              </span>
+                            );
+                          })()}
+                        {resto > 0 && (
+                          <span
+                            style={{ fontSize: "var(--t-micro)", color: "var(--muted-3)" }}
+                            title={ordenadas.slice(1).map((v) => metaEtiqueta(v).label).join(", ")}
+                          >
+                            +{resto}
+                          </span>
+                        )}
+                      </div>
+                    );
+                  })()}
                 </div>
               </Link>
             );
@@ -355,7 +455,8 @@ export default async function Conversaciones({
             sentido en escritorio, donde convive con la lista. */}
         <div
           className={
-            "tarjeta-plana min-w-0 p-4 sm:p-5 " + (seleccion ? "block" : "hidden lg:block")
+            "tarjeta-plana min-w-0 overflow-y-auto p-4 sm:p-5 lg:h-full " +
+            (seleccion ? "block" : "hidden lg:block")
           }
           style={{ background: "var(--fondo)" }}
         >
