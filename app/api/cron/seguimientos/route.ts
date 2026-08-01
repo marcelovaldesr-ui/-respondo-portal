@@ -4,6 +4,7 @@ import { procesarSeguimientos } from "@/lib/seguimientos";
 import { enviarTextoWaha } from "@/lib/waha";
 import { configPorCliente, enviarTexto } from "@/lib/whatsapp";
 import { secretoValido } from "@/lib/seguridad";
+import { LATIDO_CRON_SEGUIMIENTOS, registrarLatido } from "@/lib/latidos";
 import { generarInformesPendientes } from "@/lib/insightsAuto";
 
 export const dynamic = "force-dynamic";
@@ -57,19 +58,36 @@ export async function GET(request: NextRequest) {
     },
   });
 
-  // Informe semanal: solo los lunes y solo si falta. Va DESPUÉS de los envíos y
-  // en su propio try: si el análisis falla, los seguimientos ya salieron y no
-  // se ven afectados. Se puede forzar con ?informes=1 para probar.
-  let informes: { generados: number; detalle: string[] } = {
-    generados: 0,
-    detalle: ["no_evaluado"],
-  };
+  // Deja constancia de que el cron corrió, aunque no haya enviado nada. Esto es
+  // lo que permite que /api/salud detecte que el cron DEJÓ de correr; sin el
+  // latido, un cron muerto se ve igual que un cron sin trabajo pendiente.
+  /**
+   * INFORME SEMANAL — se engancha acá y no en un cron aparte.
+   *
+   * lib/insightsAuto.ts se escribió para colgarse de este endpoint ("un solo
+   * disparador externo que mantener"), pero la llamada nunca se agregó: el
+   * módulo existía y no lo invocaba nadie. Por eso el informe del lunes no
+   * aparecía solo y había que apretar el botón a mano.
+   *
+   * Va DESPUÉS de los seguimientos y envuelto en su propio try: generar un
+   * informe usa el modelo y puede demorar o fallar, y eso jamás debe impedir
+   * que salgan los recordatorios de citas, que son los que un cliente espera a
+   * una hora concreta. Los días que no son lunes retorna al instante.
+   */
+  let informes = { generados: 0, detalle: ["no_ejecutado"] as string[] };
   try {
-    const forzar = new URL(request.url).searchParams.get("informes") === "1";
-    informes = await generarInformesPendientes({ forzar });
+    informes = await generarInformesPendientes();
   } catch (e) {
-    informes = { generados: 0, detalle: [`error: ${(e as Error).message}`] };
+    console.error("[cron] informe semanal falló (no afecta los seguimientos)", e);
+    informes = { generados: 0, detalle: ["error"] };
   }
+
+  await registrarLatido(LATIDO_CRON_SEGUIMIENTOS, {
+    enviados: r.enviados,
+    // Solo el CONTEO del detalle: esas líneas traen chat_id y no deben quedar
+    // guardadas en una tabla de diagnóstico.
+    pasos: Array.isArray(r.detalle) ? r.detalle.length : 0,
+  });
 
   return NextResponse.json({ ...r, informes });
 }
