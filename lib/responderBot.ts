@@ -5,6 +5,7 @@ import { enviarTexto, type ConfigWhatsApp } from "@/lib/whatsapp";
 import { etiquetasDesdeMotor } from "@/lib/etiquetas";
 import { guardarMensaje } from "@/lib/mensajes";
 import { modoDe, setModo } from "@/lib/estadoChat";
+import { notificarHQ } from "@/lib/hqBridge";
 import {
   contextoAgenda,
   ejecutarAccionAgenda,
@@ -204,6 +205,11 @@ export async function responderSiBot(params: {
       notificado_a: [],
     });
     console.error("[responderBot] fallo del modelo:", (e as Error).message);
+    notificarHQ({
+      tipo: "error",
+      clientePortalId: clienteId,
+      detalle: `fallo del modelo: ${(e as Error).message}`,
+    });
     return { accion: "error_llm_derivado", detalle: (e as Error).message };
   }
 
@@ -287,10 +293,18 @@ export async function responderSiBot(params: {
     });
     // TODO Fase 4: avisar a la persona (Telegram/plantilla). En Opción A ella lo
     // ve en su WhatsApp; en Opción B se le avisa por el inbox / notificación.
+    notificarHQ({
+      tipo: "human_handoff",
+      clientePortalId: clienteId,
+      detalle: datos.resumen_para_humano ?? `derivado (${datos.trigger ?? "incertidumbre"})`,
+    });
   }
 
   // Etiquetado automático de la conversación (posible comprador, cotización...).
   await autoEtiquetar(clienteId, chatId, datos);
+
+  // Puente a HQ (ver lib/hqBridge.ts): un mensaje real fue atendido y enviado.
+  notificarHQ({ tipo: "mensaje", clientePortalId: clienteId });
 
   return {
     accion: datos.escalar ? "respondio_y_escalo" : "respondio",

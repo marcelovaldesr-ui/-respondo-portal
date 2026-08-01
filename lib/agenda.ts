@@ -7,6 +7,7 @@ import {
   type VentanaSemanal,
 } from "@/lib/agendaCore";
 import { ocupadosDesdeGoogle, sincronizarCita, quitarCitaDeGoogle } from "@/lib/agendaGoogle";
+import { notificarHQ } from "@/lib/hqBridge";
 
 /**
  * CAPA DE DATOS del módulo de agenda (F0) — el contrato "AccionesAgenda".
@@ -282,6 +283,15 @@ export async function crearCita(
     .eq("id", params.servicioId)
     .maybeSingle();
   await sincronizarCita(cita, (svc?.nombre as string) ?? "Hora reservada", supa);
+
+  // Puente a HQ (ver lib/hqBridge.ts): agrupa las 3 vías de creación de cita
+  // (bot, portal, reserva pública) en un único punto — cualquier cita real
+  // cuenta para "Clientes & Bots" en HQ, sin importar el canal de origen.
+  notificarHQ({
+    tipo: "meeting_booked",
+    clientePortalId: params.clienteId,
+    detalle: `${params.nombreContacto} · ${(svc?.nombre as string) ?? "servicio"} · ${params.origen}`,
+  });
 
   return { ok: true, cita };
 }
