@@ -127,7 +127,7 @@ function Burbuja({
         }
       >
         {esHumano && (
-          <div className="mb-0.5 text-[10px] font-extrabold uppercase tracking-widest opacity-80">
+          <div className="mb-0.5 text-[10px] font-semibold uppercase tracking-widest opacity-80">
             Tu equipo
           </div>
         )}

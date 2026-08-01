@@ -59,7 +59,7 @@ export default async function PaginaReservas({ params }: Props) {
     <main className="mx-auto max-w-4xl px-4 py-8 sm:px-6 sm:py-12">
       <header className="flex flex-col items-center gap-3 text-center sm:flex-row sm:text-left">
         <div
-          className="flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl text-[19px] font-extrabold text-white"
+          className="flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl text-[19px] font-bold text-white"
           style={{ background: "linear-gradient(135deg,#4f46e5,#7c3aed)", boxShadow: "var(--glow-indigo)" }}
           aria-hidden
         >
@@ -67,7 +67,7 @@ export default async function PaginaReservas({ params }: Props) {
         </div>
         <div className="min-w-0">
           <div className="eyebrow">Reserva online</div>
-          <h1 className="titular mt-1 text-[26px] font-extrabold leading-tight sm:text-[29px]">
+          <h1 className="titular mt-1 text-[26px] font-bold leading-tight sm:text-[29px]">
             {cliente.nombre}
           </h1>
           <p className="mt-1 text-[14.5px]" style={{ color: "var(--muted)" }}>

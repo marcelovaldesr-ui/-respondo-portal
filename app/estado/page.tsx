@@ -63,7 +63,7 @@ export default async function Estado() {
   if (!autorizado) {
     return (
       <main className="mx-auto max-w-2xl px-6 py-16">
-        <div className="text-[13px] font-extrabold uppercase tracking-widest text-marca-indigo">
+        <div className="text-[13px] font-bold uppercase tracking-widest text-marca-indigo">
           Respondo · Diagnóstico
         </div>
         <h1 className="mt-3 text-[26px] font-bold text-marca-tinta">Estado del portal</h1>
@@ -89,7 +89,7 @@ export default async function Estado() {
 
   return (
     <main className="mx-auto max-w-2xl px-6 py-16">
-      <div className="text-[13px] font-extrabold uppercase tracking-widest text-marca-indigo">
+      <div className="text-[13px] font-bold uppercase tracking-widest text-marca-indigo">
         Respondo · Diagnóstico
       </div>
       <h1 className="mt-3 text-[26px] font-bold text-marca-tinta">

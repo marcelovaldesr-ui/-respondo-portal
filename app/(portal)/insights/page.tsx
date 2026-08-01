@@ -77,14 +77,12 @@ export default async function Insights({
 
   return (
     <main className="px-5 py-6 sm:px-7 lg:px-8">
-      <div style={{ fontSize: "var(--t-menor)", color: "var(--muted)" }}>Tu semana</div>
-      <h1 className="h-pagina mt-1">
-        Informe
-      </h1>
-      <p className="sub-pagina max-w-2xl" style={{ color: "var(--muted)" }}>
-        Leemos todas las conversaciones de la semana y te decimos qué pidieron tus
-        clientes, dónde se perdieron ventas y qué conviene ajustar.
-      </p>
+      <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+        <h1 className="h-pagina">Informe</h1>
+        <span className="sub-titulo">
+          Qué pidieron tus clientes esta semana y dónde se perdieron ventas
+        </span>
+      </div>
 
       {/* Semanas disponibles */}
       {semanas.length > 0 && (
@@ -150,7 +148,7 @@ export default async function Insights({
             </div>
             <ul className="mt-3 space-y-3">
               {insight.contenido.resumen.map((x, i) => (
-                <li key={i} className="text-[15px] leading-relaxed">
+                <li key={i} className="leading-relaxed" style={{ fontSize: "var(--t-cuerpo)" }}>
                   {x}
                 </li>
               ))}
