@@ -1,4 +1,5 @@
 import { db } from "@/lib/db";
+import { empleadosDeCliente } from "@/lib/empleadosCache";
 
 /**
  * Datos de la pantalla de Conversaciones. Solo lectura en v1: el portal no
@@ -24,24 +25,6 @@ export type ItemConversacion = {
   esperandoHumano: boolean;
   etiquetas: string[];
 };
-
-/**
- * Trae el mapa chat_id -> etiquetas de un cliente. Defensivo: la columna
- * etiquetas la agrega la migración 211; si aún no está, devuelve mapa vacío sin
- * romper la lista.
- */
-async function etiquetasPorChat(clienteId: string): Promise<Map<string, string[]>> {
-  const { data, error } = await db()
-    .from("ed_contactos")
-    .select("chat_id, etiquetas")
-    .eq("cliente_id", clienteId);
-  const mapa = new Map<string, string[]>();
-  if (error || !data) return mapa;
-  for (const c of data) {
-    mapa.set(c.chat_id as string, (c.etiquetas as string[] | null) ?? []);
-  }
-  return mapa;
-}
 
 export type DetalleConversacion = {
   chatId: string;
@@ -94,13 +77,15 @@ export async function estadoVentana(
   return horas < 24 ? "abierta" : "cerrada";
 }
 
-/** Empleados del cliente. Base de toda validación de acceso. */
+/**
+ * Empleados del cliente. Base de toda validación de acceso.
+ *
+ * Delega en la versión cacheada por petición: esta misma consulta la hacían
+ * también el layout, el resumen y la analítica, cada uno por su lado.
+ */
 async function empleadosDe(clienteId: string) {
-  const { data } = await db()
-    .from("ed_empleados")
-    .select("id, rol, nombre_publico")
-    .eq("cliente_id", clienteId);
-  return data ?? [];
+  const emps = await empleadosDeCliente(clienteId);
+  return emps.map((e) => ({ id: e.id, rol: e.rol, nombre_publico: e.nombrePublico }));
 }
 
 export async function listarConversaciones(
@@ -133,7 +118,7 @@ export async function listarConversaciones(
     supa
       .from("ed_contactos")
       .select(
-        "chat_id, nombre, etiqueta, ultimo_mensaje_en, ultimo_mensaje_texto, ultimo_mensaje_rol, ultimo_empleado_id, total_mensajes",
+        "chat_id, nombre, etiqueta, etiquetas, ultimo_mensaje_en, ultimo_mensaje_texto, ultimo_mensaje_rol, ultimo_empleado_id, total_mensajes",
       )
       .eq("cliente_id", clienteId)
       .not("ultimo_mensaje_en", "is", null)
@@ -145,8 +130,6 @@ export async function listarConversaciones(
       .in("empleado_id", ids)
       .is("atendida_en", null),
   ]);
-
-  const etiquetasMapa = await etiquetasPorChat(clienteId);
 
   const modoPorChat = new Map(
     (estados.data ?? []).map((e) => [`${e.empleado_id}|${e.chat_id}`, e.modo as string]),
@@ -176,7 +159,7 @@ export async function listarConversaciones(
       mensajes: (c.total_mensajes as number) ?? 0,
       modo: modoPorChat.get(clave) ?? "bot",
       esperandoHumano: pendientes.has(clave),
-      etiquetas: etiquetasMapa.get(chatId) ?? [],
+      etiquetas: ((c.etiquetas as string[] | null) ?? []),
     });
   }
 
@@ -202,7 +185,7 @@ export async function obtenerConversacion(
   const emp = empleados.find((e) => e.id === empleadoId);
   if (!emp) return null;
 
-  const [mensajes, contacto, estado, escalacion, resultados] = await Promise.all([
+  const [mensajes, contacto, estado, escalacion, resultados, ventana] = await Promise.all([
     supa
       .from("ed_mensajes")
       .select("rol, texto, creado_en")
@@ -211,7 +194,7 @@ export async function obtenerConversacion(
       .order("creado_en", { ascending: true }),
     supa
       .from("ed_contactos")
-      .select("nombre, telefono, etiqueta, etapa, total_mensajes, primer_mensaje_en, notas")
+      .select("nombre, telefono, etiqueta, etiquetas, etapa, total_mensajes, primer_mensaje_en, notas")
       .eq("cliente_id", clienteId)
       .eq("chat_id", chatId)
       .maybeSingle(),
@@ -234,6 +217,9 @@ export async function obtenerConversacion(
       .select("tipo")
       .eq("empleado_id", empleadoId)
       .eq("chat_id", chatId),
+    // Iba suelta al final, en serie. Es una consulta más que puede viajar junto
+    // a las otras cinco en vez de sumar su latencia a la de todas.
+    estadoVentana(empleadoId, chatId),
   ]);
 
   if (!mensajes.data?.length) return null;
@@ -259,8 +245,8 @@ export async function obtenerConversacion(
         }
       : null,
     resultados: (resultados.data ?? []).map((r) => r.tipo as string),
-    etiquetas: (await etiquetasPorChat(clienteId)).get(chatId) ?? [],
-    ventana: await estadoVentana(empleadoId, chatId),
+    etiquetas: ((contacto.data?.etiquetas as string[] | null) ?? []),
+    ventana,
     etapa: (contacto.data?.etapa as string) ?? "nuevo",
     // Si el resumen todavía no existe (contacto anterior al trigger), se cae al
     // largo del hilo que ya se trajo: nunca un 0 que parezca un dato real.

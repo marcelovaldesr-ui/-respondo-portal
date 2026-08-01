@@ -1,6 +1,7 @@
 import { db } from "@/lib/db";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { ZONA } from "@/lib/fechas";
+import { idsEmpleadosDeCliente } from "@/lib/empleadosCache";
 
 /**
  * ANALÍTICA DEL PORTAL — la pantalla que justifica la mensualidad.
@@ -134,11 +135,7 @@ export async function calcularAnalitica(
 ): Promise<Analitica | null> {
   const supa = db();
 
-  const { data: empleados } = await supa
-    .from("ed_empleados")
-    .select("id")
-    .eq("cliente_id", clienteId);
-  const ids = (empleados ?? []).map((e) => e.id as string);
+  const ids = await idsEmpleadosDeCliente(clienteId);
   if (!ids.length) return null;
 
   const hasta = new Date();
@@ -326,11 +323,7 @@ export async function resumenAhorro(
 ): Promise<ResumenAhorro | null> {
   const supa = supaOpt ?? db();
 
-  const { data: empleados } = await supa
-    .from("ed_empleados")
-    .select("id")
-    .eq("cliente_id", clienteId);
-  const ids = (empleados ?? []).map((e) => e.id as string);
+  const ids = await idsEmpleadosDeCliente(clienteId);
   if (!ids.length) return null;
 
   const desde = new Date(Date.now() - dias * 86400_000).toISOString();

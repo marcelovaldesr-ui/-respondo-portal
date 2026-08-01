@@ -141,7 +141,7 @@ body {
   padding: 0;
   background: var(--fondo);
   color: var(--tinta);
-  font-family: Geist, Manrope, ui-sans-serif, system-ui, sans-serif;
+  font-family: Geist, ui-sans-serif, system-ui, sans-serif;
   font-size: var(--t-cuerpo);
   -webkit-font-smoothing: antialiased;
 }

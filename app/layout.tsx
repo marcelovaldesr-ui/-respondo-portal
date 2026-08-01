@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import "./globals.css";
+import VigilanteDeVersion from "@/components/VigilanteDeVersion";
 
 export const metadata: Metadata = {
   title: "Portal Respondo",
@@ -24,17 +25,23 @@ export default function RootLayout({
 
             Se cargan por <link> y no con next/font a propósito: next/font las
             descarga en tiempo de build, y si la red falla se cae el deploy.
-            Montserrat y Manrope quedan cargadas por compatibilidad: hay pantallas
-            que aún las nombran directo y no deben quedar sin fuente durante la
-            aplicación por etapas del rediseño. */}
+            Montserrat y Manrope se quitaron el 31-jul, una vez migradas todas
+            las pantallas: eran dos familias completas descargándose en cada
+            primera carga sin que ninguna regla de CSS las usara ya. La clase
+            .titular sigue existiendo, pero hereda Geist como el resto. */}
         <link rel="preconnect" href="https://fonts.googleapis.com" />
         <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="" />
         <link
-          href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Geist+Mono:wght@400;500;600&family=Montserrat:wght@600;700;800&family=Manrope:wght@400;500;600;700;800&display=swap"
+          href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Geist+Mono:wght@400;500;600&display=swap"
           rel="stylesheet"
         />
       </head>
-      <body>{children}</body>
+      <body>
+        {/* Ataja el desajuste de versión tras un deploy antes de que llegue a
+            un borde de error. Ver components/VigilanteDeVersion.tsx. */}
+        <VigilanteDeVersion />
+        {children}
+      </body>
     </html>
   );
 }

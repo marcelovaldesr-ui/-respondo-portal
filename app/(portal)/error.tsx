@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { intentarRecargarPorVersion } from "@/lib/erroresDeVersion";
 
 /**
  * Límite de error del portal.
@@ -13,13 +14,6 @@ import { useEffect, useState } from "react";
  *
  * Para cualquier otro error mostramos el mensaje amable con recarga manual.
  */
-function esErrorDeChunk(error: Error): boolean {
-  const txt = `${error?.name ?? ""} ${error?.message ?? ""}`;
-  return /ChunkLoadError|Loading chunk|dynamically imported module|Importing a module script failed|Failed to fetch dynamically|error loading dynamically/i.test(
-    txt,
-  );
-}
-
 export default function ErrorPortal({
   error,
   reset,
@@ -28,16 +22,7 @@ export default function ErrorPortal({
   reset: () => void;
 }) {
   // Decidir en el primer render si vamos a auto-recargar (para no parpadear el cartel).
-  const [autorecarga] = useState(() => {
-    if (typeof window === "undefined") return false;
-    if (!esErrorDeChunk(error)) return false;
-    // Guardia anti-loop: no recargar más de una vez cada 12s.
-    const ahora = Date.now();
-    const ultima = Number(sessionStorage.getItem("portal_chunk_reload") || 0);
-    if (ahora - ultima < 12000) return false; // ya se recargó recién → mostrar cartel
-    sessionStorage.setItem("portal_chunk_reload", String(ahora));
-    return true;
-  });
+  const [autorecarga] = useState(() => intentarRecargarPorVersion(error));
 
   useEffect(() => {
     console.error("[portal error boundary]", error);

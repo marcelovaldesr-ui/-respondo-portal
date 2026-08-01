@@ -1,5 +1,6 @@
 import { db } from "@/lib/db";
 import { DIAS_SILENCIO } from "@/lib/embudo";
+import { idsEmpleadosDeCliente } from "@/lib/empleadosCache";
 
 /**
  * Filtro de "oportunidad viva", en el lenguaje de PostgREST.
@@ -147,17 +148,33 @@ export async function oportunidadesAbiertas(
   }
 }
 
+/**
+ * SE CUENTAN FILAS EN JS, NO CON `count: exact`.
+ *
+ * Parece al revés —contar en la base suena siempre mejor— pero medido contra la
+ * base real el 31-jul:
+ *
+ *   count exact de etapa=interesado (con el filtro `or`)    326 ms
+ *   count exact de etapa=cotizado   (con el filtro `or`)    529 ms
+ *   traer TODAS las filas de etapa abierta                  188 ms
+ *
+ * El motivo es que `count exact` obliga a Postgres a recorrer el conjunto
+ * filtrado, y el `or` del filtro de silencio le impide resolverlo por índice.
+ * Traer las filas, en cambio, aprovecha el índice y devuelve poquísimas: son
+ * las oportunidades abiertas de una pyme, no un dataset.
+ *
+ * `head: true` sigue siendo la opción correcta cuando el conjunto es GRANDE
+ * (como en resumenAhorro, que cuenta decenas de miles de mensajes). Acá no lo
+ * es, y la regla general se equivocaba.
+ */
 export async function contadoresMenu(
   clienteId: string,
 ): Promise<ContadoresMenu> {
   try {
     const supa = db();
 
-    const { data: empleados } = await supa
-      .from("ed_empleados")
-      .select("id")
-      .eq("cliente_id", clienteId);
-    const ids = (empleados ?? []).map((e) => e.id as string);
+    // Compartida con el resto de la petición: no vuelve a consultarse.
+    const ids = await idsEmpleadosDeCliente(clienteId);
     if (!ids.length) return VACIO;
 
     /**
@@ -171,33 +188,35 @@ export async function contadoresMenu(
     const corte = new Date(
       Date.now() - DIAS_ACTIVIDAD * 86400_000,
     ).toISOString();
-    const porEtapa = (etapa: string) =>
+
+    const [escalaciones, abiertas] = await Promise.all([
+      supa
+        .from("ed_escalaciones")
+        .select("chat_id")
+        .in("empleado_id", ids)
+        .is("atendida_en", null),
       soloVivas(
         supa
           .from("ed_contactos")
-          .select("chat_id", { count: "exact", head: true })
+          .select("etapa")
           .eq("cliente_id", clienteId)
-          .eq("etapa", etapa)
+          .in("etapa", ["interesado", "cotizado"])
           .gte("ultimo_mensaje_en", corte),
-      );
-
-    const [escalaciones, interesados, cotizados] = await Promise.all([
-      supa
-        .from("ed_escalaciones")
-        .select("id", { count: "exact", head: true })
-        .in("empleado_id", ids)
-        .is("atendida_en", null),
-      porEtapa("interesado"),
-      porEtapa("cotizado"),
+      ),
     ]);
 
-    const i = interesados.count ?? 0;
-    const c = cotizados.count ?? 0;
+    let interesados = 0;
+    let cotizados = 0;
+    for (const f of (abiertas.data ?? []) as { etapa: string }[]) {
+      if (f.etapa === "cotizado") cotizados++;
+      else interesados++;
+    }
+
     return {
-      esperando: escalaciones.count ?? 0,
-      porCerrar: i + c,
-      interesados: i,
-      cotizados: c,
+      esperando: (escalaciones.data ?? []).length,
+      porCerrar: interesados + cotizados,
+      interesados,
+      cotizados,
     };
   } catch {
     return VACIO;

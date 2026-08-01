@@ -1,5 +1,6 @@
 import { db } from "@/lib/db";
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { idsEmpleadosDeCliente } from "@/lib/empleadosCache";
 
 /**
  * EMBUDO — en qué va cada conversación.
@@ -162,11 +163,7 @@ export async function cargarEmbudo(
 ): Promise<TarjetaEmbudo[]> {
   const supa = supaOpt ?? db();
 
-  const { data: empleados } = await supa
-    .from("ed_empleados")
-    .select("id")
-    .eq("cliente_id", clienteId);
-  const ids = (empleados ?? []).map((e) => e.id as string);
+  const ids = await idsEmpleadosDeCliente(clienteId);
   if (!ids.length) return [];
 
   const [contactosR, resultadosR, escalacionesR] = await Promise.all([
