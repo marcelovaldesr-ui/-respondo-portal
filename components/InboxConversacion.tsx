@@ -228,15 +228,30 @@ export default function InboxConversacion({
             <div key={i} className={`flex ${delCliente ? "justify-start" : "justify-end"}`}>
               <div
                 className={
-                  "max-w-[76%] px-4 py-2.5 text-[14.5px] leading-relaxed " +
+                  "max-w-[76%] px-3.5 py-2 leading-relaxed " +
                   (delCliente
                     ? "rounded-2xl rounded-bl-md border bg-white"
-                    : "rounded-2xl rounded-br-md text-white")
+                    : "rounded-2xl rounded-br-md")
                 }
                 style={
+                  /*
+                     BURBUJA DEL ASISTENTE EN ÍNDIGO CLARO, NO EN COLOR SÓLIDO.
+
+                     Estaba en el color pleno del empleado con texto blanco. En
+                     una conversación donde el asistente escribe el 60% de los
+                     mensajes, eso son bloques saturados ocupando más de media
+                     pantalla, y el ojo termina yendo al color en vez del texto.
+                     Un chat se lee, no se mira.
+
+                     El tinte deja legible el contenido y sigue distinguiendo
+                     quién habló. El humano se queda en tinta sólida porque es la
+                     excepción —cuando una persona interviene, conviene que salte.
+                  */
                   delCliente
                     ? { borderColor: "var(--borde)" }
-                    : { background: esHumano ? "#334155" : color }
+                    : esHumano
+                      ? { background: "#334155", color: "#fff" }
+                      : { background: "var(--indigo-suave)", color: "var(--tinta)" }
                 }
               >
                 {esHumano && (

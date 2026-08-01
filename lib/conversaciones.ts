@@ -57,6 +57,18 @@ export type DetalleConversacion = {
   etiquetas: string[];
   /** Estado de la ventana de 24h de WhatsApp (Opción B). */
   ventana: "abierta" | "cerrada" | "desconocida";
+  /**
+   * CONTEXTO de la persona, para el panel lateral del rediseño.
+   *
+   * Sale todo de ed_contactos, que desde la migración 250 ya trae el total de
+   * mensajes y la fecha del primero mantenidos por trigger. O sea: es gratis.
+   * Antes, mostrar "cliente desde" habría obligado a buscar el mensaje más
+   * antiguo del chat en cada apertura.
+   */
+  etapa: string;
+  mensajesTotal: number;
+  clienteDesde: string | null;
+  notas: string | null;
 };
 
 /**
@@ -199,7 +211,7 @@ export async function obtenerConversacion(
       .order("creado_en", { ascending: true }),
     supa
       .from("ed_contactos")
-      .select("nombre, telefono, etiqueta")
+      .select("nombre, telefono, etiqueta, etapa, total_mensajes, primer_mensaje_en, notas")
       .eq("cliente_id", clienteId)
       .eq("chat_id", chatId)
       .maybeSingle(),
@@ -249,6 +261,12 @@ export async function obtenerConversacion(
     resultados: (resultados.data ?? []).map((r) => r.tipo as string),
     etiquetas: (await etiquetasPorChat(clienteId)).get(chatId) ?? [],
     ventana: await estadoVentana(empleadoId, chatId),
+    etapa: (contacto.data?.etapa as string) ?? "nuevo",
+    // Si el resumen todavía no existe (contacto anterior al trigger), se cae al
+    // largo del hilo que ya se trajo: nunca un 0 que parezca un dato real.
+    mensajesTotal: (contacto.data?.total_mensajes as number) || mensajes.data.length,
+    clienteDesde: (contacto.data?.primer_mensaje_en as string) ?? null,
+    notas: (contacto.data?.notas as string) ?? null,
   };
 }
 
