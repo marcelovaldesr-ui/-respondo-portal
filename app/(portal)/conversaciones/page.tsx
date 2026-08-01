@@ -213,7 +213,10 @@ export default async function Conversaciones({
   };
   const chips = [
     chipEstado(undefined, `Todas (${todas.length})`, "var(--indigo)"),
-    chipEstado("espera", `Te esperan (${nEspera})`, "var(--alerta)"),
+    // Coral, no ámbar: en el sistema el coral significa exclusivamente "alguien
+    // te está esperando". Este chip y la píldora de la fila tienen que ser el
+    // mismo color o el coral deja de ser una señal.
+    chipEstado("espera", `Te esperan (${nEspera})`, "var(--coral)"),
     chipEstado("humano", `Con tu equipo (${nHumano})`, "#334155"),
     chipEstado("bot", `Atiende Tino (${nBot})`, "var(--indigo)"),
   ];
@@ -271,28 +274,37 @@ export default async function Conversaciones({
           <Link
             key={ch.label}
             href={ch.href}
-            className="rounded-full px-3 py-1.5 text-[12.5px] font-bold"
-            style={ch.style}
+            className="rounded-full px-3 py-1.5 font-semibold"
+            style={{ fontSize: "var(--t-menor)", ...ch.style }}
           >
             {ch.label}
           </Link>
         ))}
       </div>
 
-      {/* Barra de filtro por etiqueta */}
+      {/*
+        Barra de filtro por etiqueta.
+
+        El chip de reset decía "Todas (101)", igual que el de la fila de arriba:
+        dos botones con el mismo texto que hacen cosas distintas (uno limpia el
+        estado, el otro la etiqueta). Ahora solo aparece cuando hay una etiqueta
+        activa, y dice qué es lo que quita.
+      */}
       {etiquetasBarra.length > 0 && (
-        <div className="mt-5 flex flex-wrap items-center gap-2">
-          <Link
-            href={urlCon({ etiqueta: undefined })}
-            className="rounded-full px-3 py-1.5 text-[12.5px] font-bold"
-            style={
-              filtro
-                ? { background: "#F1F2F7", color: "var(--muted)" }
-                : { background: "var(--indigo)", color: "#fff" }
-            }
-          >
-            Todas ({todas.length})
-          </Link>
+        <div className="mt-2 flex flex-wrap items-center gap-2">
+          {filtro && (
+            <Link
+              href={urlCon({ etiqueta: undefined })}
+              className="rounded-full px-3 py-1.5 font-semibold"
+              style={{
+                fontSize: "var(--t-menor)",
+                background: "var(--fondo-hundido)",
+                color: "var(--muted)",
+              }}
+            >
+              ✕ Quitar etiqueta
+            </Link>
+          )}
           {etiquetasBarra.map(([valor, n]) => {
             const m = metaEtiqueta(valor);
             const activa = filtro === valor;
@@ -300,12 +312,13 @@ export default async function Conversaciones({
               <Link
                 key={valor}
                 href={urlCon({ etiqueta: valor })}
-                className="rounded-full px-3 py-1.5 text-[12.5px] font-bold"
-                style={
-                  activa
+                className="rounded-full px-3 py-1.5 font-semibold"
+                style={{
+                  fontSize: "var(--t-menor)",
+                  ...(activa
                     ? { background: m.color, color: "#fff" }
-                    : { background: m.fondo, color: m.color }
-                }
+                    : { background: m.fondo, color: m.color }),
+                }}
               >
                 {m.label} ({n})
               </Link>
