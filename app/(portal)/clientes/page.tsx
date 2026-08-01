@@ -59,16 +59,38 @@ function Iniciales({ nombre }: { nombre: string }) {
 export default async function Clientes({
   searchParams,
 }: {
-  searchParams: { q?: string; etapa?: string };
+  searchParams: { q?: string; etapa?: string; p?: string };
 }) {
   const usuario = await exigirUsuarioPortal();
   const q = (searchParams.q ?? "").trim();
   const etapa = searchParams.etapa;
-  const clientes = await listarClientes(usuario.clienteId, { q, etapa });
+  const todos = await listarClientes(usuario.clienteId, { q, etapa });
+
+  /**
+   * PAGINACIÓN.
+   *
+   * Se pintaban los 101 clientes de una: 5.924 px de página. Con 400 clientes
+   * al sexto mes serían ~23.000 px y el navegador montando 400 filas en cada
+   * carga. Nadie recorre una tabla de 400 filas a scroll —para eso está el
+   * buscador— así que el largo infinito no aporta nada y cuesta cada vez más.
+   *
+   * El corte se aplica DESPUÉS de filtrar, así el buscador sigue mirando todo.
+   */
+  const POR_PAGINA = 25;
+  const paginas = Math.max(1, Math.ceil(todos.length / POR_PAGINA));
+  // Si el filtro deja menos páginas que la actual, se vuelve a la primera en vez
+  // de mostrar una tabla vacía sin explicación.
+  const pagina = Math.min(Math.max(1, Number(searchParams.p ?? 1) || 1), paginas);
+  const desde = (pagina - 1) * POR_PAGINA;
+  const clientes = todos.slice(desde, desde + POR_PAGINA);
 
   const urlCon = (cambios: Record<string, string | undefined>) => {
     const p = new URLSearchParams();
-    for (const [k, v] of Object.entries({ q, etapa, ...cambios })) if (v) p.set(k, v);
+    // Cualquier cambio de filtro vuelve a la página 1: quedarse en la 4 de un
+    // resultado que ahora tiene 2 páginas es la forma más rápida de que el
+    // usuario crea que su búsqueda no encontró nada.
+    for (const [k, v] of Object.entries({ q, etapa, p: undefined, ...cambios }))
+      if (v) p.set(k, v);
     const s = p.toString();
     return s ? `/clientes?${s}` : "/clientes";
   };
@@ -79,7 +101,7 @@ export default async function Clientes({
       <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
         <h1 className="h-pagina">Clientes</h1>
         <span className="sub-titulo">
-          {clientes.length} {clientes.length === 1 ? "persona" : "personas"}
+          {todos.length} {todos.length === 1 ? "persona" : "personas"}
           {(q || etapa) && " que coinciden"}
         </span>
       </div>
@@ -131,11 +153,19 @@ export default async function Clientes({
         ))}
       </div>
 
-      {clientes.length === 0 ? (
-        <div className="tarjeta mt-5 p-10 text-center text-[13px]" style={{ color: "var(--muted)" }}>
-          {q || etapa
-            ? "Ningún cliente coincide con la búsqueda."
-            : "Todavía no hay clientes. Aparecen solos cuando alguien te escribe."}
+      {/* Se pregunta por el TOTAL, no por la página: con la paginación, mirar el
+          slice haría que un número de página fuera de rango se viera como "no
+          hay clientes" en vez de como lo que es. */}
+      {todos.length === 0 ? (
+        <div className="tarjeta vacio mt-4">
+          <div className="vacio-titulo">
+            {q || etapa ? "Nadie coincide con eso" : "Todavía no hay clientes"}
+          </div>
+          <p className="vacio-texto">
+            {q || etapa
+              ? "Prueba con otro nombre, número o etapa."
+              : "Aparecen solos acá cuando alguien le escribe a tu asistente."}
+          </p>
         </div>
       ) : (
         /* Tabla: es una lista de datos comparables, no tarjetas. Se lee más
@@ -231,6 +261,48 @@ export default async function Clientes({
               })}
             </tbody>
           </table>
+
+          {/* Pie de paginación. Solo aparece cuando hay más de una página: con
+              12 clientes el primer día, un "1 de 1" es ruido. */}
+          {paginas > 1 && (
+            <div
+              className="flex flex-wrap items-center justify-between gap-3 px-3 py-2.5"
+              style={{ borderTop: "1px solid var(--borde)" }}
+            >
+              <span style={{ fontSize: "var(--t-menor)", color: "var(--muted-2)" }}>
+                <span className="cifra">
+                  {desde + 1}–{desde + clientes.length}
+                </span>{" "}
+                de <span className="cifra">{todos.length}</span>
+              </span>
+              <div className="flex items-center gap-2">
+                {pagina > 1 ? (
+                  <Link href={urlCon({ p: String(pagina - 1) })} className="btn-chico">
+                    ← Anterior
+                  </Link>
+                ) : (
+                  <span className="btn-chico" style={{ opacity: 0.4 }}>
+                    ← Anterior
+                  </span>
+                )}
+                <span
+                  className="cifra"
+                  style={{ fontSize: "var(--t-menor)", color: "var(--muted-2)" }}
+                >
+                  {pagina}/{paginas}
+                </span>
+                {pagina < paginas ? (
+                  <Link href={urlCon({ p: String(pagina + 1) })} className="btn-chico">
+                    Siguiente →
+                  </Link>
+                ) : (
+                  <span className="btn-chico" style={{ opacity: 0.4 }}>
+                    Siguiente →
+                  </span>
+                )}
+              </div>
+            </div>
+          )}
         </div>
       )}
     </main>

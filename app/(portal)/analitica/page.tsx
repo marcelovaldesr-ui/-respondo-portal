@@ -10,6 +10,20 @@ import {
 
 export const dynamic = "force-dynamic";
 
+/**
+ * Color de "lo respondió una persona de tu equipo".
+ *
+ * Era ámbar #F59E0B. Con el asistente cubriendo el 7% del período, ese ámbar
+ * pintaba el 93% de la pantalla: barras, leyendas y el gráfico diario casi
+ * enteros en color de advertencia. El panel se leía como si algo estuviera
+ * fallando, cuando que tu equipo conteste no es una falla — es lo normal
+ * mientras el asistente arranca.
+ *
+ * Gris: no es ni bueno ni malo, es el otro lado del reparto. El índigo queda
+ * para lo que el producto sí aporta, que es lo único que debería destacar.
+ */
+const COLOR_EQUIPO = "#A3ABBC";
+
 const DIAS_NOMBRE = ["Dom", "Lun", "Mar", "Mié", "Jue", "Vie", "Sáb"];
 const PERIODOS = [
   { d: 1, label: "Hoy" },
@@ -207,7 +221,7 @@ export default async function Analitica({
             <Barra
               tramos={[
                 { n: a.enviadosIA, color: "var(--indigo)", label: "Tu asistente" },
-                { n: a.enviadosHumano, color: "#F59E0B", label: "Tu equipo" },
+                { n: a.enviadosHumano, color: COLOR_EQUIPO, label: "Tu equipo" },
               ]}
             />
           </div>
@@ -220,7 +234,7 @@ export default async function Analitica({
                 tramos={[
                   { n: a.convSoloIA, color: "var(--indigo)", label: "Solo IA" },
                   { n: a.convMixtas, color: "#10B981", label: "Mixtas" },
-                  { n: a.convSoloHumano, color: "#F59E0B", label: "Solo tu equipo" },
+                  { n: a.convSoloHumano, color: COLOR_EQUIPO, label: "Solo tu equipo" },
                 ]}
               />
             </div>
@@ -265,7 +279,7 @@ export default async function Analitica({
                     <div
                       style={{
                         height: `${(s.humano / maxSerie) * 78}px`,
-                        background: "#F59E0B",
+                        background: COLOR_EQUIPO,
                         borderRadius: "3px 3px 0 0",
                       }}
                     />
