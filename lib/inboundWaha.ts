@@ -15,7 +15,7 @@ import {
   actualizarEstadoEnvio,
   enviosUltimoMinuto,
 } from "@/lib/mensajes";
-import { setModo, tocarVentanaEntrante } from "@/lib/estadoChat";
+import { modoDe, setModo, tocarVentanaEntrante } from "@/lib/estadoChat";
 import { responderSiBot } from "@/lib/responderBot";
 import { empleadoParaEntrante } from "@/lib/seguimientos";
 
@@ -173,6 +173,17 @@ export async function manejarEntranteWaha(
     texto: m.texto,
     waId: m.waId,
     canal: "whatsapp",
+    // Adjunto (foto/PDF/audio): se persisten sus metadatos para que la persona
+    // pueda VERLO en el inbox (vía proxy autenticado), no solo leer "[imagen]".
+    // Best-effort: si la migración 270 no está, guardarMensaje lo omite solo.
+    media: m.adjunto
+      ? {
+          url: m.adjunto.url ?? null,
+          mime: m.adjunto.mime ?? null,
+          tipo: m.adjunto.tipo,
+          nombre: m.adjunto.nombre ?? null,
+        }
+      : null,
   });
   // ANTI-DOBLE-RESPUESTA (fix 24-jul): si el índice único (empleado_id,
   // wa_message_id) rechazó el insert, este webhook es una ENTREGA DUPLICADA del
@@ -234,11 +245,25 @@ export async function manejarEntranteWaha(
   }
 
   /**
-   * ¿Esta respuesta sigue siendo la buena? Deja de serlo en cuanto el cliente
-   * manda algo más nuevo: el ciclo de ese mensaje contestará con el historial
-   * completo y quedará mejor.
+   * ¿Esta respuesta sigue siendo la buena? Deja de serlo por DOS motivos, y
+   * ambos hay que revisarlos JUSTO ANTES de mandar (esta guardia se pasa también
+   * a enviarTextoWaha, que la evalúa tras los ~6 s de "escribiendo…"):
+   *
+   *  1) Llegó un mensaje MÁS NUEVO del cliente → el ciclo de ese mensaje
+   *     contestará con el historial completo y quedará mejor.
+   *  2) Una PERSONA tomó el control (modo salió de "bot") durante ese lapso.
+   *     BUG REAL cubierto acá: responderSiBot re-lee el modo ANTES de la espera
+   *     de tipeo; si Cecilia toca "Tomar el control" DURANTE esos 6 s, esa
+   *     comprobación ya pasó y —sin esta segunda revisión— Tino mandaba su
+   *     respuesta ENCIMA del humano. Volver a mirar el modo aquí cierra esa
+   *     ventana. Un humano real no genera un mensaje de cliente más nuevo, así
+   *     que el chequeo (1) no lo detectaba.
    */
   const sigueVigente = async (): Promise<boolean> => {
+    // (2) ¿El chat sigue en manos del bot? Si una persona tomó el control (o se
+    // pausó) mientras Tino "escribía", la respuesta ya no debe salir.
+    if ((await modoDe(empleadoId, chatId, supa)) !== "bot") return false;
+    // (1) ¿Sigue siendo el último mensaje del cliente?
     if (!m.waId) return true;
     const { data } = await supa
       .from("ed_mensajes")

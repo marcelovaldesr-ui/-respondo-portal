@@ -33,14 +33,31 @@ export async function GET(request: NextRequest) {
     .maybeSingle();
   if (!emp) return NextResponse.json({ error: "No encontrado" }, { status: 404 });
 
-  const [mensajes, estado] = await Promise.all([
-    supa
+  // Se intenta traer los metadatos de adjunto (migración 270). Si esas columnas
+  // aún no existen, PostgREST devuelve error y se cae a la consulta clásica —
+  // así el inbox funciona igual aunque el deploy vaya por delante de la migración.
+  const COLS_MEDIA = "id, rol, texto, creado_en, media_tipo, media_mime, media_nombre";
+  const consultaMensajes = async () => {
+    const rica = await supa
       .from("ed_mensajes")
-      .select("rol, texto, creado_en")
+      .select(COLS_MEDIA)
       .eq("empleado_id", empleadoId)
       .eq("chat_id", chatId)
       .order("creado_en", { ascending: true })
-      .limit(200),
+      .limit(200);
+    if (!rica.error) return { data: rica.data, conMedia: true };
+    const simple = await supa
+      .from("ed_mensajes")
+      .select("id, rol, texto, creado_en")
+      .eq("empleado_id", empleadoId)
+      .eq("chat_id", chatId)
+      .order("creado_en", { ascending: true })
+      .limit(200);
+    return { data: simple.data, conMedia: false };
+  };
+
+  const [mensajes, estado] = await Promise.all([
+    consultaMensajes(),
     supa
       .from("ed_chat_estado")
       .select("modo")
@@ -51,10 +68,24 @@ export async function GET(request: NextRequest) {
 
   return NextResponse.json({
     modo: (estado.data?.modo as string) ?? "bot",
-    mensajes: (mensajes.data ?? []).map((m) => ({
-      rol: m.rol as string,
-      texto: m.texto as string,
-      creadoEn: m.creado_en as string,
-    })),
+    mensajes: (mensajes.data ?? []).map((m) => {
+      const mm = m as Record<string, unknown>;
+      const tipo = (mm.media_tipo as string | null) ?? null;
+      return {
+        id: mm.id as string,
+        rol: mm.rol as string,
+        texto: mm.texto as string,
+        creadoEn: mm.creado_en as string,
+        // Adjunto visible: el navegador lo pide por el proxy autenticado.
+        media: tipo
+          ? {
+              tipo,
+              mime: (mm.media_mime as string | null) ?? null,
+              nombre: (mm.media_nombre as string | null) ?? null,
+              url: `/api/whatsapp/media?id=${encodeURIComponent(String(mm.id))}`,
+            }
+          : null,
+      };
+    }),
   });
 }

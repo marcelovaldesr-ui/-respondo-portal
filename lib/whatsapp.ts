@@ -136,9 +136,45 @@ export type EntranteNormalizado = {
 };
 
 /**
- * Extrae los mensajes de texto de un payload del webhook de Meta.
+ * Marcador legible de un adjunto de Meta, para que un mensaje SIN texto (una
+ * foto, un audio, un PDF) NO se pierda. Mismo vocabulario que WAHA
+ * (lib/waha.ts → textoDeAdjunto) para que el prompt de Tino y el inbox lean
+ * igual en los dos transportes.
+ */
+function placeholderAdjuntoMeta(tipo: string, filename?: string): string {
+  const nombre = filename ? ` (${filename})` : "";
+  switch (tipo) {
+    case "image":
+      return `[el cliente envió una imagen${nombre}]`;
+    case "document":
+      return `[el cliente envió un archivo${nombre}]`;
+    case "audio":
+    case "voice":
+      return "[el cliente envió un audio]";
+    case "video":
+      return "[el cliente envió un video]";
+    case "sticker":
+      return "[el cliente envió un sticker]";
+    case "location":
+      return "[el cliente envió su ubicación]";
+    case "contacts":
+      return "[el cliente compartió un contacto]";
+    default:
+      return "[el cliente envió un archivo]";
+  }
+}
+
+/**
+ * Extrae los mensajes de un payload del webhook de Meta.
  * El payload trae entry[].changes[].value.messages[]. Puede venir sin mensajes
  * (por ejemplo, un evento de "entregado" o "leído"): en ese caso, lista vacía.
+ *
+ * MULTIMEDIA (fix auditoría 1-ago-2026): antes se hacía `if (type !== "text")
+ * continue`, así que en la vía OFICIAL una foto/audio/PDF del cliente se
+ * DESCARTABA entera: no se guardaba, no aparecía en el portal y Tino ni se
+ * enteraba (podía seguir preguntando lo que la foto respondía). Ahora, igual que
+ * en WAHA, un mensaje multimedia SIEMPRE se registra: si trae pie de foto se usa
+ * ese texto y se anota el adjunto; si no, se registra un marcador legible.
  */
 export function parsearWebhook(payload: unknown): EntranteNormalizado[] {
   const out: EntranteNormalizado[] = [];
@@ -153,11 +189,27 @@ export function parsearWebhook(payload: unknown): EntranteNormalizado[] {
             from?: string;
             type?: string;
             text?: { body?: string };
+            image?: { caption?: string };
+            video?: { caption?: string };
+            document?: { caption?: string; filename?: string };
+            /** Respuesta a botón de plantilla (quick reply). */
+            button?: { text?: string; payload?: string };
+            /** Respuesta a mensaje interactivo (botones / lista). */
+            interactive?: {
+              type?: string;
+              button_reply?: { id?: string; title?: string };
+              list_reply?: { id?: string; title?: string };
+            };
           }[];
         };
       }[];
     }[];
   };
+
+  // Tipos que sí acarrean intención del cliente y deben registrarse. Se dejan
+  // fuera solo los eventos de sistema/no accionables (reaction, system, order,
+  // button/interactive se procesarán en su propia fase si hace falta).
+  const IGNORADOS = new Set(["reaction", "system", "unsupported", "ephemeral"]);
 
   for (const entry of p.entry ?? []) {
     for (const change of entry.changes ?? []) {
@@ -166,14 +218,40 @@ export function parsearWebhook(payload: unknown): EntranteNormalizado[] {
       if (!phoneNumberId || !value?.messages?.length) continue;
       const nombre = value.contacts?.[0]?.profile?.name;
       for (const m of value.messages) {
-        // Por ahora solo texto; audio/imagen se maneja en una fase posterior.
-        if (m.type !== "text" || !m.text?.body || !m.from) continue;
+        const tipo = m.type ?? "";
+        if (!m.from || !tipo || IGNORADOS.has(tipo)) continue;
+
+        let texto: string;
+        if (tipo === "text") {
+          if (!m.text?.body) continue;
+          texto = m.text.body;
+        } else if (tipo === "button" || tipo === "interactive") {
+          // RESPUESTA INTERACTIVA (fix revisión independiente 1-ago-2026): el
+          // cliente TOCÓ un botón o eligió de una lista — eso ES texto suyo
+          // ("Confirmar", "Ver precios"), no un adjunto. Registrarlo como
+          // "[archivo]" habría hecho que Tino tratara una confirmación como un
+          // documento que no puede ver. Se usa el título tocado tal cual.
+          const tocado =
+            m.button?.text ??
+            m.interactive?.button_reply?.title ??
+            m.interactive?.list_reply?.title ??
+            "";
+          if (!tocado.trim()) continue; // interactivo sin texto: nada que registrar
+          texto = tocado.trim();
+        } else {
+          // Pie de foto (imagen/video/documento) o marcador del adjunto.
+          const caption =
+            m.image?.caption ?? m.video?.caption ?? m.document?.caption ?? "";
+          texto =
+            caption.trim() || placeholderAdjuntoMeta(tipo, m.document?.filename);
+        }
+
         out.push({
           phoneNumberId,
           de: m.from,
           nombre,
-          texto: m.text.body,
-          tipo: m.type,
+          texto,
+          tipo,
           waId: m.id ?? null,
         });
       }

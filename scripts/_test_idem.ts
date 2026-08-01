@@ -1,9 +1,8 @@
 /** Idempotencia real (con migración 212 aplicada). Envío simulado. */
 import "./_env"; // DEBE ir primero: lib/db.ts lee process.env al importarse
-import { manejarEntranteEvolution } from "../lib/inboundEvolution";
+import { manejarEntranteWaha } from "../lib/inboundWaha"; // portado de Evolution (eliminado 30-jul)
 import { db } from "../lib/db";
 
-const INSTANCIA = "impresora-color";
 const CID = "33333333-3333-3333-3333-333333333333";
 const TINO = "a3333333-0000-0000-0000-000000000001";
 const CHAT = "569IDEMTEST9";
@@ -11,8 +10,8 @@ const CHAT = "569IDEMTEST9";
 let sent: string[] = [];
 const mockEnviar = async (_c: string, t: string) => { sent.push(t); return { ok: true, waId: "SENT-" + Math.random() }; };
 const ev = (text: string, fromMe: boolean, id: string) => ({
-  event: "messages.upsert", instance: INSTANCIA,
-  data: { key: { remoteJid: `${CHAT}@s.whatsapp.net`, fromMe, id }, message: { conversation: text } },
+  event: "message.any", session: "default",
+  payload: { id, from: `${CHAT}@c.us`, fromMe, body: text, timestamp: Math.floor(Date.now() / 1000) },
 });
 const supa = db();
 const limpiar = async () => {
@@ -25,19 +24,19 @@ async function main() {
   await limpiar();
 
   sent = [];
-  let r = await manejarEntranteEvolution(ev("hola, idempotencia test", false, "IDEM1"), { enviar: mockEnviar });
+  let r = await manejarEntranteWaha(ev("hola, idempotencia test", false, "IDEM1"), { enviar: mockEnviar });
   console.log(`I1a cliente (id IDEM1): accion=${r.accion} envió=${sent.length}  (esperado: respondió, 1)`);
 
   sent = [];
-  r = await manejarEntranteEvolution(ev("hola, idempotencia test", false, "IDEM1"), { enviar: mockEnviar });
+  r = await manejarEntranteWaha(ev("hola, idempotencia test", false, "IDEM1"), { enviar: mockEnviar });
   console.log(`I1b MISMO id IDEM1 (webhook duplicado): accion=${r.accion} envió=${sent.length}  (esperado: duplicado, 0)`);
 
   sent = [];
-  r = await manejarEntranteEvolution(ev("Yo te atiendo (humano)", true, "HUM1"), { enviar: mockEnviar });
+  r = await manejarEntranteWaha(ev("Yo te atiendo (humano)", true, "HUM1"), { enviar: mockEnviar });
   console.log(`I2a humano (id HUM1): accion=${r.accion} envió=${sent.length}  (esperado: toma_humana, 0)`);
 
   sent = [];
-  r = await manejarEntranteEvolution(ev("Yo te atiendo (humano)", true, "HUM1"), { enviar: mockEnviar });
+  r = await manejarEntranteWaha(ev("Yo te atiendo (humano)", true, "HUM1"), { enviar: mockEnviar });
   console.log(`I2b MISMO id HUM1 (duplicado): accion=${r.accion} envió=${sent.length}  (esperado: duplicado, 0)`);
 
   // Verifica que NO se duplicaron filas del cliente en la base:

@@ -14,7 +14,7 @@ import {
   esEcoReciente,
   actualizarEstadoEnvio,
 } from "@/lib/mensajes";
-import { setModo, tocarVentanaEntrante } from "@/lib/estadoChat";
+import { modoDe, setModo, tocarVentanaEntrante } from "@/lib/estadoChat";
 import { responderSiBot } from "@/lib/responderBot";
 import { empleadoParaEntrante } from "@/lib/seguimientos";
 
@@ -208,11 +208,37 @@ export async function manejarEntranteMeta(
       opts?.enviar ??
       (async (para: string, texto: string) => enviarTexto(cfg, para, texto));
 
+    /**
+     * PARIDAD CON WAHA (fix auditoría 1-ago-2026): la vía oficial no tenía esta
+     * guardia, así que le faltaban DOS protecciones que WAHA sí tiene:
+     *  1) Doble respuesta: si el cliente escribe otro mensaje MIENTRAS el modelo
+     *     piensa (~9 s, ya fuera de la ventana del debounce), sin esto salían dos
+     *     respuestas seguidas. Ahora el ciclo viejo se descarta y contesta el del
+     *     último mensaje, con el historial completo.
+     *  2) Tino sobre el humano: si una persona toma el control entre que el modelo
+     *     responde y el envío, se re-lee el modo y la respuesta obsoleta no sale.
+     */
+    const sigueVigente = async (): Promise<boolean> => {
+      if ((await modoDe(empleadoId, chatId, supa)) !== "bot") return false;
+      if (!m.waId) return true;
+      const { data } = await supa
+        .from("ed_mensajes")
+        .select("wa_message_id")
+        .eq("empleado_id", empleadoId)
+        .eq("chat_id", chatId)
+        .eq("rol", "cliente")
+        .order("creado_en", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      return !data?.wa_message_id || data.wa_message_id === m.waId;
+    };
+
     const r = await responderSiBot({
       clienteId: cfg.clienteId,
       empleadoId,
       chatId,
       enviar,
+      sigueVigente,
     });
     resultados.push({ accion: `cliente:${r.accion}`, detalle: r.detalle });
   }

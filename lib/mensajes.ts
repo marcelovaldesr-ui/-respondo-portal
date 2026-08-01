@@ -11,6 +11,20 @@ import type { SupabaseClient } from "@supabase/supabase-js";
  * - Compatibilidad: si la columna wa_message_id todavía no existe (código 42703,
  *   migración 212 sin aplicar), reintenta sin el id para no romper nada.
  */
+export type MediaMensaje = {
+  /** URL de descarga (en WAHA requiere X-Api-Key; se sirve vía proxy autenticado). */
+  url?: string | null;
+  mime?: string | null;
+  /** imagen | documento | audio | video | sticker | ubicacion | otro */
+  tipo?: string | null;
+  nombre?: string | null;
+};
+
+/** ¿El error de PostgREST/Postgres es "columna inexistente"? (migración pendiente). */
+function esColumnaInexistente(code?: string): boolean {
+  return code === "42703" || code === "PGRST204";
+}
+
 export async function guardarMensaje(
   supa: SupabaseClient,
   m: {
@@ -20,35 +34,56 @@ export async function guardarMensaje(
     texto: string;
     waId?: string | null;
     canal?: string;
+    /** Metadatos del adjunto, si el mensaje traía uno (migración 270). */
+    media?: MediaMensaje | null;
   },
 ): Promise<{ ok: boolean; dup?: boolean }> {
+  // Núcleo: siempre existe. Nunca se pierde por columnas opcionales faltantes.
   const base: Record<string, unknown> = {
     empleado_id: m.empleadoId,
     chat_id: m.chatId,
     rol: m.rol,
     texto: m.texto,
   };
-  if (m.canal) base.canal = m.canal;
 
-  if (m.waId) {
-    const { error } = await supa
-      .from("ed_mensajes")
-      .insert({ ...base, wa_message_id: m.waId });
+  // Campos OPCIONALES, cada uno atado a una migración que puede no estar aplicada
+  // en algún entorno. Se agregan en capas y, si Postgres avisa "columna
+  // inexistente", se retira SOLO esa capa y se reintenta — preservando SIEMPRE la
+  // idempotencia por wa_message_id mientras esa columna sí exista. Antes, cualquier
+  // columna nueva faltante hacía caer al insert sin waId, perdiendo la idempotencia.
+  const conCanal = m.canal ? { canal: m.canal } : {};
+  const conWaId = m.waId ? { wa_message_id: m.waId } : {};
+  const conMedia =
+    m.media && (m.media.url || m.media.tipo || m.media.mime || m.media.nombre)
+      ? {
+          media_url: m.media.url ?? null,
+          media_mime: m.media.mime ?? null,
+          media_tipo: m.media.tipo ?? null,
+          media_nombre: m.media.nombre ?? null,
+        }
+      : {};
+
+  // Intentos de MÁS completo a MÁS mínimo. El primero que no choque con una
+  // columna inexistente gana. 23505 (índice único) = duplicado → idempotencia OK.
+  const intentos: Record<string, unknown>[] = [
+    { ...base, ...conCanal, ...conWaId, ...conMedia },
+    { ...base, ...conCanal, ...conWaId }, // sin media (270 pendiente)
+    { ...base, ...conWaId }, // sin canal (210 pendiente)
+    { ...base }, // solo núcleo (212 pendiente): sin idempotencia dura
+  ];
+
+  for (let i = 0; i < intentos.length; i++) {
+    // Saltar intentos idénticos al anterior (p.ej. sin media/canal/waId que aportar).
+    if (i > 0 && JSON.stringify(intentos[i]) === JSON.stringify(intentos[i - 1])) continue;
+    const { error } = await supa.from("ed_mensajes").insert(intentos[i]);
     if (!error) return { ok: true };
     if (error.code === "23505") return { ok: true, dup: true }; // idempotencia DB
-    // 42703 (Postgres) / PGRST204 (PostgREST) = columna wa_message_id inexistente
-    // (migración 212 pendiente) → cae al fallback SIN ruido. Otros errores sí se loguean.
-    if (error.code !== "42703" && error.code !== "PGRST204") {
-      console.error("[guardarMensaje] error:", error.code, error.message);
-    }
-  }
-
-  const { error } = await supa.from("ed_mensajes").insert(base);
-  if (error) {
-    console.error("[guardarMensaje] fallback error:", error.code, error.message);
+    if (esColumnaInexistente(error.code)) continue; // baja una capa y reintenta
+    // Error real (no de columna): loguear y cortar.
+    console.error("[guardarMensaje] error:", error.code, error.message);
     return { ok: false };
   }
-  return { ok: true };
+  return { ok: false };
 }
 
 /**

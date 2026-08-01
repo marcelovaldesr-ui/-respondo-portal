@@ -5,6 +5,7 @@ import { db } from "@/lib/db";
 import { obtenerUsuarioPortal } from "@/lib/auth";
 import { configPorCliente, enviarTexto } from "@/lib/whatsapp";
 import { enviarTextoWaha, enviarMediaWaha } from "@/lib/waha";
+import { guardarMensaje } from "@/lib/mensajes";
 import { limitar } from "@/lib/seguridad";
 
 /**
@@ -178,20 +179,24 @@ export async function responderComoHumano(formData: FormData): Promise<void> {
   // (Antes SIEMPRE usaba Cloud API → el texto de la persona no llegaba cuando el
   // cliente está en WAHA.)
   const cfg = await transporteCloud(usuario.clienteId);
-  if (cfg) {
-    await enviarTexto(cfg, chatId, texto);
-  } else {
-    await enviarTextoWaha(chatId, texto);
-  }
+  const envio = cfg
+    ? await enviarTexto(cfg, chatId, texto)
+    : await enviarTextoWaha(chatId, texto);
 
-  // Guardar el mensaje del humano. No se pone 'canal' explícito: lo aporta el
-  // default de la migración 210, y así este insert funciona aunque 210 no esté
-  // aplicada todavía (columna inexistente = se omite sin error).
-  await supa.from("ed_mensajes").insert({
-    empleado_id: empleadoId,
-    chat_id: chatId,
+  // Guardar el mensaje del humano CON el id del envío. Esto es clave: WhatsApp
+  // devuelve por el webhook (fromMe/eco de Coexistencia) el mismo mensaje que
+  // acabamos de mandar. Si NO se guarda el id, ese eco no se reconoce y termina
+  // insertado OTRA VEZ como mensaje "humano" → aparece duplicado en el inbox y
+  // en el contexto de Tino (bug auditoría 1-ago-2026). Con el id, yaProcesado lo
+  // reconoce como eco y lo ignora. guardarMensaje tolera que la columna
+  // wa_message_id/canal no exista aún (migración 212/210 sin aplicar).
+  await guardarMensaje(supa, {
+    empleadoId,
+    chatId,
     rol: "humano",
     texto,
+    waId: envio.ok ? envio.waId : undefined,
+    canal: "whatsapp",
   });
 
   revalidatePath("/conversaciones");
@@ -284,16 +289,20 @@ export async function enviarArchivoComoHumano(
   });
   if (!r.ok) return { ok: false, error: r.error || "No se pudo enviar el archivo" };
 
-  // Registro en el historial. El portal todavía no renderiza media en la línea de
-  // tiempo, así que se guarda un texto descriptivo (y el caption si lo hubo).
+  // Registro en el historial CON el id del envío (ver responderComoHumano): sin
+  // el id, el eco de este archivo se guardaría de nuevo como mensaje humano
+  // duplicado. El portal todavía no renderiza media saliente en la línea de
+  // tiempo, así que el texto es descriptivo (y el caption si lo hubo).
   const etiqueta = mimetype.startsWith("image/")
     ? "📷 Imagen enviada"
     : `📎 Archivo enviado: ${filename}`;
-  await supa.from("ed_mensajes").insert({
-    empleado_id: empleadoId,
-    chat_id: chatId,
+  await guardarMensaje(supa, {
+    empleadoId,
+    chatId,
     rol: "humano",
     texto: caption ? `${etiqueta} — ${caption}` : etiqueta,
+    waId: r.waId,
+    canal: "whatsapp",
   });
 
   revalidatePath("/conversaciones");

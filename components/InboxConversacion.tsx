@@ -7,7 +7,47 @@ import {
   enviarArchivoComoHumano,
 } from "@/app/(portal)/conversaciones/acciones";
 
-type Msg = { rol: string; texto: string; creadoEn: string };
+type Media = { tipo: string; mime: string | null; nombre: string | null; url: string };
+type Msg = { rol: string; texto: string; creadoEn: string; media?: Media | null };
+
+/**
+ * Muestra el adjunto que mandó el cliente. Se pide por el proxy autenticado
+ * (/api/whatsapp/media): la cookie de sesión viaja sola por ser mismo origen.
+ * Antes la persona solo veía el marcador "[el cliente envió una imagen]" y no
+ * podía abrir el archivo.
+ */
+function Adjunto({ media }: { media: Media }) {
+  if (media.tipo === "imagen" || media.mime?.startsWith("image/")) {
+    return (
+      <a href={media.url} target="_blank" rel="noreferrer" className="mt-1 block">
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img
+          src={media.url}
+          alt={media.nombre || "imagen del cliente"}
+          className="max-h-52 rounded-lg border"
+          style={{ borderColor: "var(--borde)" }}
+        />
+      </a>
+    );
+  }
+  if (media.tipo === "audio" || media.mime?.startsWith("audio/")) {
+    return <audio controls preload="none" src={media.url} className="mt-1 w-full max-w-[240px]" />;
+  }
+  // Documento / video / otro → enlace para abrir o descargar.
+  const etiqueta =
+    media.tipo === "video" ? "Ver video" : media.nombre ? `Abrir ${media.nombre}` : "Ver archivo";
+  return (
+    <a
+      href={media.url}
+      target="_blank"
+      rel="noreferrer"
+      className="mt-1 inline-flex items-center gap-1 rounded-lg border px-2.5 py-1.5 text-[12.5px]"
+      style={{ borderColor: "var(--borde)", color: "var(--tinta)" }}
+    >
+      📎 {etiqueta}
+    </a>
+  );
+}
 
 const hora = (iso: string) => {
   try {
@@ -260,6 +300,7 @@ export default function InboxConversacion({
                   </div>
                 )}
                 <div className="whitespace-pre-wrap">{m.texto}</div>
+                {m.media ? <Adjunto media={m.media} /> : null}
                 <div
                   className={"mt-1 text-[10.5px] " + (delCliente ? "" : "opacity-75")}
                   style={delCliente ? { color: "var(--muted-2)" } : undefined}

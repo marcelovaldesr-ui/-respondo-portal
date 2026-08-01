@@ -433,6 +433,77 @@ export async function enviarMediaWaha(
 }
 
 // ============================================================================
+// MEDIA bajo demanda (revisión independiente 1-ago-2026)
+// ============================================================================
+
+/**
+ * Re-ancla una URL de archivo de WAHA sobre la URL pública configurada.
+ *
+ * POR QUÉ (verificado en vivo contra el WAHA real): WAHA Core no conoce su URL
+ * pública y devuelve `http://localhost:8080/api/files/...`. Ese host solo existe
+ * DENTRO del contenedor de Railway; desde afuera hay que usar el mismo path
+ * sobre WAHA_API_URL (probado: sirve el archivo con X-Api-Key, y 401 sin ella).
+ *
+ * Además, re-anclar SIEMPRE al host configurado elimina el riesgo SSRF de raíz:
+ * pase lo que pase con el valor guardado en la base, solo se descarga desde el
+ * host de WAHA propio.
+ */
+export function reanclarUrlWaha(url: string): string | null {
+  if (!BASE) return null;
+  try {
+    const u = new URL(url);
+    const base = new URL(BASE);
+    return `${base.origin}${u.pathname}${u.search}`;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Resuelve la URL de descarga del adjunto de un mensaje, pidiéndosela a WAHA
+ * por id (endpoint GET /api/{session}/chats/{chat}/messages/{id} con
+ * downloadMedia=true — verificado que funciona en el tier CORE con motor GOWS).
+ *
+ * Contexto: en Core, el WEBHOOK llega con hasMedia=true pero media=null, así
+ * que al momento de guardar el mensaje no hay URL. Este fetch bajo demanda es
+ * lo que le permite a la persona ABRIR el adjunto desde el inbox igual.
+ *
+ * `chatId` = dígitos del número real (clave de la conversación en la BD);
+ * `waId` = id normalizado GOWS. El id serializado que espera WAHA para un
+ * mensaje ENTRANTE es `false_<chat>@c.us_<GOWSID>`. Para contactos que llegan
+ * por LID puede no calzar: en ese caso se devuelve null y el visor simplemente
+ * no muestra el archivo (best-effort, jamás rompe).
+ */
+export async function mediaDeMensajeWaha(
+  chatId: string,
+  waId: string,
+): Promise<{ url: string; mimetype?: string } | null> {
+  const key = process.env.WAHA_API_KEY;
+  if (!key || !BASE) return null;
+  const digitos = chatId.replace(/\D/g, "");
+  if (!digitos || !waId) return null;
+  const chatJid = `${digitos}@c.us`;
+  const mensajeId = `false_${chatJid}_${waId}`;
+  try {
+    const r = await fetch(
+      `${BASE}/api/${SESSION}/chats/${encodeURIComponent(chatJid)}/messages/${encodeURIComponent(mensajeId)}?downloadMedia=true`,
+      { headers: { "X-Api-Key": key }, signal: AbortSignal.timeout(25_000) },
+    );
+    if (!r.ok) return null;
+    const j = (await r.json().catch(() => null)) as {
+      media?: { url?: string; mimetype?: string } | null;
+    } | null;
+    const cruda = j?.media?.url;
+    if (!cruda) return null;
+    const publica = reanclarUrlWaha(cruda);
+    if (!publica) return null;
+    return { url: publica, mimetype: j?.media?.mimetype };
+  } catch {
+    return null;
+  }
+}
+
+// ============================================================================
 // ACKs de entrega (evento "message.ack")
 // ============================================================================
 
