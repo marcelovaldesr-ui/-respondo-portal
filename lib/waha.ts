@@ -39,7 +39,61 @@ export type EntranteWaha = {
   nombre?: string;
   fromMe: boolean;
   waId: string | null; // id normalizado (GOWS) → idempotencia/eco/ack
+  /**
+   * ADJUNTO, si el mensaje traía uno.
+   *
+   * BUG REAL (31-jul-2026): el parser hacía `if (!texto) return null`, o sea que
+   * una foto SIN pie de foto se descartaba entera. No es que el asistente no la
+   * "viera": el mensaje no se guardaba, no aparecía en el portal y la persona
+   * del negocio tampoco se enteraba. Para el sistema, el cliente no había
+   * escrito nada.
+   *
+   * Pasó con Erika Pedreros: mandó el diseño por foto, el sistema lo tiró, y el
+   * asistente siguió preguntando "¿ya tienes el diseño?" tres veces seguidas.
+   * Desde afuera parecía que no leía; en realidad no había nada que leer.
+   */
+  adjunto?: {
+    tipo: "imagen" | "documento" | "audio" | "video" | "sticker" | "ubicacion" | "otro";
+    /** URL de descarga que expone WAHA, si la trae. */
+    url?: string;
+    /** Nombre del archivo, cuando es un documento. */
+    nombre?: string;
+    mime?: string;
+  };
 };
+
+/** Traduce el tipo que informa WAHA al vocabulario del portal. */
+function tipoDeAdjunto(mime: string, tipoWaha: string): NonNullable<EntranteWaha["adjunto"]>["tipo"] {
+  const t = `${tipoWaha} ${mime}`.toLowerCase();
+  if (t.includes("sticker")) return "sticker";
+  if (t.includes("image")) return "imagen";
+  if (t.includes("video")) return "video";
+  if (t.includes("audio") || t.includes("ptt") || t.includes("voice")) return "audio";
+  if (t.includes("location")) return "ubicacion";
+  if (t.includes("document") || t.includes("application") || t.includes("pdf")) return "documento";
+  return "otro";
+}
+
+/** Cómo se lee un adjunto en el hilo, tanto para el asistente como en el portal. */
+export function textoDeAdjunto(a: NonNullable<EntranteWaha["adjunto"]>): string {
+  const nombre = a.nombre ? ` (${a.nombre})` : "";
+  switch (a.tipo) {
+    case "imagen":
+      return `[el cliente envió una imagen${nombre}]`;
+    case "documento":
+      return `[el cliente envió un archivo${nombre}]`;
+    case "audio":
+      return "[el cliente envió un audio]";
+    case "video":
+      return "[el cliente envió un video]";
+    case "sticker":
+      return "[el cliente envió un sticker]";
+    case "ubicacion":
+      return "[el cliente envió su ubicación]";
+    default:
+      return "[el cliente envió un archivo]";
+  }
+}
 
 /**
  * Normaliza el id de un mensaje de WAHA a su parte GOWS estable.
@@ -168,6 +222,26 @@ export async function clientePorInstanciaWaha(
 export async function enviarTextoWaha(
   destino: string,
   texto: string,
+  opts?: {
+    /**
+     * Última comprobación antes de mandar de verdad.
+     *
+     * POR QUÉ HACE FALTA ACÁ Y NO SOLO ANTES (bug real, 31-jul-2026)
+     * Entre que se decide responder y que el mensaje sale pasan hasta 6 segundos
+     * de "escribiendo…". La revalidación de responderSiBot ocurre ANTES de esa
+     * espera, así que un mensaje del cliente que llegue durante los 6 segundos
+     * no la ve, y la respuesta —ya obsoleta— se manda igual.
+     *
+     * Pasó exactamente así con Erika Pedreros:
+     *   20:08  se valida: el último mensaje es "Mismo" → sigue vigente
+     *   20:12  el cliente escribe "Es ese mismo"
+     *   20:14  sale la respuesta vieja → dos mensajes casi iguales seguidos
+     *
+     * Comprobar al final cierra esa ventana: mientras el asistente "escribe",
+     * el cliente puede seguir escribiendo, y eso es lo normal en WhatsApp.
+     */
+    vigente?: () => Promise<boolean>;
+  },
 ): Promise<{ ok: boolean; waId?: string; error?: string }> {
   const key = process.env.WAHA_API_KEY;
   if (!key || !BASE) return { ok: false, error: "Falta WAHA_API_URL/WAHA_API_KEY" };
@@ -189,6 +263,11 @@ export async function enviarTextoWaha(
       });
     } catch {
       /* presencia opcional */
+    }
+
+    // Último control, ya sin nada más en el medio.
+    if (opts?.vigente && !(await opts.vigente())) {
+      return { ok: false, error: "obsoleto:llego_mensaje_nuevo" };
     }
 
     const r = await fetch(`${BASE}/api/sendText`, {
@@ -223,7 +302,18 @@ export function parsearWaha(payload: unknown): EntranteWaha | null {
       body?: string;
       timestamp?: number;
       notifyName?: string;
-      _data?: { notifyName?: string; pushName?: string };
+      hasMedia?: boolean;
+      media?: { url?: string; mimetype?: string; filename?: string } | null;
+      type?: string;
+      location?: unknown;
+      _data?: {
+        notifyName?: string;
+        pushName?: string;
+        type?: string;
+        mimetype?: string;
+        caption?: string;
+        filename?: string;
+      };
     };
   };
 
@@ -242,7 +332,38 @@ export function parsearWaha(payload: unknown): EntranteWaha | null {
   if (!from || from.endsWith("@g.us") || from.endsWith("@broadcast") || from.includes("status@"))
     return null;
 
-  const texto = (p.body ?? "").trim();
+  /**
+   * ADJUNTOS — antes acá se hacía `if (!texto) return null` y se perdía el
+   * mensaje entero.
+   *
+   * Un mensaje de WhatsApp puede no tener texto y aun así decir mucho: una foto
+   * del diseño, un PDF, un audio. Descartarlo no solo dejaba ciego al
+   * asistente; borraba el mensaje del portal, así que la persona del negocio
+   * tampoco sabía que había llegado algo. Ahora el mensaje SIEMPRE se registra;
+   * si no trae texto, se registra qué llegó.
+   */
+  const mime = p.media?.mimetype ?? p._data?.mimetype ?? "";
+  const tipoCrudo = p.type ?? p._data?.type ?? "";
+  const hayAdjunto =
+    Boolean(p.hasMedia) || Boolean(p.media?.url) || Boolean(mime) ||
+    /image|video|audio|ptt|document|sticker|location/i.test(tipoCrudo);
+
+  const adjunto = hayAdjunto
+    ? {
+        tipo: tipoDeAdjunto(mime, tipoCrudo),
+        url: p.media?.url || undefined,
+        nombre: p.media?.filename || p._data?.filename || undefined,
+        mime: mime || undefined,
+      }
+    : undefined;
+
+  // El pie de foto viaja a veces en body y a veces en _data.caption.
+  const escrito = (p.body ?? p._data?.caption ?? "").trim();
+  // Si vino con pie de foto, se conserva el texto Y se anota el adjunto: el
+  // asistente necesita ambos para entender ("mira esta medida" + la foto).
+  const texto = escrito || (adjunto ? textoDeAdjunto(adjunto) : "");
+
+  // Sin texto y sin adjunto no hay nada que registrar (eventos de sistema).
   if (!texto) return null;
 
   // GUARDIA DE FRESCURA (clave al conectar un número REAL con historial):
@@ -263,6 +384,7 @@ export function parsearWaha(payload: unknown): EntranteWaha | null {
     nombre: p.notifyName ?? p._data?.notifyName ?? p._data?.pushName ?? undefined,
     fromMe: p.fromMe === true,
     waId: normalizeWaId(p.id),
+    adjunto,
   };
 }
 

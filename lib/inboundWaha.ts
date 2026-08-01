@@ -21,6 +21,49 @@ import { empleadoParaEntrante } from "@/lib/seguimientos";
 
 export type ResultadoEntrante = { accion: string; detalle?: string };
 
+/** Espera corta: el mensaje se entiende solo, conviene responder rápido. */
+const ESPERA_CORTA = 6000;
+/** Espera larga: parece que el cliente sigue escribiendo. */
+const ESPERA_LARGA = 15000;
+
+/**
+ * CUÁNTO ESPERAR ANTES DE RESPONDER.
+ *
+ * Antes eran 6 s para todo. Mucha gente escribe en WhatsApp a pedazos —"Ese" …
+ * "Mismo" … "Es ese mismo"— con 15 s entre uno y otro, así que cada fragmento
+ * caía fuera de la ventana y disparaba su propia respuesta. El asistente
+ * terminaba preguntando tres veces lo mismo porque nunca vio la frase completa.
+ *
+ * La regla es simple: si el mensaje se entiende solo, contestar rápido; si
+ * parece que viene más, esperar.
+ *
+ * EL SALUDO ES LA EXCEPCIÓN IMPORTANTE. "Hola" es corto y sin puntuación, o sea
+ * que la regla general lo mandaría a esperar 15 s. Pero es el PRIMER contacto:
+ * ahí la velocidad es justamente lo que impresiona, y nadie manda "Hola" en
+ * pedazos. Se responde rápido.
+ *
+ * Al revés, un mensaje de uno o dos caracteres ("?", "y") es siempre un
+ * pedazo, aunque termine en signo de pregunta.
+ */
+export function ventanaDeEspera(texto: string): number {
+  const s = texto.trim();
+  if (!s) return ESPERA_CORTA;
+
+  // Puro signo o una letra: continuación de lo anterior, seguro.
+  if (s.length <= 2) return ESPERA_LARGA;
+
+  // Saludos y aperturas: se entienden solos y abren la conversación.
+  if (/^(hola|holaa+|buenas|buen[oa]s?\s+(d[ií]as?|tardes|noches)|hey|ola|alo|aló)\b/i.test(s)) {
+    return ESPERA_CORTA;
+  }
+
+  // Frase corta sin cierre: probablemente sigue escribiendo.
+  const palabras = s.split(/\s+/).length;
+  if (palabras <= 4 && !/[.?!…]$/.test(s)) return ESPERA_LARGA;
+
+  return ESPERA_CORTA;
+}
+
 /**
  * Orquesta un evento entrante de WAHA (WhatsApp Opción A — motor GOWS).
  * Gemelo de lib/inboundEvolution.ts: MISMO cerebro, MISMA convivencia
@@ -159,7 +202,20 @@ export async function manejarEntranteWaha(
   // Esperamos una ventana corta; si en ese lapso el cliente manda un mensaje
   // MÁS NUEVO, esta invocación se retira y deja que la del último responda —
   // su historial ya incluirá todos. Evita respuestas solapadas y desordenadas.
-  const DEBOUNCE_MS = 6000;
+  /**
+   * DEBOUNCE ADAPTATIVO.
+   *
+   * Eran 6 s fijos. Mucha gente escribe en WhatsApp a pedazos —"Ese" … "Mismo"
+   * … "Es ese mismo"— con 15 s entre uno y otro, así que cada fragmento caía
+   * fuera de la ventana y disparaba su propia respuesta. El asistente terminaba
+   * preguntando tres veces lo mismo porque nunca vio la frase completa.
+   *
+   * Un mensaje corto y sin puntuación final casi siempre está incompleto: el
+   * cliente sigue escribiendo. Para esos se espera más. Un mensaje largo o que
+   * termina en punto o signo de pregunta ya dice todo lo que iba a decir, y ahí
+   * esperar de más solo hace que el asistente parezca lento.
+   */
+  const DEBOUNCE_MS = ventanaDeEspera(m.texto ?? "");
   if (m.waId) {
     await new Promise((r) => setTimeout(r, DEBOUNCE_MS));
     const { data: ultimo } = await supa
@@ -177,6 +233,25 @@ export async function manejarEntranteWaha(
     }
   }
 
+  /**
+   * ¿Esta respuesta sigue siendo la buena? Deja de serlo en cuanto el cliente
+   * manda algo más nuevo: el ciclo de ese mensaje contestará con el historial
+   * completo y quedará mejor.
+   */
+  const sigueVigente = async (): Promise<boolean> => {
+    if (!m.waId) return true;
+    const { data } = await supa
+      .from("ed_mensajes")
+      .select("wa_message_id")
+      .eq("empleado_id", empleadoId)
+      .eq("chat_id", chatId)
+      .eq("rol", "cliente")
+      .order("creado_en", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    return !data?.wa_message_id || data.wa_message_id === m.waId;
+  };
+
   const enviar =
     opts?.enviar ??
     (async (_chatId: string, texto: string) => {
@@ -190,7 +265,7 @@ export async function manejarEntranteWaha(
       // Responder a la dirección ORIGINAL (m.jid): es la que WhatsApp espera y
       // la que ya entrega bien (con @lid o @c.us). La unificación es solo de la
       // CLAVE del chat (chatId = número real), no del transporte.
-      return enviarTextoWaha(m.jid, texto);
+      return enviarTextoWaha(m.jid, texto, { vigente: sigueVigente });
     });
 
   const r = await responderSiBot({
@@ -198,21 +273,10 @@ export async function manejarEntranteWaha(
     empleadoId,
     chatId,
     enviar,
-    // Se re-evalúa DESPUÉS de que el modelo respondió: si mientras pensaba
-    // entró otro mensaje del cliente, esta respuesta ya no es la buena.
-    sigueVigente: async () => {
-      if (!m.waId) return true;
-      const { data } = await supa
-        .from("ed_mensajes")
-        .select("wa_message_id")
-        .eq("empleado_id", empleadoId)
-        .eq("chat_id", chatId)
-        .eq("rol", "cliente")
-        .order("creado_en", { ascending: false })
-        .limit(1)
-        .maybeSingle();
-      return !data?.wa_message_id || data.wa_message_id === m.waId;
-    },
+    // Se re-evalúa DESPUÉS de que el modelo respondió; y otra vez justo antes
+    // del envío real (ver el parámetro `vigente` de enviarTextoWaha), porque
+    // entre medio hay hasta 6 s de "escribiendo…".
+    sigueVigente,
   });
   return { accion: `cliente:${r.accion}`, detalle: r.detalle };
 }
