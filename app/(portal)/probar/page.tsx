@@ -26,7 +26,6 @@ export default async function Probar() {
   if (empleados.length === 0) {
     return (
       <main className="mx-auto max-w-4xl px-5 py-7 sm:px-8 lg:px-10 lg:py-10">
-        <div style={{ fontSize: "var(--t-menor)", color: "var(--muted)" }}>En vivo</div>
         <h1 className="h-pagina mt-1">Probar ahora</h1>
         <div className="tarjeta mt-6 p-8 text-center">
           <h2 className="h-seccion">Todavía no tienes un asistente activo</h2>
@@ -45,9 +44,7 @@ export default async function Probar() {
   return (
     <main className="mx-auto max-w-4xl px-5 py-7 sm:px-8 lg:px-10 lg:py-10">
       <div style={{ fontSize: "var(--t-menor)", color: "var(--muted)" }}>En vivo</div>
-      <h1 className="h-pagina mt-1">
-        Probar ahora
-      </h1>
+      <h1 className="h-pagina">Probar ahora</h1>
       <p className="sub-pagina max-w-2xl" style={{ color: "var(--muted)" }}>
         Escríbele a tu asistente como si fueras un cliente. Responde con los precios,
         horarios y políticas reales de {usuario.clienteNombre} — es el mismo cerebro que

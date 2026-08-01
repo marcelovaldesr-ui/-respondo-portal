@@ -94,10 +94,7 @@ export default async function Informacion() {
 
   return (
     <main className="mx-auto max-w-4xl px-5 py-7 sm:px-8 lg:px-10 lg:py-10">
-      <div style={{ fontSize: "var(--t-menor)", color: "var(--muted)" }}>Cerebro</div>
-      <h1 className="h-pagina mt-1">
-        Información del negocio
-      </h1>
+      <h1 className="h-pagina">Información del negocio</h1>
       <p className="sub-pagina max-w-2xl" style={{ color: "var(--muted)" }}>
         Esto es todo lo que tus empleados saben de {usuario.clienteNombre}. Solo pueden
         afirmar lo que está escrito acá: si algo no aparece, no lo inventan — te derivan

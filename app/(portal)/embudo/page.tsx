@@ -48,12 +48,12 @@ export default async function Embudo({
 
   return (
     <main className="px-5 py-6 sm:px-7 lg:px-8">
-      <div style={{ fontSize: "var(--t-menor)", color: "var(--muted)" }}>Ventas</div>
-      <h1 className="h-pagina mt-1">Embudo</h1>
-      <p className="sub-pagina max-w-2xl" style={{ color: "var(--muted)" }}>
-        En qué va cada conversación. Tu asistente las mueve solo según lo que pasa; tú
-        puedes moverlas cuando quieras y ahí se quedan.
-      </p>
+      <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+        <h1 className="h-pagina">Embudo</h1>
+        <span className="sub-titulo">
+          Tu asistente las mueve solo; si tú mueves una, ahí se queda
+        </span>
+      </div>
 
       {/* Corte por actividad: sin esto el tablero se llena de conversaciones ya
           terminadas y el número de "por cerrar" deja de significar algo. */}

@@ -21,11 +21,10 @@ export default async function PaginaWhatsApp() {
 
   return (
     <div className="mx-auto w-full max-w-[760px] px-4 py-6 lg:px-8 lg:py-9">
-      <h1 className="h-pagina">WhatsApp</h1>
-      <p className="mt-1 text-[15px]" style={{ color: "var(--muted)" }}>
-        Conecta el número de WhatsApp de tu negocio para que tu asistente atienda
-        por el canal oficial de Meta.
-      </p>
+      <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+        <h1 className="h-pagina">WhatsApp</h1>
+        <span className="sub-titulo">El canal oficial de Meta para tu asistente</span>
+      </div>
 
       <div className="tarjeta mt-6 p-6">
         {conectado ? (

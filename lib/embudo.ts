@@ -260,17 +260,44 @@ export async function cargarEmbudo(
     });
   }
 
-  // Persistir solo lo que cambió.
-  for (const c of cambios) {
-    await supa
-      .from("ed_contactos")
-      .update({
-        etapa: c.etapa,
-        etapa_motivo: c.motivo,
-        etapa_en: new Date().toISOString(),
-      })
-      .eq("cliente_id", clienteId)
-      .eq("chat_id", c.chat_id);
+  /**
+   * Persistir lo que cambió — AGRUPADO, no fila por fila.
+   *
+   * Antes esto era un `await update()` por conversación dentro de un for: cada
+   * cambio, un viaje de ida y vuelta a la base, en serie. Medido el 31-jul con
+   * 14 tarjetas: 15,3 segundos. La primera vez que corre el cierre por silencio
+   * es justamente cuando MÁS cambios hay, así que el peor caso coincide con la
+   * primera vez que un cliente abre el embudo.
+   *
+   * Los cambios posibles son pocos y repetidos (interesado, cotizado, ganado,
+   * perdido·sin_respuesta…), así que se agrupan por destino y se manda un
+   * update por grupo con `in`. De N viajes se pasa a 5 como mucho, sin importar
+   * cuántas conversaciones cambien.
+   */
+  if (cambios.length) {
+    const porDestino = new Map<string, string[]>();
+    for (const c of cambios) {
+      const clave = `${c.etapa}|${c.motivo ?? ""}`;
+      const arr = porDestino.get(clave);
+      if (arr) arr.push(c.chat_id);
+      else porDestino.set(clave, [c.chat_id]);
+    }
+
+    const ahora = new Date().toISOString();
+    await Promise.all(
+      [...porDestino.entries()].map(([clave, chats]) => {
+        const [etapa, motivo] = clave.split("|");
+        return supa
+          .from("ed_contactos")
+          .update({
+            etapa,
+            etapa_motivo: motivo || null,
+            etapa_en: ahora,
+          })
+          .eq("cliente_id", clienteId) // barrera de acceso, igual que antes
+          .in("chat_id", chats);
+      }),
+    );
   }
 
   // Más recientes primero dentro de cada columna.
