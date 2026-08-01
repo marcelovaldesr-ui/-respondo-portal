@@ -112,8 +112,12 @@ async function accessToken(): Promise<ResultadoGCal<string>> {
 async function llamar<T>(
   ruta: string,
   init: { method: string; body?: unknown },
+  // Con tokenOAuth: se usa ESE token (del dueño conectado por OAuth) en vez
+  // de la cuenta de servicio. Ver lib/googleOAuth.ts — los dos mecanismos
+  // hablan la misma API de Google, solo cambia de quién es el token.
+  tokenOAuth?: string,
 ): Promise<ResultadoGCal<T>> {
-  const tk = await accessToken();
+  const tk = tokenOAuth ? ({ ok: true, datos: tokenOAuth } as const) : await accessToken();
   if (!tk.ok) return tk;
   try {
     const r = await fetch(`${API}${ruta}`, {
@@ -161,7 +165,7 @@ export function idEventoDesdeCita(citaId: string): string {
   return `respondo${hex}`;
 }
 
-export async function guardarEvento(ev: EventoGCal): Promise<ResultadoGCal<unknown>> {
+export async function guardarEvento(ev: EventoGCal, tokenOAuth?: string): Promise<ResultadoGCal<unknown>> {
   const cuerpo = {
     id: idEventoDesdeCita(ev.citaId),
     summary: ev.titulo,
@@ -174,10 +178,10 @@ export async function guardarEvento(ev: EventoGCal): Promise<ResultadoGCal<unkno
   const idEv = encodeURIComponent(cuerpo.id);
 
   // Primero intentar crear; si ya existe (409), actualizar.
-  const creado = await llamar<unknown>(`/calendars/${cal}/events`, { method: "POST", body: cuerpo });
+  const creado = await llamar<unknown>(`/calendars/${cal}/events`, { method: "POST", body: cuerpo }, tokenOAuth);
   if (creado.ok) return creado;
   if (creado.motivo === "api" && /already exists|duplicate/i.test(creado.detalle ?? "")) {
-    return llamar<unknown>(`/calendars/${cal}/events/${idEv}`, { method: "PUT", body: cuerpo });
+    return llamar<unknown>(`/calendars/${cal}/events/${idEv}`, { method: "PUT", body: cuerpo }, tokenOAuth);
   }
   return creado;
 }
@@ -185,10 +189,11 @@ export async function guardarEvento(ev: EventoGCal): Promise<ResultadoGCal<unkno
 export async function borrarEvento(
   calendarioId: string,
   citaId: string,
+  tokenOAuth?: string,
 ): Promise<ResultadoGCal<unknown>> {
   const cal = encodeURIComponent(calendarioId);
   const idEv = encodeURIComponent(idEventoDesdeCita(citaId));
-  const r = await llamar<unknown>(`/calendars/${cal}/events/${idEv}`, { method: "DELETE" });
+  const r = await llamar<unknown>(`/calendars/${cal}/events/${idEv}`, { method: "DELETE" }, tokenOAuth);
   // Borrar algo que ya no está no es un error para nosotros.
   if (!r.ok && r.motivo === "api" && /not found|deleted/i.test(r.detalle ?? "")) {
     return { ok: true, datos: undefined };
@@ -244,4 +249,44 @@ export async function probarCalendario(calendarioId: string): Promise<ResultadoG
   return llamar<{ resumen?: string }>(`/calendars/${encodeURIComponent(calendarioId)}`, {
     method: "GET",
   });
+}
+
+/**
+ * Igual que ocupadosDeGoogle, pero para UN calendario con SU PROPIO token
+ * OAuth — no se pueden batchear varios calendarios de distintos dueños en
+ * una sola llamada de freeBusy porque cada token de OAuth solo ve el
+ * calendario de la persona que lo autorizó (a diferencia de la cuenta de
+ * servicio, que puede consultar cualquier calendario que se le haya
+ * compartido en una sola llamada).
+ */
+export async function ocupadosDeUnCalendario(
+  calendarioId: string,
+  desdeIso: string,
+  hastaIso: string,
+  tokenOAuth: string,
+): Promise<Ocupacion[]> {
+  const r = await llamar<{
+    calendars?: Record<string, { busy?: { start: string; end: string }[] }>;
+  }>(
+    "/freeBusy",
+    {
+      method: "POST",
+      body: {
+        timeMin: new Date(desdeIso).toISOString(),
+        timeMax: new Date(hastaIso).toISOString(),
+        timeZone: "America/Santiago",
+        items: [{ id: calendarioId }],
+      },
+    },
+    tokenOAuth,
+  );
+  if (!r.ok) {
+    console.error("[googleCalendar] freeBusy (oauth):", r.motivo, r.detalle);
+    return [];
+  }
+  const salida: Ocupacion[] = [];
+  for (const [cal, info] of Object.entries(r.datos.calendars ?? {})) {
+    for (const b of info.busy ?? []) salida.push({ calendarioId: cal, desde: b.start, hasta: b.end });
+  }
+  return salida;
 }

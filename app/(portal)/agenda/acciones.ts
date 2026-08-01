@@ -211,7 +211,19 @@ export async function configurarGoogleProfesional(formData: FormData) {
 
   const { error } = await supa
     .from("ed_profesionales")
-    .update({ gcal_id: gcalId || null, gcal_sync: sync, gcal_ultimo_error: null })
+    .update({
+      gcal_id: gcalId || null,
+      gcal_sync: sync,
+      gcal_ultimo_error: null,
+      // Guardar acá SIEMPRE vuelve al modo cuenta de servicio, aunque este
+      // profesional hubiera estado conectado por OAuth antes — si no, el
+      // gcal_id que se acaba de pegar quedaría guardado pero ignorado
+      // (agendaGoogle.ts sigue mirando el refresh token de OAuth mientras
+      // gcal_modo diga 'oauth').
+      gcal_modo: "cuenta_servicio",
+      gcal_oauth_refresh_cifrado: null,
+      gcal_oauth_email: null,
+    })
     .eq("id", profesionalId);
   if (error) console.error("[agenda] configurarGoogleProfesional:", error.message);
 
@@ -236,6 +248,27 @@ export async function configurarGoogleProfesional(formData: FormData) {
     }
   }
   revalidatePath("/agenda", "layout"); // "layout" = también /agenda/configuracion
+}
+
+/** Desconecta la sincronización OAuth de un profesional (botón "Desconectar"). */
+export async function desconectarGoogleOauth(formData: FormData) {
+  const clienteId = await clienteActual();
+  const profesionalId = texto(formData, "profesional");
+  if (!profesionalId) return;
+
+  const { error } = await db()
+    .from("ed_profesionales")
+    .update({
+      gcal_sync: false,
+      gcal_modo: null,
+      gcal_oauth_refresh_cifrado: null,
+      gcal_oauth_email: null,
+      gcal_ultimo_error: null,
+    })
+    .eq("id", profesionalId)
+    .eq("cliente_id", clienteId);
+  if (error) console.error("[agenda] desconectarGoogleOauth:", error.message);
+  revalidatePath("/agenda", "layout");
 }
 
 // ---------------------------------------------------------------------------

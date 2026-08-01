@@ -4,6 +4,7 @@ import { exigirUsuarioPortal } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { formatearSlot } from "@/lib/agendaCore";
 import { googleCalendarConfigurado } from "@/lib/googleCalendar";
+import { oauthConfigurado } from "@/lib/googleOAuth";
 import CampoCopiar from "@/components/CampoCopiar";
 import FormularioAgregar from "@/components/FormularioAgregar";
 import HorarioSemanal from "@/components/HorarioSemanal";
@@ -20,6 +21,7 @@ import {
   eliminarBloqueo,
   configurarReservas,
   configurarGoogleProfesional,
+  desconectarGoogleOauth,
 } from "../acciones";
 
 export const dynamic = "force-dynamic";
@@ -42,11 +44,17 @@ type Profesional = {
   gcal_id?: string | null;
   gcal_sync?: boolean | null;
   gcal_ultimo_error?: string | null;
+  gcal_modo?: string | null;
+  gcal_oauth_email?: string | null;
 };
 type Horario = { id: string; profesional_id: string; dia_semana: number; desde: string; hasta: string };
 type Bloqueo = { id: string; profesional_id: string | null; desde: string; hasta: string; motivo: string | null };
 
-export default async function ConfiguracionAgenda() {
+export default async function ConfiguracionAgenda({
+  searchParams,
+}: {
+  searchParams?: { gcal_oauth?: string };
+}) {
   const usuario = await exigirUsuarioPortal();
   const supa = db();
 
@@ -70,20 +78,29 @@ export default async function ConfiguracionAgenda() {
       .eq("cliente_id", usuario.clienteId)
       .order("orden", { ascending: true })
       .order("creado_en", { ascending: true }),
-    // Las columnas de Google son de la migración 221: si no están, se reintenta
-    // con el set básico y la pantalla funciona igual.
+    // Las columnas de Google son de las migraciones 221 y 222: si faltan, se
+    // reintenta con juegos de columnas más chicos y la pantalla sigue andando.
     supa
       .from("ed_profesionales")
-      .select("id, nombre, activo, gcal_id, gcal_sync, gcal_ultimo_error")
+      .select("id, nombre, activo, gcal_id, gcal_sync, gcal_ultimo_error, gcal_modo, gcal_oauth_email")
       .eq("cliente_id", usuario.clienteId)
       .order("creado_en", { ascending: true })
       .then((r) =>
         r.error
           ? supa
               .from("ed_profesionales")
-              .select("id, nombre, activo")
+              .select("id, nombre, activo, gcal_id, gcal_sync, gcal_ultimo_error")
               .eq("cliente_id", usuario.clienteId)
               .order("creado_en", { ascending: true })
+              .then((r2) =>
+                r2.error
+                  ? supa
+                      .from("ed_profesionales")
+                      .select("id, nombre, activo")
+                      .eq("cliente_id", usuario.clienteId)
+                      .order("creado_en", { ascending: true })
+                  : r2,
+              )
           : r,
       ),
     supa
@@ -138,6 +155,8 @@ export default async function ConfiguracionAgenda() {
   const urlIcal = icalToken && base ? `${base}/api/agenda/ical/${icalToken}` : null;
   const urlPublica = cliente?.slug && base ? `${base}/reservar/${cliente.slug}` : null;
   const gcalListo = googleCalendarConfigurado();
+  const gcalOauthListo = oauthConfigurado();
+  const avisoOauth = searchParams?.gcal_oauth;
 
   return (
     <main className="mx-auto max-w-4xl px-4 py-6 sm:px-6 lg:px-10 lg:py-9">
@@ -403,45 +422,100 @@ export default async function ConfiguracionAgenda() {
 
         <div className="mt-4 rounded-[7px] border p-4" style={{ borderColor: "var(--borde)" }}>
           <div className="text-[14.5px] font-bold">
-            Sincronización en dos vías {gcalListo ? "· disponible" : "· no configurada aún"}
+            Sincronización en dos vías {gcalListo || gcalOauthListo ? "· disponible" : "· no configurada aún"}
           </div>
           <p className="mt-1 text-[13.5px]" style={{ color: "var(--muted)" }}>
             Además de escribir tus citas en Google, lee tus compromisos personales para no
-            ofrecer horas cuando ya estás ocupado. Para activarla, comparte tu calendario de
-            Google (permiso <i>Hacer cambios en los eventos</i>) con el correo de Respondo y
-            pega abajo el ID de tu calendario.
+            ofrecer horas cuando ya estás ocupado.
           </p>
-          {!gcalListo && (
+          {!gcalListo && !gcalOauthListo && (
             <p className="mt-2 text-[13px] font-semibold" style={{ color: "#B0842A" }}>
-              Falta que el equipo de Respondo configure la cuenta de servicio en el servidor.
+              Falta que el equipo de Respondo configure la conexión con Google en el servidor.
             </p>
           )}
-          {listaProfesionales.map((p) => (
-            <form key={p.id} action={configurarGoogleProfesional} className="mt-3 rounded-[7px] border p-3" style={{ borderColor: "var(--borde)" }}>
-              <input type="hidden" name="profesional" value={p.id} />
-              <div className="text-[14px] font-bold">{p.nombre}</div>
-              <div className="mt-2 grid gap-2 sm:grid-cols-[1fr_auto_auto]">
-                <input
-                  name="gcal_id"
-                  defaultValue={p.gcal_id ?? ""}
-                  className="campo font-mono text-[12.5px]"
-                  placeholder="correo@gmail.com o id@group.calendar.google.com"
-                />
-                <label className="flex items-center gap-2 text-[13px] font-semibold">
-                  <input type="checkbox" name="gcal_sync" defaultChecked={!!p.gcal_sync} /> Activar
-                </label>
-                <button type="submit" className="btn-suave px-3 py-1.5 text-[13px]">Guardar</button>
+          {avisoOauth === "ok" && (
+            <p className="mt-2 rounded-[7px] px-3 py-2 text-[13px] font-semibold" style={{ color: "#0E7C66", background: "#E9F7F3" }}>
+              Google Calendar conectado ✓
+            </p>
+          )}
+          {avisoOauth === "cancelado" && (
+            <p className="mt-2 rounded-[7px] px-3 py-2 text-[13px] font-semibold" style={{ color: "#B0842A", background: "#FBF3E4" }}>
+              Cancelaste la conexión en Google — no se cambió nada.
+            </p>
+          )}
+          {avisoOauth === "error" && (
+            <p className="mt-2 rounded-[7px] px-3 py-2 text-[13px] font-semibold" style={{ color: "#B33A3A", background: "#FBECEC" }}>
+              Algo falló al conectar con Google. Probá de nuevo, o usá la opción manual más abajo.
+            </p>
+          )}
+          {listaProfesionales.map((p) => {
+            const conectadoOauth = p.gcal_modo === "oauth" && !!p.gcal_sync;
+            return (
+              <div key={p.id} className="mt-3 rounded-[7px] border p-3" style={{ borderColor: "var(--borde)" }}>
+                <div className="text-[14px] font-bold">{p.nombre}</div>
+
+                {conectadoOauth ? (
+                  <>
+                    <p className="mt-2 text-[12.5px] font-semibold" style={{ color: "#0E7C66" }}>
+                      Conectado ✓ {p.gcal_oauth_email ? `· como ${p.gcal_oauth_email}` : ""}
+                    </p>
+                    {p.gcal_ultimo_error && (
+                      <p className="mt-1 text-[12.5px] font-semibold" style={{ color: "#B33A3A" }}>
+                        Google respondió: {p.gcal_ultimo_error}
+                      </p>
+                    )}
+                    <form action={desconectarGoogleOauth} className="mt-2">
+                      <input type="hidden" name="profesional" value={p.id} />
+                      <button type="submit" className="btn-suave px-3 py-1.5 text-[13px]">Desconectar</button>
+                    </form>
+                  </>
+                ) : (
+                  <>
+                    {gcalOauthListo && (
+                      <a
+                        href={`/api/google/conectar?profesional=${p.id}`}
+                        className="btn-primario mt-2 inline-block px-4 py-2 text-[13.5px]"
+                      >
+                        Conectar Google Calendar
+                      </a>
+                    )}
+                    <details className="mt-2">
+                      <summary className="cursor-pointer text-[12.5px] font-semibold" style={{ color: "var(--muted)" }}>
+                        {gcalOauthListo ? "O conectar a mano" : "Conectar a mano"}
+                      </summary>
+                      <p className="mt-1.5 text-[12.5px]" style={{ color: "var(--muted)" }}>
+                        Comparte tu calendario de Google (permiso <i>Hacer cambios en los eventos</i>) con
+                        el correo de Respondo y pega acá el ID de tu calendario.
+                      </p>
+                      <form action={configurarGoogleProfesional} className="mt-2">
+                        <input type="hidden" name="profesional" value={p.id} />
+                        <div className="grid gap-2 sm:grid-cols-[1fr_auto_auto]">
+                          <input
+                            name="gcal_id"
+                            defaultValue={p.gcal_id ?? ""}
+                            className="campo font-mono text-[12.5px]"
+                            placeholder="correo@gmail.com o id@group.calendar.google.com"
+                          />
+                          <label className="flex items-center gap-2 text-[13px] font-semibold">
+                            <input type="checkbox" name="gcal_sync" defaultChecked={!!p.gcal_sync} /> Activar
+                          </label>
+                          <button type="submit" className="btn-suave px-3 py-1.5 text-[13px]">Guardar</button>
+                        </div>
+                      </form>
+                    </details>
+                    {p.gcal_ultimo_error && (
+                      <p className="mt-2 text-[12.5px] font-semibold" style={{ color: "#B33A3A" }}>
+                        Google respondió: {p.gcal_ultimo_error}
+                      </p>
+                    )}
+                    {p.gcal_sync && !p.gcal_ultimo_error && (
+                      <p className="mt-2 text-[12.5px] font-semibold" style={{ color: "#0E7C66" }}>Conectado ✓</p>
+                    )}
+                  </>
+                )}
               </div>
-              {p.gcal_ultimo_error && (
-                <p className="mt-2 text-[12.5px] font-semibold" style={{ color: "#B33A3A" }}>
-                  Google respondió: {p.gcal_ultimo_error}
-                </p>
-              )}
-              {p.gcal_sync && !p.gcal_ultimo_error && (
-                <p className="mt-2 text-[12.5px] font-semibold" style={{ color: "#0E7C66" }}>Conectado ✓</p>
-              )}
-            </form>
-          ))}
+            );
+          })}
           {listaProfesionales.length === 0 && (
             <p className="mt-2 text-[13.5px]" style={{ color: "var(--muted-2)" }}>
               Primero crea un profesional.
