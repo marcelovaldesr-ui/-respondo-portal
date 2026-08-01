@@ -1,4 +1,5 @@
 /** Idempotencia real (con migración 212 aplicada). Envío simulado. */
+import "./_env"; // DEBE ir primero: lib/db.ts lee process.env al importarse
 import { manejarEntranteEvolution } from "../lib/inboundEvolution";
 import { db } from "../lib/db";
 

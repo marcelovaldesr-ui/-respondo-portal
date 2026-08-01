@@ -14,10 +14,14 @@ export const maxDuration = 60;
  * CRON DE SEGUIMIENTOS — envía los mensajes proactivos programados
  * (recordatorios de cita, reactivación de cotizaciones) de ed_seguimientos.
  *
- * Disparo: un cron externo (cron-job.org / Vercel Cron) hace GET acá cada
- * 15–60 min con ?k=<secreto>. El endpoint es idempotente y barato: si no hay
+ * Disparo: un cron externo (cron-job.org) hace GET acá cada 5 min
+ * con ?k=<secreto>. El endpoint es idempotente y barato: si no hay
  * pendientes, no hace nada. Salvaguardas (horario hábil Chile, tope diario,
  * max_intentos, no_contactar) viven en lib/seguimientos.ts.
+ *
+ * ES EL ÚNICO CRON DEL SISTEMA. De acá cuelgan los recordatorios y encuestas de
+ * la agenda, las reactivaciones de Beto y el informe semanal de los lunes. No
+ * hay que crear un segundo cron para la agenda: se activa todo junto.
  *
  * Transporte por cliente: 'cloud' → API oficial de Meta; resto → WAHA
  * (misma regla que el inbox en conversaciones/acciones.ts).
@@ -58,9 +62,6 @@ export async function GET(request: NextRequest) {
     },
   });
 
-  // Deja constancia de que el cron corrió, aunque no haya enviado nada. Esto es
-  // lo que permite que /api/salud detecte que el cron DEJÓ de correr; sin el
-  // latido, un cron muerto se ve igual que un cron sin trabajo pendiente.
   /**
    * INFORME SEMANAL — se engancha acá y no en un cron aparte.
    *
@@ -82,6 +83,9 @@ export async function GET(request: NextRequest) {
     informes = { generados: 0, detalle: ["error"] };
   }
 
+  // Deja constancia de que el cron corrió, aunque no haya enviado nada. Esto es
+  // lo que permite que /api/salud detecte que el cron DEJÓ de correr; sin el
+  // latido, un cron muerto se ve igual que un cron sin trabajo pendiente.
   await registrarLatido(LATIDO_CRON_SEGUIMIENTOS, {
     enviados: r.enviados,
     // Solo el CONTEO del detalle: esas líneas traen chat_id y no deben quedar

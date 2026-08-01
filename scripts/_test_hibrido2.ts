@@ -1,4 +1,5 @@
 /** Eco + reanudación-con-contexto (rápido: solo 1 llamada a Gemini). */
+import "./_env"; // DEBE ir primero: lib/db.ts lee process.env al importarse
 import { manejarEntranteEvolution } from "../lib/inboundEvolution";
 import { db } from "../lib/db";
 import { setModo } from "../lib/estadoChat";

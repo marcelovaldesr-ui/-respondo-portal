@@ -4,6 +4,7 @@
  * catálogo de precios fijos y que NO inventa fuera de rango. No toca WhatsApp.
  * Ejecutar: source .env.local && npx tsx scripts/_test_tino.ts
  */
+import "./_env"; // DEBE ir primero: lib/db.ts lee process.env al importarse
 import { armarPrompt } from "../lib/promptEmpleado";
 import { generarJSON } from "../lib/gemini";
 

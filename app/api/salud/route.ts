@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { db } from "@/lib/db";
 import { secretoValido } from "@/lib/seguridad";
+import { LATIDO_CRON_SEGUIMIENTOS, estadoDelCron, leerLatido } from "@/lib/latidos";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 30;
@@ -105,7 +106,19 @@ async function chequearActividad(): Promise<Chequeo> {
   };
 }
 
-/** 4) Modelo de IA (solo en modo full: consume cuota). */
+/**
+ * 4) Cron de seguimientos — el fallo más silencioso de todos.
+ *
+ * Si el cron externo se cae, NADA se ve roto: la web anda, Tino contesta, la
+ * base responde. Simplemente dejan de salir los recordatorios de cita y las
+ * confirmaciones, y el negocio se entera cuando un cliente no llega. Con el
+ * latido, este chequeo devuelve 503 y el vigilante externo manda el correo.
+ */
+async function chequearCron(): Promise<Chequeo> {
+  return estadoDelCron(await leerLatido(LATIDO_CRON_SEGUIMIENTOS));
+}
+
+/** 5) Modelo de IA (solo en modo full: consume cuota). */
 async function chequearModelo(): Promise<Chequeo> {
   const key = process.env.GEMINI_API_KEY;
   if (!key) return { ok: false, detalle: "falta GEMINI_API_KEY" };
@@ -130,7 +143,7 @@ async function chequearModelo(): Promise<Chequeo> {
   }
 }
 
-/** 5) Token de Meta (solo en modo full): detecta un token revocado/vencido. */
+/** 6) Token de Meta (solo en modo full): detecta un token revocado/vencido. */
 async function chequearMeta(): Promise<Chequeo> {
   const token = process.env.WHATSAPP_TOKEN;
   const phoneId = process.env.WHATSAPP_PHONE_NUMBER_ID;
@@ -161,6 +174,7 @@ export async function GET(request: NextRequest) {
     base_de_datos: await medir(chequearBase),
     whatsapp_waha: await medir(chequearWaha),
     actividad: await medir(chequearActividad),
+    cron_seguimientos: await medir(chequearCron),
   };
   if (full && autorizado) {
     chequeos.modelo_ia = await medir(chequearModelo);

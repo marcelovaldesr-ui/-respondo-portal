@@ -1,4 +1,5 @@
 /** Solo M7 (devolver a Tino → responde) + limpieza final. */
+import "./_env"; // DEBE ir primero: lib/db.ts lee process.env al importarse
 import { manejarEntranteMeta } from "../lib/inboundMeta";
 import { db } from "../lib/db";
 import { setModo } from "../lib/estadoChat";

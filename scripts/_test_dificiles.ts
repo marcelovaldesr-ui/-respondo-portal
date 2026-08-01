@@ -1,3 +1,4 @@
+import "./_env"; // DEBE ir primero: lib/db.ts lee process.env al importarse
 import { armarPrompt } from "../lib/promptEmpleado";
 import { generarJSON } from "../lib/gemini";
 const CID = "33333333-3333-3333-3333-333333333333";

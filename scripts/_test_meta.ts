@@ -6,6 +6,7 @@
  *   WHATSAPP_DEV_CLIENTE_ID=33333333-3333-3333-3333-333333333333 \
  *   npx tsx scripts/_test_meta.ts
  */
+import "./_env"; // DEBE ir primero: lib/db.ts lee process.env al importarse
 import { manejarEntranteMeta } from "../lib/inboundMeta";
 import { db } from "../lib/db";
 import { setModo, modoDe } from "../lib/estadoChat";

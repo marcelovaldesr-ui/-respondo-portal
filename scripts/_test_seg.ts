@@ -1,3 +1,4 @@
+import "./_env"; // DEBE ir primero: lib/db.ts lee process.env al importarse
 import { db } from "../lib/db";
 import { programarSeguimiento, procesarSeguimientos, empleadoParaEntrante, enHorarioHabil } from "../lib/seguimientos";
 import { manejarEntranteWaha } from "../lib/inboundWaha";
