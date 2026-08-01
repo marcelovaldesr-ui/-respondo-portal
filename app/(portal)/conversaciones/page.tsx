@@ -7,7 +7,6 @@ import {
   ETIQUETA_RESULTADO,
   ETIQUETA_TRIGGER,
   fechaCorta,
-  fechaLarga,
 } from "@/lib/conversaciones";
 import InboxConversacion from "@/components/InboxConversacion";
 import EtiquetasEditor from "@/components/EtiquetasEditor";
@@ -450,30 +449,51 @@ export default async function Conversaciones({
           ) : (
             <>
               <div
-                className="flex flex-wrap items-center justify-between gap-3 border-b pb-4"
-                style={{ borderColor: "var(--borde)" }}
+                /*
+                  CABECERA FIJA.
+
+                  La columna entera hace scroll, así que al bajar por una
+                  conversación larga el nombre del contacto se iba de la
+                  pantalla: terminabas escribiéndole a alguien sin ver a quién.
+                  En una bandeja con 101 chats abiertos eso es una forma directa
+                  de mandarle a Erika lo que era para Marcelo.
+
+                  Pegada arriba con el fondo del panel, para que los mensajes
+                  pasen por debajo sin transparentarse.
+                */
+                className="sticky top-0 z-10 -mx-4 flex flex-wrap items-center justify-between gap-3 border-b px-4 pb-3 pt-1 sm:-mx-5 sm:px-5"
+                style={{ borderColor: "var(--borde)", background: "var(--fondo)" }}
               >
-                <div className="flex items-center gap-3">
+                <div className="flex min-w-0 items-center gap-2.5">
                   {/* eslint-disable-next-line @next/next/no-img-element */}
                   <img
                     src={metaSel!.avatar}
                     alt={seleccion.empleadoNombre}
-                    width={42}
-                    height={42}
-                    className="avatar h-[42px] w-[42px]"
+                    width={34}
+                    height={34}
+                    className="avatar h-[34px] w-[34px]"
                     style={{ ["--anillo" as string]: colorSel }}
                   />
-                  <div>
-                    <div className="titular text-[19px] font-bold">{seleccion.contacto}</div>
-                    <div className="text-[13px]" style={{ color: "var(--muted)" }}>
-                      {seleccion.telefono ?? `+${seleccion.chatId}`}
-                      {seleccion.etiqueta ? ` · ${seleccion.etiqueta}` : ""} · atendido por{" "}
-                      <span style={{ color: colorSel, fontWeight: 700 }}>
-                        {seleccion.empleadoNombre}
+                  <div className="min-w-0">
+                    <div className="h-cifra truncate">{seleccion.contacto}</div>
+                    <div
+                      className="truncate"
+                      style={{ fontSize: "var(--t-menor)", color: "var(--muted)" }}
+                    >
+                      <span className="cifra">
+                        {seleccion.telefono ?? `+${seleccion.chatId}`}
                       </span>
+                      {seleccion.etiqueta ? ` · ${seleccion.etiqueta}` : ""}
                     </div>
                   </div>
                 </div>
+
+                {/* Atajo a la agenda: en el rediseño de Design está acá arriba
+                    porque agendar es la acción que más se dispara desde una
+                    conversación abierta. */}
+                <Link href="/agenda" className="btn-chico shrink-0">
+                  Agendar hora
+                </Link>
               </div>
 
               {seleccion.escalacion && (
@@ -574,7 +594,16 @@ export default async function Conversaciones({
                     mostrar una fecha inventada o un guion sin explicación. */}
                 {seleccion.clienteDesde && (
                   <Dato etiqueta="Cliente desde">
-                    <span className="cifra">{fechaLarga(seleccion.clienteDesde)}</span>
+                    {/* Solo la fecha: la hora exacta en que alguien escribió por
+                        primera vez hace meses no le sirve a nadie. */}
+                    <span className="cifra">
+                      {new Intl.DateTimeFormat("es-CL", {
+                        timeZone: "America/Santiago",
+                        day: "numeric",
+                        month: "short",
+                        year: "numeric",
+                      }).format(new Date(seleccion.clienteDesde))}
+                    </span>
                   </Dato>
                 )}
                 {seleccion.ventana !== "desconocida" && (
