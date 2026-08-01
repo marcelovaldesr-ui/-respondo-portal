@@ -11,6 +11,7 @@ import {
   type ResumenEmpleado,
 } from "@/lib/resumen";
 import { ETIQUETA_TRIGGER } from "@/lib/conversaciones";
+import { contadoresMenu } from "@/lib/contadores";
 import {
   resumenAhorro,
   formatearDuracion as duracionMin,
@@ -198,25 +199,30 @@ function Metrica({
 
 export default async function Inicio() {
   const usuario = await exigirUsuarioPortal();
-  const [empleados, metricas, esperando, ahorro] = await Promise.all([
+  const [empleados, metricas, esperando, ahorro, oportunidades] = await Promise.all([
     resumenEmpleados(usuario.clienteId),
     metricasCliente(usuario.clienteId),
     esperandoHumano(usuario.clienteId),
     resumenAhorro(usuario.clienteId, 30),
+    contadoresMenu(usuario.clienteId),
   ]);
 
   const { actual, comparacion } = metricas;
   const pendientes = esperando.total;
   const antes = comparacion?.esBasal ? "vs antes de Respondo" : "vs mes anterior";
 
-  // "Por cerrarse": lo que el motor efectivamente registró, sumado entre todos
-  // los empleados. Si no ocurrió, no aparece — nada de rellenar el bloque.
-  const suma = (t: keyof ResumenEmpleado["resultados"]) =>
-    empleados.reduce((a, e) => a + (e.resultados[t] ?? 0), 0);
+  /**
+   * "Por cerrarse" sale del EMBUDO, no de ed_resultados.
+   *
+   * En la primera versión lo armé sumando cotizacion_enviada / agendamiento /
+   * lead_capturado. Con datos reales quedó en cero y el bloque desapareció...
+   * mientras el menú, al lado, mostraba "Embudo 9". Dos números del mismo
+   * portal diciendo cosas distintas sobre lo mismo. Leyendo de la misma fuente
+   * que el contador del menú, ya no pueden contradecirse.
+   */
   const porCerrarse = [
-    { label: "Cotizaciones enviadas", valor: suma("cotizacion_enviada") },
-    { label: "Horas agendadas", valor: suma("agendamiento") },
-    { label: "Clientes potenciales", valor: suma("lead_capturado") },
+    { label: "Interesados", valor: oportunidades.interesados },
+    { label: "Cotizados", valor: oportunidades.cotizados },
   ].filter((x) => x.valor > 0);
 
   // UNA SOLA FUENTE para el total del mes. ed_metricas es el consolidado
@@ -226,7 +232,7 @@ export default async function Inicio() {
   const conversacionesMes = actual?.conversaciones ?? derivadas;
 
   return (
-    <main className="mx-auto max-w-5xl px-5 py-7 sm:px-8 lg:px-10 lg:py-10">
+    <main className="mx-auto max-w-[1400px] px-5 py-6 sm:px-7 lg:px-8">
       {/* Título y contexto en la MISMA línea. "Inicio" dice dónde estás; la
           fecha es contexto, no un subtítulo que merezca su propio renglón. */}
       <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
@@ -236,6 +242,21 @@ export default async function Inicio() {
           {conversacionesMes > 0 && ` · ${conversacionesMes} conversaciones este mes`}
         </span>
       </div>
+
+      {/*
+        DOS COLUMNAS EN ESCRITORIO.
+
+        Apilado en una sola columna angosta, el 40% derecho de la pantalla
+        quedaba en blanco — que es exactamente la queja que originó el rediseño
+        de esta página. A la izquierda va lo que exige una decisión (quién
+        espera, qué está por cerrarse, si esto funciona); a la derecha, el
+        estado del equipo, que se consulta pero no se acciona.
+
+        En móvil vuelve a una sola columna y el equipo queda al final: primero
+        lo urgente.
+      */}
+      <div className="mt-1 grid items-start gap-x-6 lg:grid-cols-[minmax(0,1fr)_340px]">
+        <div>
 
       {/* ── 1. ¿Alguien me está esperando? ───────────────────────────────────
           Va primero siempre. Es lo único de la pantalla que se puede estar
@@ -343,9 +364,22 @@ export default async function Inicio() {
                 estimado sobre {ahorro.enviadosIA.toLocaleString("es-CL")} mensajes atendidos
               </div>
             </div>
+            {/* Los DOS números de cobertura. Ver el comentario de
+                ResumenAhorro.coberturaReciente: mostrar solo el promedio del
+                período engaña por omisión cuando el asistente lleva poco. */}
             <div className="tarjeta px-5 py-4">
-              <div className="h-cifra cifra" style={{ color: "var(--indigo)" }}>
-                {ahorro.coberturaIA}%
+              <div className="flex flex-wrap items-baseline gap-2">
+                <span className="h-cifra cifra" style={{ color: "var(--indigo)" }}>
+                  {ahorro.coberturaIA}%
+                </span>
+                {ahorro.coberturaReciente !== ahorro.coberturaIA && (
+                  <span
+                    className="pildora-indigo cifra"
+                    title="Los últimos 30 días incluyen conversaciones anteriores a tener el asistente conectado."
+                  >
+                    últimas 24 h: {ahorro.coberturaReciente}%
+                  </span>
+                )}
               </div>
               <div className="mt-1.5" style={{ fontSize: "var(--t-menor)", color: "var(--muted)" }}>
                 de las respuestas las escribió tu asistente
@@ -417,22 +451,25 @@ export default async function Inicio() {
           </div>
         </Bloque>
       )}
+        </div>
 
-      {/* Empleados */}
-      <h2 className="h-seccion mt-10">Tu equipo digital</h2>
-      <div className="mt-3 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+        {/* ── Columna derecha: estado del equipo ───────────────────────────
+            Se consulta, no se acciona. Por eso va al costado y no arriba. */}
+        <aside className="mt-8 lg:mt-8">
+      <h2 className="h-seccion">Tu equipo digital</h2>
+      <div className="mt-2.5 grid gap-3 sm:grid-cols-2 lg:grid-cols-1">
         {empleados.map((r) => {
           const meta = metaEmpleado(r.rol);
           return (
             <div key={r.empleadoId} className="tarjeta overflow-hidden">
-              <div className="flex items-center gap-3 p-5 pb-4">
+              <div className="flex items-center gap-2.5 px-4 pb-3 pt-4">
                 {/* eslint-disable-next-line @next/next/no-img-element */}
                 <img
                   src={meta.avatar}
                   alt={r.nombrePublico}
-                  width={48}
-                  height={48}
-                  className="avatar h-12 w-12"
+                  width={36}
+                  height={36}
+                  className="avatar h-9 w-9"
                   style={{ ["--anillo" as string]: meta.color }}
                 />
                 <div className="min-w-0">
@@ -448,21 +485,27 @@ export default async function Inicio() {
                 </div>
               </div>
 
-              <dl className="space-y-2.5 px-5 pb-5">
+              <dl className="space-y-1.5 px-4 pb-4">
                 {statsDeEmpleado(r).map((s) => (
                   <div key={s.label} className="flex items-baseline justify-between gap-3">
                     <dt style={{ fontSize: "var(--t-menor)", color: "var(--muted)" }}>
                       {s.label}
                     </dt>
-                    <dd className="cifra text-[16px] font-semibold">{s.valor}</dd>
+                    <dd className="cifra font-semibold" style={{ fontSize: "var(--t-fila)" }}>
+                      {s.valor}
+                    </dd>
                   </div>
                 ))}
               </dl>
 
               {r.escalacionesPendientes > 0 && (
                 <div
-                  className="px-5 py-3 text-[12px] font-bold"
-                  style={{ background: "var(--alerta-suave)", color: "var(--alerta)" }}
+                  className="px-4 py-2 font-semibold"
+                  style={{
+                    fontSize: "var(--t-micro)",
+                    background: "var(--coral-medio)",
+                    color: "var(--peligro)",
+                  }}
                 >
                   {r.escalacionesPendientes} esperando por ti
                 </div>
@@ -484,9 +527,11 @@ export default async function Inicio() {
         </div>
       )}
 
-      <p className="mt-8 text-[12px]" style={{ color: "var(--muted-2)" }}>
+      <p className="mt-4" style={{ fontSize: "var(--t-micro)", color: "var(--muted-3)" }}>
         Los números vienen de la actividad real de tus empleados y se actualizan solos.
       </p>
+        </aside>
+      </div>
     </main>
   );
 }

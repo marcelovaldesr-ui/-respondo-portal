@@ -297,8 +297,24 @@ export type ResumenAhorro = {
   enviadosIA: number;
   enviadosHumano: number;
   recibidos: number;
-  /** % de mensajes salientes que escribió el asistente. */
+  /** % de mensajes salientes que escribió el asistente en todo el período. */
   coberturaIA: number;
+  /**
+   * Lo mismo, pero de las últimas 24 h.
+   *
+   * NO es un adorno: es la diferencia entre informar y engañar por omisión.
+   * Impresora Color tiene meses de historial que respondió Cecilia a mano y
+   * Tino lleva días conectado. El promedio de 30 días da 7% y el de las últimas
+   * 24 h da 39%. El 7% es cierto y es inútil —describe sobre todo un pasado sin
+   * asistente— y el 39% solo también miente, porque un día puede ser atípico.
+   *
+   * Mostrar los dos es lo único honesto, y de paso es lo que hace creíble el
+   * panel: un cliente que ve un número inflado deja de creerle a todos.
+   */
+  coberturaReciente: number;
+  recientesIA: number;
+  recientesHumano: number;
+  /** Derivados con los supuestos a la vista (los mismos de Analítica). */
   minutosAhorrados: number;
   dineroAhorradoCLP: number;
 };
@@ -336,10 +352,17 @@ export async function resumenAhorro(
       .in("empleado_id", ids)
       .gte("creado_en", desde);
 
-  const [todos, entrantes, deEmpleado] = await Promise.all([
+  // Las mismas tres cuentas, acotadas a las últimas 24 h.
+  const corte24h = new Date(Date.now() - 86400_000).toISOString();
+  const base24 = () => base().gte("creado_en", corte24h);
+
+  const [todos, entrantes, deEmpleado, todos24, entrantes24, deEmpleado24] = await Promise.all([
     base(),
     base().eq("rol", "cliente"),
     base().eq("rol", "empleado"),
+    base24(),
+    base24().eq("rol", "cliente"),
+    base24().eq("rol", "empleado"),
   ]);
 
   const total = todos.count ?? 0;
@@ -347,6 +370,13 @@ export async function resumenAhorro(
   const enviadosIA = deEmpleado.count ?? 0;
   const enviadosHumano = Math.max(0, total - recibidos - enviadosIA);
   const salientes = enviadosIA + enviadosHumano;
+
+  const recientesIA = deEmpleado24.count ?? 0;
+  const recientesHumano = Math.max(
+    0,
+    (todos24.count ?? 0) - (entrantes24.count ?? 0) - recientesIA,
+  );
+  const salientes24 = recientesIA + recientesHumano;
 
   // El ahorro se cuenta sobre los mensajes que el asistente respondió, no sobre
   // todos: si lo escribió una persona, no hubo ahorro que reportar.
@@ -358,6 +388,9 @@ export async function resumenAhorro(
     enviadosHumano,
     recibidos,
     coberturaIA: salientes ? Math.round((enviadosIA / salientes) * 100) : 0,
+    coberturaReciente: salientes24 ? Math.round((recientesIA / salientes24) * 100) : 0,
+    recientesIA,
+    recientesHumano,
     minutosAhorrados,
     dineroAhorradoCLP: Math.round((minutosAhorrados / 60) * SUPUESTOS.valorHoraCLP),
   };

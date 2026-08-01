@@ -28,7 +28,12 @@ export type ContadoresMenu = {
   esperando: number;
   /** Oportunidades abiertas en el embudo (interesado + cotizado). */
   porCerrar: number;
+  /** El desglose, para que la portada no tenga que volver a contar. */
+  interesados: number;
+  cotizados: number;
 };
+
+const VACIO: ContadoresMenu = { esperando: 0, porCerrar: 0, interesados: 0, cotizados: 0 };
 
 export async function contadoresMenu(clienteId: string): Promise<ContadoresMenu> {
   try {
@@ -39,26 +44,34 @@ export async function contadoresMenu(clienteId: string): Promise<ContadoresMenu>
       .select("id")
       .eq("cliente_id", clienteId);
     const ids = (empleados ?? []).map((e) => e.id as string);
-    if (!ids.length) return { esperando: 0, porCerrar: 0 };
+    if (!ids.length) return VACIO;
 
-    const [escalaciones, embudo] = await Promise.all([
+    const porEtapa = (etapa: string) =>
+      supa
+        .from("ed_contactos")
+        .select("chat_id", { count: "exact", head: true })
+        .eq("cliente_id", clienteId)
+        .eq("etapa", etapa);
+
+    const [escalaciones, interesados, cotizados] = await Promise.all([
       supa
         .from("ed_escalaciones")
         .select("id", { count: "exact", head: true })
         .in("empleado_id", ids)
         .is("atendida_en", null),
-      supa
-        .from("ed_contactos")
-        .select("chat_id", { count: "exact", head: true })
-        .eq("cliente_id", clienteId)
-        .in("etapa", ["interesado", "cotizado"]),
+      porEtapa("interesado"),
+      porEtapa("cotizado"),
     ]);
 
+    const i = interesados.count ?? 0;
+    const c = cotizados.count ?? 0;
     return {
       esperando: escalaciones.count ?? 0,
-      porCerrar: embudo.count ?? 0,
+      porCerrar: i + c,
+      interesados: i,
+      cotizados: c,
     };
   } catch {
-    return { esperando: 0, porCerrar: 0 };
+    return VACIO;
   }
 }
