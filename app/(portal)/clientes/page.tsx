@@ -173,14 +173,26 @@ export default async function Clientes({
            Ahora usa la clase .tabla del sistema, así una pantalla nueva hereda
            el mismo tratamiento sin volver a escribirlo. */
         <div className="tarjeta mt-4 overflow-x-auto p-0">
-          <table className="tabla min-w-[680px]">
+          {/*
+            EN MÓVIL SE ESCONDEN DOS COLUMNAS, NO SE ARRASTRA LA TABLA.
+
+            Estaba a min-w-680px dentro de un contenedor con scroll horizontal:
+            en un teléfono de 390px había que arrastrar de lado para ver la etapa
+            y el último contacto, que son justo las dos cosas que uno viene a
+            mirar. Y el dueño abre esto desde el celular entre un cliente y otro.
+
+            "Mensajes" es contexto, no decisión, y "Ver ficha" sobra porque la
+            fila entera ya es un enlace. Fuera las dos en pantalla chica y la
+            tabla cabe sin arrastrar.
+          */}
+          <table className="tabla min-w-0 sm:min-w-[680px]">
             <thead>
               <tr>
                 <th>Cliente</th>
                 <th>Etapa</th>
-                <th className="text-right">Mensajes</th>
-                <th className="text-right">Último contacto</th>
-                <th />
+                <th className="hidden text-right sm:table-cell">Mensajes</th>
+                <th className="text-right">Último</th>
+                <th className="hidden sm:table-cell" />
               </tr>
             </thead>
             <tbody>
@@ -241,13 +253,16 @@ export default async function Clientes({
                         {me.label}
                       </span>
                     </td>
-                    <td className="cifra text-right" style={{ color: "var(--muted)" }}>
+                    <td
+                      className="cifra hidden text-right sm:table-cell"
+                      style={{ color: "var(--muted)" }}
+                    >
                       {c.mensajes}
                     </td>
                     <td className="cifra text-right" style={{ color: "var(--muted)" }}>
                       {ultimoContacto(c.ultimaVez, c.diasSinHablar)}
                     </td>
-                    <td className="text-right">
+                    <td className="hidden text-right sm:table-cell">
                       <Link
                         href={`/clientes/${c.chatId}`}
                         className="font-semibold"
