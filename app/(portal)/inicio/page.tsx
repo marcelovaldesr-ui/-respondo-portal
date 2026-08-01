@@ -1,15 +1,114 @@
+import Link from "next/link";
 import { exigirUsuarioPortal } from "@/lib/auth";
 import { metaEmpleado } from "@/lib/empleados";
 import {
   resumenEmpleados,
   metricasCliente,
+  esperandoHumano,
   formatearDuracion,
   formatearCLP,
   nombreMes,
   type ResumenEmpleado,
 } from "@/lib/resumen";
+import { ETIQUETA_TRIGGER } from "@/lib/conversaciones";
+import {
+  resumenAhorro,
+  formatearDuracion as duracionMin,
+  formatearCLP as pesos,
+} from "@/lib/analitica";
 
 export const dynamic = "force-dynamic";
+
+/**
+ * PORTADA — rediseño del 31-jul.
+ *
+ * Antes esta pantalla abría con "Bienvenido, <negocio>" y cuatro métricas del
+ * mes. El problema no era estético: era que no servía para nada. El dueño entra
+ * al portal entre un cliente y otro, mira cinco segundos y necesita saber qué
+ * hacer. Un saludo y un número de conversaciones no le dicen qué hacer.
+ *
+ * Ahora la portada responde tres preguntas, en el orden en que le importan:
+ *
+ *   1. ¿Alguien me está esperando?   → lo urgente, con la acción al lado
+ *   2. ¿Qué está por cerrarse?       → la plata que está en juego hoy
+ *   3. ¿Está funcionando lo que pago? → la justificación de la mensualidad
+ *
+ * Cada bloque termina en un enlace a la pantalla que profundiza. La portada no
+ * intenta reemplazar a Conversaciones ni a Analítica: los ordena.
+ *
+ * Nada de esto usa datos nuevos. Son los mismos que ya existían, puestos en el
+ * orden en que se necesitan.
+ */
+
+/** "Jueves 31 de julio · 09:14" — en hora de Chile, no del servidor. */
+function fechaTitulo(): string {
+  const ahora = new Date();
+  const dia = new Intl.DateTimeFormat("es-CL", {
+    timeZone: "America/Santiago",
+    weekday: "long",
+    day: "numeric",
+    month: "long",
+  }).format(ahora);
+  const hora = new Intl.DateTimeFormat("es-CL", {
+    timeZone: "America/Santiago",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  }).format(ahora);
+  return `${dia.charAt(0).toUpperCase()}${dia.slice(1)} · ${hora}`;
+}
+
+/** Cuánto lleva esperando, en palabras. "18 h", "2 d", "40 min". */
+function haceCuanto(iso: string | null): string | null {
+  if (!iso) return null;
+  const min = Math.floor((Date.now() - new Date(iso).getTime()) / 60000);
+  if (min < 1) return "recién";
+  if (min < 60) return `${min} min`;
+  const h = Math.floor(min / 60);
+  if (h < 24) return `${h} h`;
+  return `${Math.floor(h / 24)} d`;
+}
+
+/** Encabezado de bloque con su enlace a la pantalla completa. */
+function Bloque({
+  titulo,
+  nota,
+  href,
+  hrefLabel,
+  children,
+}: {
+  titulo: string;
+  nota?: string;
+  href?: string;
+  hrefLabel?: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <section className="mt-8">
+      <div className="mb-2.5 flex items-baseline justify-between gap-4">
+        <h2 className="h-seccion">
+          {titulo}
+          {nota && (
+            <span className="font-normal" style={{ color: "var(--muted-3)" }}>
+              {" · "}
+              {nota}
+            </span>
+          )}
+        </h2>
+        {href && (
+          <Link
+            href={href}
+            className="shrink-0 font-semibold hover:underline"
+            style={{ fontSize: "var(--t-menor)", color: "var(--indigo)" }}
+          >
+            {hrefLabel} →
+          </Link>
+        )}
+      </div>
+      {children}
+    </section>
+  );
+}
 
 /**
  * Qué números mostrar según el rol. Solo se muestra lo que el motor registra
@@ -84,14 +183,11 @@ function Metrica({
   destacada?: boolean;
 }) {
   return (
-    <div className="tarjeta p-5">
-      <div className="eyebrow">{label}</div>
+    <div className="tarjeta px-5 py-4">
+      <div style={{ fontSize: "var(--t-menor)", color: "var(--muted)" }}>{label}</div>
       <div
-        className="titular mt-2 font-extrabold leading-none"
-        style={{
-          fontSize: destacada ? 34 : 30,
-          color: destacada ? "var(--indigo)" : "var(--tinta)",
-        }}
+        className="h-cifra cifra mt-1.5"
+        style={{ color: destacada ? "var(--indigo)" : "var(--tinta)" }}
       >
         {valor}
       </div>
@@ -102,14 +198,26 @@ function Metrica({
 
 export default async function Inicio() {
   const usuario = await exigirUsuarioPortal();
-  const [empleados, metricas] = await Promise.all([
+  const [empleados, metricas, esperando, ahorro] = await Promise.all([
     resumenEmpleados(usuario.clienteId),
     metricasCliente(usuario.clienteId),
+    esperandoHumano(usuario.clienteId),
+    resumenAhorro(usuario.clienteId, 30),
   ]);
 
   const { actual, comparacion } = metricas;
-  const pendientes = empleados.reduce((a, e) => a + e.escalacionesPendientes, 0);
+  const pendientes = esperando.total;
   const antes = comparacion?.esBasal ? "vs antes de Respondo" : "vs mes anterior";
+
+  // "Por cerrarse": lo que el motor efectivamente registró, sumado entre todos
+  // los empleados. Si no ocurrió, no aparece — nada de rellenar el bloque.
+  const suma = (t: keyof ResumenEmpleado["resultados"]) =>
+    empleados.reduce((a, e) => a + (e.resultados[t] ?? 0), 0);
+  const porCerrarse = [
+    { label: "Cotizaciones enviadas", valor: suma("cotizacion_enviada") },
+    { label: "Horas agendadas", valor: suma("agendamiento") },
+    { label: "Clientes potenciales", valor: suma("lead_capturado") },
+  ].filter((x) => x.valor > 0);
 
   // UNA SOLA FUENTE para el total del mes. ed_metricas es el consolidado
   // oficial que escribe el motor; si todavía no existe, se cae al conteo
@@ -119,67 +227,141 @@ export default async function Inicio() {
 
   return (
     <main className="mx-auto max-w-5xl px-5 py-7 sm:px-8 lg:px-10 lg:py-10">
-      <div className="eyebrow">Resumen</div>
-      <h1 className="h-pagina mt-1">
-        Bienvenido, {usuario.clienteNombre}
-      </h1>
-      <p className="sub-pagina max-w-2xl" style={{ color: "var(--muted)" }}>
-        {conversacionesMes > 0 ? (
-          <>
-            Este mes tu equipo digital atendió{" "}
-            <strong style={{ color: "var(--tinta)" }}>
-              {conversacionesMes} conversaciones
-            </strong>
-            {actual?.leadsCapturados != null && (
-              <>
-                {" "}
-                y capturó{" "}
-                <strong style={{ color: "var(--tinta)" }}>
-                  {actual.leadsCapturados} clientes potenciales
-                </strong>
-              </>
-            )}
-            , sin que tuvieras que estar pendiente del teléfono.
-          </>
-        ) : (
-          <>Todavía no hay actividad registrada este mes.</>
-        )}
-      </p>
+      {/* Título y contexto en la MISMA línea. "Inicio" dice dónde estás; la
+          fecha es contexto, no un subtítulo que merezca su propio renglón. */}
+      <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+        <h1 className="h-pagina">Inicio</h1>
+        <span className="sub-titulo">
+          {fechaTitulo()}
+          {conversacionesMes > 0 && ` · ${conversacionesMes} conversaciones este mes`}
+        </span>
+      </div>
 
-      {pendientes > 0 && (
-        <div
-          className="mt-6 flex items-start gap-3 rounded-2xl border p-4"
-          style={{ borderColor: "var(--alerta-borde)", background: "var(--alerta-suave)" }}
-        >
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--alerta)" strokeWidth="1.8" strokeLinecap="round" className="mt-0.5 shrink-0">
-            <path d="M12 8v5m0 3.5v.01M10.3 3.9 2.5 17.5A1.7 1.7 0 0 0 4 20h16a1.7 1.7 0 0 0 1.5-2.5L13.7 3.9a1.7 1.7 0 0 0-3 0z" />
-          </svg>
-          <div>
-            <strong>
-              {pendientes}{" "}
-              {pendientes > 1
-                ? "conversaciones te están esperando"
-                : "conversación te está esperando"}
-            </strong>
-            <div className="text-[14px]" style={{ color: "var(--muted)" }}>
-              Tu asistente las derivó porque necesitan a una persona.
+      {/* ── 1. ¿Alguien me está esperando? ───────────────────────────────────
+          Va primero siempre. Es lo único de la pantalla que se puede estar
+          rompiendo mientras el dueño la mira. */}
+      <Bloque
+        titulo="Te están esperando"
+        nota={pendientes > 0 ? String(pendientes) : undefined}
+        href={pendientes > 0 ? "/conversaciones" : undefined}
+        hrefLabel="Ver bandeja"
+      >
+        {pendientes === 0 ? (
+          <div className="tarjeta px-5 py-6">
+            <div className="flex items-center gap-2.5">
+              <span className="punto-vivo" aria-hidden="true" />
+              <span style={{ fontSize: "var(--t-cuerpo)" }}>
+                Nadie está esperando respuesta. Tu asistente va al día.
+              </span>
             </div>
           </div>
-        </div>
+        ) : (
+          <div className="tarjeta divide-y overflow-hidden" style={{ borderColor: "var(--borde)" }}>
+            {esperando.items.map((e) => (
+              <Link
+                key={`${e.empleadoId}-${e.chatId}`}
+                /* El parámetro es `emp`, no `empleado`: así lo lee
+                   /conversaciones. Con el nombre largo el enlace abría la
+                   bandeja sin seleccionar nada y el botón "Responder" no
+                   respondía nada. */
+                href={`/conversaciones?emp=${e.empleadoId}&chat=${encodeURIComponent(e.chatId)}`}
+                className="flex items-center gap-3 px-4 py-3 transition-colors hover:bg-[var(--fondo-fila)]"
+                style={{ borderColor: "var(--borde)" }}
+              >
+                <div className="min-w-0 flex-1">
+                  <div className="truncate font-semibold" style={{ fontSize: "var(--t-cuerpo)" }}>
+                    {e.contacto}
+                  </div>
+                  <div className="truncate" style={{ fontSize: "var(--t-menor)", color: "var(--muted)" }}>
+                    {ETIQUETA_TRIGGER[e.motivo] ?? e.resumen ?? "Necesita a una persona"}
+                  </div>
+                </div>
+                <span
+                  className="cifra shrink-0"
+                  style={{ fontSize: "var(--t-menor)", color: "var(--muted-2)" }}
+                >
+                  {haceCuanto(e.desde)}
+                </span>
+                <span className="btn-chico shrink-0">Responder</span>
+              </Link>
+            ))}
+            {pendientes > esperando.items.length && (
+              <div
+                className="px-4 py-2.5"
+                style={{ fontSize: "var(--t-menor)", color: "var(--muted-2)" }}
+              >
+                y {pendientes - esperando.items.length} más en la bandeja
+              </div>
+            )}
+          </div>
+        )}
+        {esperando.items.length > 0 && (
+          <p className="mt-2" style={{ fontSize: "var(--t-menor)", color: "var(--muted-2)" }}>
+            La más antigua lleva{" "}
+            <strong style={{ color: "var(--muted)" }}>{haceCuanto(esperando.items[0].desde)}</strong>{" "}
+            esperando.
+          </p>
+        )}
+      </Bloque>
+
+      {/* ── 2. ¿Qué está por cerrarse? ─────────────────────────────────────── */}
+      {porCerrarse.length > 0 && (
+        <Bloque titulo="Por cerrarse" href="/embudo" hrefLabel="Ver embudo">
+          <div className="tarjeta flex flex-wrap divide-x" style={{ borderColor: "var(--borde)" }}>
+            {porCerrarse.map((x) => (
+              <div key={x.label} className="min-w-[150px] flex-1 px-5 py-4" style={{ borderColor: "var(--borde)" }}>
+                <div className="h-cifra cifra">{x.valor}</div>
+                <div className="mt-1" style={{ fontSize: "var(--t-menor)", color: "var(--muted)" }}>
+                  {x.label}
+                </div>
+              </div>
+            ))}
+          </div>
+        </Bloque>
       )}
 
-      {actual && (
-        <>
-          <div className="mt-9 flex items-baseline justify-between">
-            <h2 className="titular text-[17px] font-bold capitalize">
-              {nombreMes(actual.periodo)}
-            </h2>
-            <span className="text-[12px]" style={{ color: "var(--muted-2)" }}>
-              {comparacion ? antes.replace("vs ", "Comparado con ") : ""}
-            </span>
+      {/* ── 3. ¿Está funcionando esto que pago? ─────────────────────────────
+          Los mismos tres números de Analítica, calculados con conteos en la
+          base (ver resumenAhorro) para no encarecer la página más visitada. */}
+      {ahorro && ahorro.enviadosIA > 0 && (
+        <Bloque
+          titulo="¿Está funcionando?"
+          nota="últimos 30 días"
+          href="/analitica"
+          hrefLabel="Ver analítica"
+        >
+          <div className="grid gap-3 sm:grid-cols-3">
+            <div className="tarjeta px-5 py-4">
+              <div className="h-cifra cifra">{duracionMin(ahorro.minutosAhorrados)}</div>
+              <div className="mt-1.5" style={{ fontSize: "var(--t-menor)", color: "var(--muted)" }}>
+                que tu equipo no gastó respondiendo
+              </div>
+            </div>
+            <div className="tarjeta px-5 py-4">
+              <div className="h-cifra cifra">{pesos(ahorro.dineroAhorradoCLP)}</div>
+              <div className="mt-1.5" style={{ fontSize: "var(--t-menor)", color: "var(--muted)" }}>
+                estimado sobre {ahorro.enviadosIA.toLocaleString("es-CL")} mensajes atendidos
+              </div>
+            </div>
+            <div className="tarjeta px-5 py-4">
+              <div className="h-cifra cifra" style={{ color: "var(--indigo)" }}>
+                {ahorro.coberturaIA}%
+              </div>
+              <div className="mt-1.5" style={{ fontSize: "var(--t-menor)", color: "var(--muted)" }}>
+                de las respuestas las escribió tu asistente
+              </div>
+            </div>
           </div>
+        </Bloque>
+      )}
 
-          <div className="mt-3 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+      {/* Métricas del mes: se conservan, pero después de lo accionable. */}
+      {actual && (
+        <Bloque
+          titulo={nombreMes(actual.periodo)}
+          nota={comparacion ? antes.replace("vs ", "comparado con ") : undefined}
+        >
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
             <Metrica label="Conversaciones" valor={String(actual.conversaciones ?? "—")}>
               <Variacion
                 actual={actual.conversaciones}
@@ -205,7 +387,7 @@ export default async function Inicio() {
               destacada
             >
               {comparacion?.tiempoRespuestaSeg != null && (
-                <div className="mt-2 text-[12px]" style={{ color: "var(--muted-2)" }}>
+                <div className="mt-2" style={{ fontSize: "var(--t-micro)", color: "var(--muted-2)" }}>
                   antes{" "}
                   <strong style={{ color: "var(--muted)" }}>
                     {formatearDuracion(comparacion.tiempoRespuestaSeg)}
@@ -233,11 +415,11 @@ export default async function Inicio() {
               </div>
             </Metrica>
           </div>
-        </>
+        </Bloque>
       )}
 
       {/* Empleados */}
-      <h2 className="titular mt-11 text-[17px] font-bold">Tu equipo digital</h2>
+      <h2 className="h-seccion mt-10">Tu equipo digital</h2>
       <div className="mt-3 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
         {empleados.map((r) => {
           const meta = metaEmpleado(r.rol);
@@ -254,12 +436,12 @@ export default async function Inicio() {
                   style={{ ["--anillo" as string]: meta.color }}
                 />
                 <div className="min-w-0">
-                  <div className="titular truncate text-[17px] font-bold">
+                  <div className="h-seccion truncate">
                     {r.nombrePublico || meta.nombrePorDefecto}
                   </div>
                   <div
-                    className="truncate text-[12px] font-semibold"
-                    style={{ color: meta.color }}
+                    className="truncate font-semibold"
+                    style={{ fontSize: "var(--t-micro)", color: meta.color }}
                   >
                     {meta.funcion}
                   </div>
@@ -269,10 +451,10 @@ export default async function Inicio() {
               <dl className="space-y-2.5 px-5 pb-5">
                 {statsDeEmpleado(r).map((s) => (
                   <div key={s.label} className="flex items-baseline justify-between gap-3">
-                    <dt className="text-[13px]" style={{ color: "var(--muted)" }}>
+                    <dt style={{ fontSize: "var(--t-menor)", color: "var(--muted)" }}>
                       {s.label}
                     </dt>
-                    <dd className="titular text-[17px] font-bold">{s.valor}</dd>
+                    <dd className="cifra text-[16px] font-semibold">{s.valor}</dd>
                   </div>
                 ))}
               </dl>
@@ -292,10 +474,13 @@ export default async function Inicio() {
 
       {empleados.length === 0 && (
         <div
-          className="mt-4 rounded-2xl border border-dashed p-10 text-center"
-          style={{ borderColor: "var(--borde-fuerte)", color: "var(--muted)" }}
+          className="tarjeta-plana vacio mt-3 border-dashed"
+          style={{ borderColor: "var(--borde-fuerte)" }}
         >
-          Todavía no tienes empleados activos.
+          <div className="vacio-titulo">Todavía no tienes empleados activos</div>
+          <p className="vacio-texto">
+            Cuando actives uno, acá vas a ver lo que hizo cada día.
+          </p>
         </div>
       )}
 

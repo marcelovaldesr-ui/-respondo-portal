@@ -176,6 +176,75 @@ export async function metricasCliente(
   return { actual, comparacion: basal ?? anterior };
 }
 
+/**
+ * QUIÉN ESTÁ ESPERANDO — las conversaciones que el asistente derivó y nadie ha
+ * tomado todavía.
+ *
+ * La portada antes mostraba solo el número ("3 conversaciones te están
+ * esperando"). Un número no permite actuar: obliga a ir a la bandeja, buscar
+ * cuáles son y recién ahí decidir. Con nombre, antigüedad y enlace directo, la
+ * portada deja de informar y empieza a servir.
+ *
+ * Se consulta ed_escalaciones directo, filtrando por los empleados del cliente
+ * —la barrera de acceso de siempre— y se resuelve el nombre del contacto en una
+ * segunda consulta acotada a esos chats. Dos consultas chicas: no depende del
+ * resumen de contacto (migración 250) ni recorre mensajes.
+ */
+export type ItemEsperando = {
+  empleadoId: string;
+  chatId: string;
+  contacto: string;
+  motivo: string;
+  resumen: string;
+  desde: string;
+};
+
+export async function esperandoHumano(
+  clienteId: string,
+  limite = 4,
+): Promise<{ items: ItemEsperando[]; total: number }> {
+  const supa = db();
+
+  const { data: empleados } = await supa
+    .from("ed_empleados")
+    .select("id")
+    .eq("cliente_id", clienteId);
+  const ids = (empleados ?? []).map((e) => e.id as string);
+  if (!ids.length) return { items: [], total: 0 };
+
+  const { data, count } = await supa
+    .from("ed_escalaciones")
+    .select("empleado_id, chat_id, trigger, resumen, creado_en", { count: "exact" })
+    .in("empleado_id", ids)
+    .is("atendida_en", null)
+    .order("creado_en", { ascending: true }) // la más antigua primero: es la que peor está
+    .limit(limite);
+
+  const filas = data ?? [];
+  if (!filas.length) return { items: [], total: count ?? 0 };
+
+  // Nombre del contacto, solo para los chats que se van a mostrar.
+  const chats = [...new Set(filas.map((f) => f.chat_id as string))];
+  const { data: contactos } = await supa
+    .from("ed_contactos")
+    .select("chat_id, nombre")
+    .eq("cliente_id", clienteId)
+    .in("chat_id", chats);
+  const nombre = new Map((contactos ?? []).map((c) => [c.chat_id as string, c.nombre as string]));
+
+  return {
+    total: count ?? filas.length,
+    items: filas.map((f) => ({
+      empleadoId: f.empleado_id as string,
+      chatId: f.chat_id as string,
+      contacto: nombre.get(f.chat_id as string) || `+${f.chat_id}`,
+      motivo: (f.trigger as string) ?? "",
+      resumen: (f.resumen as string) ?? "",
+      desde: f.creado_en as string,
+    })),
+  };
+}
+
 /** "90 min", "25 s" — el número que más impresiona al dueño. */
 export function formatearDuracion(seg: number | null): string {
   if (seg === null || seg === undefined) return "—";

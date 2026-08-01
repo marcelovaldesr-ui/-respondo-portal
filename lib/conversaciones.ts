@@ -101,17 +101,31 @@ export async function listarConversaciones(
   const ids = empleados.map((e) => e.id as string);
   const porId = new Map(empleados.map((e) => [e.id as string, e]));
 
-  const [mensajes, contactos, estados, escalaciones] = await Promise.all([
-    supa
-      .from("ed_mensajes")
-      .select("empleado_id, chat_id, rol, texto, creado_en")
-      .in("empleado_id", ids)
-      .order("creado_en", { ascending: false })
-      .limit(4000),
+  /**
+   * BANDEJA — se arma desde ed_contactos, no recorriendo los mensajes.
+   *
+   * Antes esta consulta traía los 4.000 mensajes más recientes y los agrupaba
+   * por chat en JavaScript. Tenía dos problemas, y el segundo era grave:
+   *
+   *  1. Lento y creciente: transferir miles de filas en cada carga.
+   *  2. PERDÍA CONVERSACIONES. Al pasar los 4.000 mensajes en total, cualquier
+   *     conversación cuyo último mensaje quedara fuera de esa ventana
+   *     simplemente desaparecía de la bandeja, sin aviso. Se detectó con la base
+   *     al 39% de ese límite.
+   *
+   * Ahora el último mensaje, su rol y el empleado que atiende vienen mantenidos
+   * por la base (migración 250): una consulta, tiempo constante, y ninguna
+   * conversación se pierde por antigua que sea.
+   */
+  const [contactos, estados, escalaciones] = await Promise.all([
     supa
       .from("ed_contactos")
-      .select("chat_id, nombre, etiqueta")
-      .eq("cliente_id", clienteId),
+      .select(
+        "chat_id, nombre, etiqueta, ultimo_mensaje_en, ultimo_mensaje_texto, ultimo_mensaje_rol, ultimo_empleado_id, total_mensajes",
+      )
+      .eq("cliente_id", clienteId)
+      .not("ultimo_mensaje_en", "is", null)
+      .order("ultimo_mensaje_en", { ascending: false }),
     supa.from("ed_chat_estado").select("empleado_id, chat_id, modo").in("empleado_id", ids),
     supa
       .from("ed_escalaciones")
@@ -122,9 +136,6 @@ export async function listarConversaciones(
 
   const etiquetasMapa = await etiquetasPorChat(clienteId);
 
-  const nombrePorChat = new Map(
-    (contactos.data ?? []).map((c) => [c.chat_id as string, c.nombre as string]),
-  );
   const modoPorChat = new Map(
     (estados.data ?? []).map((e) => [`${e.empleado_id}|${e.chat_id}`, e.modo as string]),
   );
@@ -132,35 +143,33 @@ export async function listarConversaciones(
     (escalaciones.data ?? []).map((e) => `${e.empleado_id}|${e.chat_id}`),
   );
 
-  // Los mensajes vienen ordenados del más nuevo al más viejo: el primero de
-  // cada chat es el último mensaje.
-  const agrupado = new Map<string, ItemConversacion>();
-  for (const m of mensajes.data ?? []) {
-    const clave = `${m.empleado_id}|${m.chat_id}`;
-    const emp = porId.get(m.empleado_id as string);
+  const lista: ItemConversacion[] = [];
+  for (const c of contactos.data ?? []) {
+    const chatId = c.chat_id as string;
+    // El empleado que atiende viene del resumen; si faltara (contacto anterior
+    // al trigger), se usa el principal para no dejar la fila sin enlace.
+    const empId = ((c.ultimo_empleado_id as string) ?? ids[0]) as string;
+    const emp = porId.get(empId);
     if (!emp) continue;
-    const existente = agrupado.get(clave);
-    if (existente) {
-      existente.mensajes += 1;
-      continue;
-    }
-    agrupado.set(clave, {
-      empleadoId: m.empleado_id as string,
+    const clave = `${empId}|${chatId}`;
+    lista.push({
+      empleadoId: empId,
       empleadoNombre: (emp.nombre_publico as string) ?? "",
       empleadoRol: emp.rol as string,
-      chatId: m.chat_id as string,
-      contacto: nombrePorChat.get(m.chat_id as string) ?? `+${m.chat_id}`,
-      ultimoMensaje: m.texto as string,
-      ultimoEn: m.creado_en as string,
-      ultimoRol: m.rol as string,
-      mensajes: 1,
+      chatId,
+      contacto: (c.nombre as string) || `+${chatId}`,
+      ultimoMensaje: (c.ultimo_mensaje_texto as string) ?? "",
+      ultimoEn: (c.ultimo_mensaje_en as string) ?? "",
+      ultimoRol: (c.ultimo_mensaje_rol as string) ?? "cliente",
+      mensajes: (c.total_mensajes as number) ?? 0,
       modo: modoPorChat.get(clave) ?? "bot",
       esperandoHumano: pendientes.has(clave),
-      etiquetas: etiquetasMapa.get(m.chat_id as string) ?? [],
+      etiquetas: etiquetasMapa.get(chatId) ?? [],
     });
   }
 
-  return [...agrupado.values()].sort((a, b) =>
+  // Primero las que esperan a una persona; dentro de cada grupo, por recencia.
+  return lista.sort((a, b) =>
     a.esperandoHumano === b.esperandoHumano
       ? b.ultimoEn.localeCompare(a.ultimoEn)
       : a.esperandoHumano

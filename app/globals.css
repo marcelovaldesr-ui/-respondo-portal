@@ -25,48 +25,105 @@
    =========================================================================== */
 
 :root {
+  /* ── Marca ─────────────────────────────────────────────────────────────── */
   --indigo: #4f46e5;
-  --indigo-suave: #eef0fe;
+  --indigo-suave: #eef0fe; /* fondo de píldora / estado seleccionado */
+  --indigo-borde: #dde0f7; /* borde del mismo estado, un paso más oscuro */
+  --indigo-borde-2: #c7cbe8; /* borde marcado (tarjeta destacada) */
+  --indigo-tenue: #8b8fe6; /* íconos sobre fondo indigo suave */
+  --coral: #f97362;
+  --coral-suave: #fff9f7;
+  --coral-medio: #fef1ef;
+  --coral-borde: #f5d9d3;
+
+  /* ── Neutros ───────────────────────────────────────────────────────────
+     El rediseño agrega un tercer nivel de gris de texto (--muted-3). Antes
+     había dos y todo lo terciario —marcas de tiempo, contadores, ayudas— se
+     resolvía con el mismo gris que los subtítulos. Resultado: el ojo no
+     distinguía qué era dato y qué era acompañamiento. */
   --tinta: #0f172a;
   --muted: #5b6981;
   --muted-2: #8792a8;
-  --fondo: #f6f7fb;
+  --muted-3: #a3abbc;
+
+  --fondo: #f6f7fb; /* lienzo y barra lateral */
+  --fondo-hundido: #f1f3f8; /* zonas rebajadas: barra de filtros, hilo de chat */
+  --fondo-fila: #eef1f6; /* hover / fila seleccionada en listas */
   --superficie: #ffffff;
   --borde: #e8eaf0;
-  --borde-fuerte: #d8dce6;
+  --borde-fuerte: #d3d8e4;
+  --borde-medio: #e4e8f0;
 
-  --coral: #f97362;
+  --ok: #047857;
+  --ok-suave: #ecfdf5;
+  --alerta: #b45309;
+  --alerta-suave: #fff7ed;
+  --alerta-borde: #fed7aa;
+  /* Destructivo: rojo terroso, no rojo alarma. Se usa para "quitar/eliminar",
+     que en este producto casi nunca es una emergencia. */
+  --peligro: #c2452f;
+  --peligro-fuerte: #b91c1c;
+
   --cobalto: #2563eb;
   --malva: #b84a86;
   --violeta: #7c3aed;
 
-  --ok: #047857;
-  --ok-suave: #ecfdf5;
-  --alerta: #9a3412;
-  --alerta-suave: #fff7ed;
-  --alerta-borde: #fed7aa;
+  /* ── Radios ─────────────────────────────────────────────────────────────
+     Bajan de 10/8 a 7/6. A 10 px una tabla de datos se ve blanda; a 7 px la
+     tarjeta sigue siendo una tarjeta pero el contenido manda. */
+  --r-card: 7px;
+  --r-input: 6px;
+  --r-chico: 5px; /* píldoras cuadradas, celdas del mapa de calor */
+  --r-pill: 99px;
 
-  /* Radios: más contenidos que antes (16px se ve blando para una herramienta). */
-  --r-card: 10px;
-  --r-input: 8px;
+  /* ── Sombras ────────────────────────────────────────────────────────────
+     Tres niveles y ninguno decorativo: separan planos que de verdad flotan. */
+  --sombra: 0 1px 2px rgba(15, 23, 42, 0.04);
+  --sombra-media: 0 1px 3px rgba(15, 23, 42, 0.07);
+  --sombra-alta: 0 8px 24px -6px rgba(15, 23, 42, 0.1), 0 2px 6px rgba(15, 23, 42, 0.07);
 
-  /* Sombras discretas: separan planos sin llamar la atención. */
-  --sombra: 0 1px 2px rgba(15, 23, 42, 0.05);
-  --sombra-alta: 0 4px 12px -2px rgba(15, 23, 42, 0.1), 0 2px 4px rgba(15, 23, 42, 0.05);
+  /* ── Escala tipográfica ─────────────────────────────────────────────────
+     Siete tamaños y ni uno más. Es la escala exacta de la entrega de diseño.
 
-  /* Escala tipográfica única (evita que cada página invente su tamaño). */
-  --t-titulo: 22px; /* título de página */
-  --t-seccion: 15px; /* título de bloque */
-  --t-cuerpo: 14px;
-  --t-menor: 13px;
-  --t-micro: 12px;
+     El cambio que más sorprende: el título de pantalla baja a 15 px. No es un
+     error. En una herramienta el título dice DÓNDE estás, no QUÉ importa; a
+     21 px competía con los datos, que es lo que la persona vino a leer. El
+     tamaño grande (20 px) queda reservado para el nombre de una ficha y para
+     las cifras, que sí son el contenido.
 
-  /* Navegación */
-  --nav-bg: #12142e;
-  --nav-texto: #a7adc9;
-  --nav-texto-activo: #ffffff;
-  --nav-hover: rgba(255, 255, 255, 0.06);
-  --nav-activo: rgba(255, 255, 255, 0.1);
+     Los pesos van pegados al tamaño: 600 para lo que titula, 400 para lo que
+     se lee. No existe el 700 ni el 800 en el portal. */
+  --t-ficha: 20px; /* nombre de ficha y cifra grande · 600 / -0.025em */
+  --t-titulo: 15px; /* título de pantalla        · 600 / -0.02em  */
+  --t-fila: 13.5px; /* título de fila en listas   · 600           */
+  --t-cuerpo: 13px; /* cuerpo y tabla             · 400           */
+  --t-menor: 12.5px; /* secundario                 · 400           */
+  --t-micro: 11.5px; /* metadato                   · 400           */
+  --t-columna: 10.5px; /* etiqueta de columna        · 600 / 0.07em   */
+
+  /* Alias heredados: hay pantallas que aún los nombran y se migran de a poco. */
+  --t-seccion: var(--t-fila);
+  --t-cifra: var(--t-ficha);
+
+  /* ── Navegación ─────────────────────────────────────────────────────────
+     CAMBIO DE FONDO: el riel deja de ser oscuro.
+
+     El riel #12142e se eligió por el patrón de Linear/Notion, y funcionaba,
+     pero traía dos problemas: obligaba a una paleta de grises aparte que no
+     conversa con el resto del sistema, y en móvil —donde el menú es una franja
+     arriba— metía una banda negra encima de una pantalla clara cada vez que se
+     abría el portal. En claro, el ítem activo se resuelve como lo que es: una
+     tarjeta blanca sobre el lienzo, con el mismo borde de 1px que todo lo demás.
+     Un solo sistema de color para el producto entero. */
+  --nav-bg: var(--fondo);
+  --nav-texto: #5b6981;
+  --nav-texto-activo: #0f172a;
+  --nav-hover: rgba(15, 23, 42, 0.04);
+  --nav-activo: #ffffff;
+  /* Rótulo de grupo. El rediseño agrupa las 10 secciones en cuatro bloques
+     (Atender / Vender / Entender / Configurar). */
+  --nav-grupo: #a3abbc;
+  --nav-borde: #e8eaf0;
 
   /* Compatibilidad: había resplandor de color repartido por varias pantallas.
      En vez de editar cada archivo (algunos en trabajo activo), la variable pasa
@@ -84,17 +141,30 @@ body {
   padding: 0;
   background: var(--fondo);
   color: var(--tinta);
-  font-family: Manrope, ui-sans-serif, system-ui, sans-serif;
+  font-family: Geist, Manrope, ui-sans-serif, system-ui, sans-serif;
+  font-size: var(--t-cuerpo);
   -webkit-font-smoothing: antialiased;
 }
 
+/* Los titulares ya no cambian de familia: usan la misma Geist con más peso y
+   tracking negativo. Mezclar dos familias en una herramienta hace que cada
+   bloque se lea como una sección distinta del sitio; acá todo es la misma app. */
 h1,
 h2,
 h3,
 .titular {
-  font-family: Montserrat, ui-sans-serif, system-ui, sans-serif;
+  font-family: inherit;
   letter-spacing: -0.02em;
   font-variant-numeric: tabular-nums; /* métricas alineadas, look de dashboard pro */
+}
+
+/* Cifras, horas, montos y números de teléfono. Geist Mono da ancho fijo: una
+   columna de precios queda alineada aunque los montos tengan largos distintos. */
+.cifra,
+.mono {
+  font-family: "Geist Mono", ui-monospace, SFMono-Regular, monospace;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.01em;
 }
 
 /* Selección de texto con tinte de marca (detalle Stripe/Linear) */
@@ -138,16 +208,30 @@ h3,
      Antes cada pantalla elegía su tamaño (26, 30, 31, 32 px) y el resultado
      era que ninguna se parecía a la otra. Ahora hay dos clases y punto. */
   .h-pagina {
-    font-family: Montserrat, ui-sans-serif, system-ui, sans-serif;
     font-size: var(--t-titulo);
-    font-weight: 800;
+    font-weight: 600;
     letter-spacing: -0.02em;
-    line-height: 1.2;
+    line-height: 1.3;
   }
   .h-seccion {
-    font-size: var(--t-seccion);
-    font-weight: 700;
+    font-size: var(--t-fila);
+    font-weight: 600;
     letter-spacing: -0.01em;
+  }
+  /* El número protagonista de una métrica y el nombre de una ficha. */
+  .h-cifra {
+    font-size: var(--t-ficha);
+    font-weight: 600;
+    letter-spacing: -0.025em;
+    line-height: 1.15;
+    font-variant-numeric: tabular-nums;
+  }
+  /* La bajada del título vive en la misma línea, no debajo: es contexto
+     ("Jueves 31 de julio · 09:14"), no un subtítulo que merezca su renglón. */
+  .sub-titulo {
+    font-size: var(--t-menor);
+    font-weight: 400;
+    color: var(--muted-2);
   }
   /* Bajada del título: una línea, sin sermón. */
   .sub-pagina {
@@ -195,12 +279,42 @@ h3,
      lo resolvía a su manera. Unificado acá. */
   .btn-peligro {
     @apply btn border bg-white;
-    border-color: #fecaca;
-    color: #b91c1c;
+    border-color: var(--coral-borde);
+    color: var(--peligro);
   }
   .btn-peligro:hover {
-    background: #fef2f2;
-    border-color: #fca5a5;
+    background: var(--coral-medio);
+    border-color: #eabbb1;
+  }
+  /* Acción secundaria sin caja: "Ver ficha", "Cancelar". Antes se resolvían con
+     un botón suave y una fila con tres de ellos parecía tres decisiones de igual
+     peso. Sin borde, la jerarquía queda clara. */
+  .btn-texto {
+    @apply btn bg-transparent px-2;
+    color: var(--muted);
+  }
+  .btn-texto:hover {
+    background: var(--fondo-fila);
+    color: var(--tinta);
+  }
+  /* Botón chico de barra de herramientas (filtros, cambio de vista). */
+  .btn-chico {
+    @apply inline-flex items-center justify-center gap-1.5 border bg-white px-2.5 py-1.5 font-medium;
+    border-radius: var(--r-input);
+    font-size: var(--t-menor);
+    border-color: var(--borde-fuerte);
+    color: var(--muted);
+    transition: background 0.12s ease, border-color 0.12s ease, color 0.12s ease;
+  }
+  .btn-chico:hover {
+    background: var(--fondo-hundido);
+    color: var(--tinta);
+  }
+  .btn-chico[aria-pressed="true"],
+  .btn-chico.activo {
+    background: var(--indigo-suave);
+    border-color: var(--indigo-borde);
+    color: var(--indigo);
   }
 
   /* Campo de texto */
@@ -217,7 +331,66 @@ h3,
 
   /* Píldoras: compactas y sin sombra. El color de fondo ya las separa. */
   .pildora {
-    @apply inline-flex items-center gap-1.5 rounded px-1.5 py-0.5 text-[11px] font-semibold;
+    @apply inline-flex items-center gap-1.5 px-1.5 py-0.5 font-semibold;
+    border-radius: var(--r-chico);
+    font-size: var(--t-micro);
+    line-height: 1.5;
+  }
+  /* Variante neutra: la etiqueta que no significa un estado (rubro, canal).
+     Faltaba, así que todo terminaba pintado de indigo y el color perdía valor. */
+  .pildora-neutra {
+    @apply pildora;
+    background: var(--fondo-hundido);
+    color: var(--muted);
+  }
+  .pildora-peligro {
+    @apply pildora;
+    background: var(--coral-medio);
+    color: var(--peligro);
+  }
+
+  /* ── Tabla de datos ───────────────────────────────────────────────────────
+     Existía la tabla en Clientes pero con estilos escritos a mano en la página.
+     Al llevarla acá, cualquier pantalla nueva hereda el mismo tratamiento. */
+  .tabla {
+    @apply w-full border-collapse;
+    font-size: var(--t-menor);
+  }
+  .tabla thead th {
+    @apply px-3 py-2 text-left font-semibold;
+    font-size: var(--t-micro);
+    color: var(--muted-2);
+    background: var(--fondo-hundido);
+    border-bottom: 1px solid var(--borde);
+    white-space: nowrap;
+  }
+  .tabla tbody td {
+    @apply px-3 py-2.5 align-middle;
+    border-bottom: 1px solid var(--borde);
+  }
+  .tabla tbody tr:last-child td {
+    border-bottom: 0;
+  }
+  .tabla tbody tr:hover td {
+    background: var(--fondo-hundido);
+  }
+
+  /* Estado vacío. Sin ilustración: un título, una línea y la acción que
+     corresponda. Una lista vacía por filtro no es un momento para celebrar. */
+  .vacio {
+    @apply flex flex-col items-center justify-center px-6 py-12 text-center;
+    color: var(--muted);
+  }
+  .vacio-titulo {
+    font-size: var(--t-cuerpo);
+    font-weight: 600;
+    color: var(--tinta);
+  }
+  .vacio-texto {
+    font-size: var(--t-menor);
+    color: var(--muted-2);
+    margin-top: 4px;
+    max-width: 38ch;
   }
 
   /* Punto de estado "en vivo". Sin pulso: era una animación permanente en una

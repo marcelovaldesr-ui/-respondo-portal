@@ -71,7 +71,9 @@ export async function listarClientes(
   const [contactosR, escalacionesR, resultadosR] = await Promise.all([
     supa
       .from("ed_contactos")
-      .select("chat_id, nombre, telefono, email, notas, etiquetas, etapa")
+      .select(
+        "chat_id, nombre, telefono, email, notas, etiquetas, etapa, ultimo_mensaje_en, primer_mensaje_en, total_mensajes",
+      )
       .eq("cliente_id", clienteId),
     supa.from("ed_escalaciones").select("chat_id").in("empleado_id", ids).is("atendida_en", null),
     supa.from("ed_resultados").select("chat_id, tipo").in("empleado_id", ids),
@@ -103,35 +105,18 @@ export async function listarClientes(
     }
   }
 
-  // Primer y último mensaje + conteo, en un recorrido. Paginado: PostgREST
-  // corta en 1.000 filas y `.limit()` mayor no la sube (ver analitica.ts).
-  const stats = new Map<string, { n: number; primera: string; ultima: string }>();
-  const PAGINA = 1000;
-  for (let inicio = 0; ; inicio += PAGINA) {
-    const { data, error } = await supa
-      .from("ed_mensajes")
-      .select("chat_id, creado_en")
-      .in("empleado_id", ids)
-      .order("creado_en", { ascending: true })
-      .range(inicio, inicio + PAGINA - 1);
-    if (error || !data?.length) break;
-    for (const m of data) {
-      const c = m.chat_id as string;
-      const f = m.creado_en as string;
-      const s = stats.get(c);
-      if (!s) stats.set(c, { n: 1, primera: f, ultima: f });
-      else {
-        s.n += 1;
-        s.ultima = f; // vienen ordenados ascendente
-      }
-    }
-    if (data.length < PAGINA) break;
-    if (inicio > 50_000) break;
-  }
+  /**
+   * Antes acá se recorrían TODOS los mensajes del negocio para sacar el primero,
+   * el último y el total de cada chat. Costaba una consulta por cada 1.000
+   * mensajes: 0,4 s hoy, pero 12 s proyectados a un año con un cliente activo.
+   * Ahora esos tres datos los mantiene la base con un trigger (migración 250) y
+   * vienen en la misma consulta de contactos: cero recorridos, tiempo constante
+   * sin importar cuánto crezca el historial.
+   */
 
   let lista: ResumenCliente[] = contactos.map((c) => {
     const chatId = c.chat_id as string;
-    const s = stats.get(chatId);
+    const ultima = (c.ultimo_mensaje_en as string) ?? null;
     return {
       chatId,
       nombre: (c.nombre as string) || `+${chatId}`,
@@ -140,10 +125,10 @@ export async function listarClientes(
       notas: (c.notas as string) ?? null,
       etiquetas: ((c.etiquetas as string[] | null) ?? []),
       etapa: (((c.etapa as string) ?? "nuevo") as Etapa),
-      mensajes: s?.n ?? 0,
-      primeraVez: s?.primera ?? null,
-      ultimaVez: s?.ultima ?? null,
-      diasSinHablar: diasDesde(s?.ultima ?? null),
+      mensajes: (c.total_mensajes as number) ?? 0,
+      primeraVez: (c.primer_mensaje_en as string) ?? null,
+      ultimaVez: ultima,
+      diasSinHablar: diasDesde(ultima),
       cotizaciones: cotizacionesPorChat.get(chatId) ?? 0,
       esperandoHumano: esperando.has(chatId),
     };

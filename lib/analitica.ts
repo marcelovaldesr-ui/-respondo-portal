@@ -1,4 +1,5 @@
 import { db } from "@/lib/db";
+import type { SupabaseClient } from "@supabase/supabase-js";
 import { ZONA } from "@/lib/fechas";
 
 /**
@@ -260,6 +261,105 @@ export async function calcularAnalitica(
     serie: [...porDia.entries()]
       .sort((a, b) => a[0].localeCompare(b[0]))
       .map(([dia, v]) => ({ dia, ia: v.ia, humano: v.humano })),
+  };
+}
+
+/**
+ * RESUMEN DE AHORRO — la versión barata de calcularAnalitica.
+ *
+ * POR QUÉ EXISTE
+ * El rediseño pone en la portada los tres números que responden "¿está
+ * funcionando esto que pago?": tiempo ahorrado, dinero ahorrado y qué parte de
+ * las respuestas escribió el asistente. Son exactamente los de Analítica.
+ *
+ * Pero calcularAnalitica trae TODOS los mensajes del período para armar además
+ * el mapa de calor por hora y la serie diaria. Eso está bien en una pantalla que
+ * se abre a propósito; es inaceptable en la portada, que es la página más
+ * visitada del portal. Habría puesto el cálculo más caro en la pantalla más
+ * abierta.
+ *
+ * CÓMO SE EVITA
+ * Los tres números salen de tres conteos. PostgREST sabe contar en el servidor
+ * (`count: "exact", head: true`): Postgres resuelve el conteo por índice y
+ * devuelve CERO filas, solo el número en una cabecera. Da igual que el cliente
+ * tenga 1.500 mensajes o 600.000 — se transfiere lo mismo.
+ *
+ * Y como no se transfieren filas, tampoco aplica el tope de 1.000 de PostgREST,
+ * que es lo que ya nos hizo mostrar 0% de cobertura teniendo al asistente
+ * trabajando a full.
+ *
+ * IMPORTANTE: usa las MISMAS constantes de SUPUESTOS que Analítica. Si algún día
+ * se separan, la portada y Analítica mostrarían cifras distintas del mismo mes y
+ * el cliente dejaría de creerle a las dos.
+ */
+export type ResumenAhorro = {
+  dias: number;
+  enviadosIA: number;
+  enviadosHumano: number;
+  recibidos: number;
+  /** % de mensajes salientes que escribió el asistente. */
+  coberturaIA: number;
+  minutosAhorrados: number;
+  dineroAhorradoCLP: number;
+};
+
+export async function resumenAhorro(
+  clienteId: string,
+  dias = 30,
+  supaOpt?: SupabaseClient,
+): Promise<ResumenAhorro | null> {
+  const supa = supaOpt ?? db();
+
+  const { data: empleados } = await supa
+    .from("ed_empleados")
+    .select("id")
+    .eq("cliente_id", clienteId);
+  const ids = (empleados ?? []).map((e) => e.id as string);
+  if (!ids.length) return null;
+
+  const desde = new Date(Date.now() - dias * 86400_000).toISOString();
+
+  /**
+   * Tres conteos en paralelo. head:true = no traer ni una fila.
+   *
+   * Se cuenta TOTAL, "cliente" y "empleado", y el saliente humano se deduce por
+   * resta. No se consulta rol="humano" directo a propósito: arriba, en
+   * calcularAnalitica, humano es "todo lo que no es cliente ni empleado" —si el
+   * motor algún día escribe otro rol saliente (una nota interna, un reenvío),
+   * una consulta por igualdad lo dejaría fuera y los dos números del portal
+   * dejarían de cuadrar. La resta no puede desincronizarse.
+   */
+  const base = () =>
+    supa
+      .from("ed_mensajes")
+      .select("id", { count: "exact", head: true })
+      .in("empleado_id", ids)
+      .gte("creado_en", desde);
+
+  const [todos, entrantes, deEmpleado] = await Promise.all([
+    base(),
+    base().eq("rol", "cliente"),
+    base().eq("rol", "empleado"),
+  ]);
+
+  const total = todos.count ?? 0;
+  const recibidos = entrantes.count ?? 0;
+  const enviadosIA = deEmpleado.count ?? 0;
+  const enviadosHumano = Math.max(0, total - recibidos - enviadosIA);
+  const salientes = enviadosIA + enviadosHumano;
+
+  // El ahorro se cuenta sobre los mensajes que el asistente respondió, no sobre
+  // todos: si lo escribió una persona, no hubo ahorro que reportar.
+  const minutosAhorrados = enviadosIA * SUPUESTOS.minutosPorMensaje;
+
+  return {
+    dias,
+    enviadosIA,
+    enviadosHumano,
+    recibidos,
+    coberturaIA: salientes ? Math.round((enviadosIA / salientes) * 100) : 0,
+    minutosAhorrados,
+    dineroAhorradoCLP: Math.round((minutosAhorrados / 60) * SUPUESTOS.valorHoraCLP),
   };
 }
 

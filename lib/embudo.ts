@@ -137,7 +137,9 @@ export async function cargarEmbudo(
   const [contactosR, resultadosR, escalacionesR] = await Promise.all([
     supa
       .from("ed_contactos")
-      .select("chat_id, nombre, etiquetas, etapa, etapa_manual")
+      .select(
+        "chat_id, nombre, etiquetas, etapa, etapa_manual, ultimo_mensaje_en, ultimo_mensaje_texto",
+      )
       .eq("cliente_id", clienteId),
     supa.from("ed_resultados").select("chat_id, tipo").in("empleado_id", ids),
     supa
@@ -160,27 +162,12 @@ export async function cargarEmbudo(
   }
   const esperando = new Set((escalacionesR.data ?? []).map((e) => e.chat_id as string));
 
-  // Último mensaje de cada chat (una sola consulta, paginada: PostgREST corta
-  // en 1.000 filas — ver el mismo cuidado en analitica.ts).
-  const ultimos = new Map<string, { texto: string; creado: string }>();
-  const PAGINA = 1000;
-  for (let inicio = 0; ; inicio += PAGINA) {
-    const { data, error } = await supa
-      .from("ed_mensajes")
-      .select("chat_id, texto, creado_en")
-      .in("empleado_id", ids)
-      .order("creado_en", { ascending: false })
-      .range(inicio, inicio + PAGINA - 1);
-    if (error || !data?.length) break;
-    for (const m of data) {
-      const c = m.chat_id as string;
-      if (!ultimos.has(c)) {
-        ultimos.set(c, { texto: m.texto as string, creado: m.creado_en as string });
-      }
-    }
-    if (data.length < PAGINA) break;
-    if (inicio > 20_000) break;
-  }
+  /**
+   * El último mensaje de cada chat ya viene en ed_contactos, mantenido por el
+   * trigger de la migración 250. Antes se recorrían todos los mensajes del
+   * negocio para averiguarlo: era la consulta más cara del portal (1,3 s con
+   * 1.467 mensajes y creciendo lineal).
+   */
 
   const cambios: { chat_id: string; etapa: Etapa }[] = [];
   const tarjetas: TarjetaEmbudo[] = [];
@@ -205,15 +192,14 @@ export async function cargarEmbudo(
       }
     }
 
-    const u = ultimos.get(chatId);
     tarjetas.push({
       chatId,
       contacto: (c.nombre as string) || `+${chatId}`,
       etapa,
       etapaManual: manual,
       etiquetas,
-      ultimoMensaje: u?.texto ?? "",
-      ultimoEn: u?.creado ?? null,
+      ultimoMensaje: (c.ultimo_mensaje_texto as string) ?? "",
+      ultimoEn: (c.ultimo_mensaje_en as string) ?? null,
       esperandoHumano: esperando.has(chatId),
     });
   }

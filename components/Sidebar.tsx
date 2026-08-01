@@ -25,158 +25,292 @@ const Icono = {
   ),
 };
 
-const ITEMS = [
-  { href: "/inicio", label: "Inicio", icono: Icono.inicio },
-  { href: "/conversaciones", label: "Conversaciones", icono: Icono.chat },
-  { href: "/clientes", label: "Clientes", icono: Icono.clientes },
-  { href: "/embudo", label: "Embudo", icono: Icono.embudo },
-  { href: "/analitica", label: "Analítica", icono: Icono.analitica },
-  { href: "/insights", label: "Informe", icono: Icono.informe },
-  { href: "/agenda", label: "Agenda", icono: Icono.agenda },
-  { href: "/probar", label: "Probar ahora", icono: Icono.probar },
-  { href: "/informacion", label: "Información", icono: Icono.info },
-  { href: "/whatsapp", label: "WhatsApp", icono: Icono.enchufe },
+/**
+ * Menú agrupado por VERBO, no por funcionalidad.
+ *
+ * Antes eran 10 secciones planas en una sola lista. Diez opciones sin jerarquía
+ * obligan a leerlas todas cada vez, y las tres que se usan a diario quedaban al
+ * mismo nivel que las que se tocan una vez al mes (WhatsApp, Información).
+ *
+ * Los cuatro grupos responden a lo que la persona viene a hacer:
+ *  · Atender  — hay alguien esperando ahora
+ *  · Vender   — en qué va cada oportunidad
+ *  · Entender — funcionó o no funcionó
+ *  · Configurar — se toca al principio y casi nunca más
+ *
+ * "Inicio" queda fuera de los grupos a propósito: no es una tarea, es el punto
+ * de partida que responde las tres preguntas de una.
+ */
+type ItemMenu = {
+  href: string;
+  label: string;
+  icono: JSX.Element;
+  /** De dónde sale el número que va a la derecha, si corresponde. */
+  contador?: "esperando" | "porCerrar";
+};
+
+const GRUPOS: { titulo: string; items: ItemMenu[] }[] = [
+  {
+    titulo: "Atender",
+    items: [
+      { href: "/inicio", label: "Inicio", icono: Icono.inicio },
+      {
+        href: "/conversaciones",
+        label: "Conversaciones",
+        icono: Icono.chat,
+        contador: "esperando",
+      },
+      { href: "/agenda", label: "Agenda", icono: Icono.agenda },
+    ],
+  },
+  {
+    titulo: "Vender",
+    items: [
+      { href: "/embudo", label: "Embudo", icono: Icono.embudo, contador: "porCerrar" },
+      { href: "/clientes", label: "Clientes", icono: Icono.clientes },
+    ],
+  },
+  {
+    titulo: "Entender",
+    items: [
+      { href: "/analitica", label: "Analítica", icono: Icono.analitica },
+      { href: "/insights", label: "Informe", icono: Icono.informe },
+    ],
+  },
+  {
+    titulo: "Configurar",
+    items: [
+      { href: "/informacion", label: "Información", icono: Icono.info },
+      { href: "/probar", label: "Probar ahora", icono: Icono.probar },
+      { href: "/whatsapp", label: "WhatsApp", icono: Icono.enchufe },
+    ],
+  },
 ];
 
+/** Lista plana. La usa el móvil, donde el menú es una fila desplazable y los
+    rótulos de grupo no caben ni aportan. */
+const ITEMS = GRUPOS.flatMap((g) => g.items);
+
 /**
- * Navegación premium en riel oscuro (patrón Linear/Notion/Slack): el marco
- * oscuro hace que el contenido blanco se lea como "el producto" y el portal
- * gane jerarquía. En escritorio es barra lateral; bajo 1024px, barra superior
- * con la navegación en fila (misma lógica de siempre, solo cambia la piel).
+ * Un ítem del menú. Vive aparte porque ahora se pinta en dos lugares —la fila
+ * de móvil y la columna agrupada de escritorio— y tenerlo duplicado garantizaba
+ * que tarde o temprano quedaran distintos.
+ *
+ * Ítem activo: fondo tenue + barra de acento a la izquierda, el patrón de
+ * Linear/Notion. Antes era un bloque índigo sólido con resplandor: llamaba más
+ * la atención que el contenido de la página, que es lo que el usuario vino a
+ * mirar.
+ */
+function ItemNav({
+  item,
+  activo,
+  valor,
+}: {
+  item: ItemMenu;
+  activo: boolean;
+  /** Número a la derecha. 0 o undefined = no se pinta nada. */
+  valor?: number;
+}) {
+  /**
+   * El contador de "te esperan" va en coral y el resto en índigo tenue.
+   *
+   * Es la única regla de color fuerte del sistema: el coral significa
+   * EXCLUSIVAMENTE "alguien te está esperando". Si se usara también para el
+   * embudo o para cualquier otro contador, dejaría de significar nada y el
+   * dueño perdería la señal que más le importa.
+   */
+  const urgente = item.contador === "esperando";
+  return (
+    <Link
+      href={item.href}
+      aria-current={activo ? "page" : undefined}
+      className="flex shrink-0 items-center gap-2.5 whitespace-nowrap px-3 py-[7px] transition-colors duration-100"
+      style={{
+        borderRadius: "var(--r-input)",
+        fontSize: "var(--t-fila)",
+        fontWeight: activo ? 600 : 500,
+        border: "1px solid transparent",
+        ...(activo
+          ? {
+              background: "var(--nav-activo)",
+              color: "var(--nav-texto-activo)",
+              borderColor: "var(--nav-borde)",
+              boxShadow: "var(--sombra)",
+            }
+          : { color: "var(--nav-texto)" }),
+      }}
+      onMouseEnter={(e) => {
+        if (activo) return;
+        e.currentTarget.style.background = "var(--nav-hover)";
+        e.currentTarget.style.color = "var(--nav-texto-activo)";
+      }}
+      onMouseLeave={(e) => {
+        if (activo) return;
+        e.currentTarget.style.background = "transparent";
+        e.currentTarget.style.color = "var(--nav-texto)";
+      }}
+    >
+      <svg
+        width="18"
+        height="18"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.6"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        className={activo ? "opacity-90" : "opacity-50"}
+      >
+        {item.icono}
+      </svg>
+      <span className="flex-1">{item.label}</span>
+      {valor ? (
+        <span
+          className="cifra shrink-0 px-1.5 py-[1px] font-semibold"
+          style={{
+            borderRadius: "var(--r-chico)",
+            fontSize: "var(--t-micro)",
+            background: urgente ? "var(--coral)" : "var(--indigo-suave)",
+            color: urgente ? "#fff" : "var(--indigo)",
+          }}
+        >
+          {valor}
+        </span>
+      ) : null}
+    </Link>
+  );
+}
+
+/**
+ * Barra lateral CLARA (cambio del rediseño 31-jul).
+ *
+ * Antes era un riel oscuro #12142e, por el patrón de Linear/Notion. Funcionaba,
+ * pero traía dos costos: obligaba a mantener una paleta de grises aparte que no
+ * conversaba con el resto del sistema, y en móvil —donde el menú es una franja
+ * arriba— ponía una banda negra sobre una pantalla clara cada vez que se abría
+ * el portal. En claro, el ítem activo se resuelve como lo que realmente es: una
+ * tarjeta blanca sobre el lienzo, con el mismo borde de 1 px que todo lo demás.
+ *
+ * En escritorio es barra lateral con los cuatro grupos; bajo 1024px, fila
+ * desplazable arriba.
  */
 export default function Sidebar({
   clienteNombre,
   clienteRubro,
   email,
+  esperando = 0,
+  porCerrar = 0,
 }: {
   clienteNombre: string;
   clienteRubro?: string;
   email: string;
+  /** Conversaciones derivadas sin atender. Va en coral: es lo único urgente. */
+  esperando?: number;
+  /** Oportunidades abiertas en el embudo. */
+  porCerrar?: number;
 }) {
   const ruta = usePathname();
+  const contadores = { esperando, porCerrar } as const;
+  const valorDe = (it: ItemMenu) => (it.contador ? contadores[it.contador] : undefined);
 
   return (
     <aside
-      className="flex shrink-0 flex-col px-4 py-3 lg:min-h-screen lg:w-[252px] lg:py-5"
-      style={{ background: "var(--nav-bg)" }}
+      className="flex shrink-0 flex-col px-3 py-3 lg:min-h-screen lg:w-[248px] lg:py-4"
+      style={{ background: "var(--nav-bg)", borderRight: "1px solid var(--nav-borde)" }}
     >
-      {/* Marca + salida rápida en móvil */}
-      <div className="flex items-center justify-between gap-3">
-        <div className="flex items-center gap-2.5 px-0 lg:px-2 lg:pt-1">
+      {/* Marca */}
+      <div className="flex items-center justify-between gap-3 px-1">
+        <div className="flex items-center gap-2.5">
           {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src="/brand/isotipo.svg" alt="" width={34} height={34} className="shrink-0" />
+          <img src="/brand/isotipo.svg" alt="" width={30} height={30} className="shrink-0" />
           <div className="leading-tight">
-            <div className="titular text-[18px] font-extrabold tracking-tight text-white">
+            <div className="font-semibold tracking-tight" style={{ fontSize: "var(--t-titulo)" }}>
               Respondo
             </div>
-            <div
-              className="text-[10.5px] font-bold uppercase"
-              style={{ color: "#6b7394", letterSpacing: "0.1em" }}
-            >
+            <div style={{ fontSize: "var(--t-micro)", color: "var(--muted-2)" }}>
               Portal del cliente
             </div>
           </div>
         </div>
 
-        {/* En móvil el negocio va aquí, a la derecha, para no gastar una fila */}
-        <div className="text-right lg:hidden">
-          <div className="truncate text-[14px] font-bold text-white">{clienteNombre}</div>
-          <form action="/auth/salir" method="post">
-            <button
-              type="submit"
-              className="text-[12px] font-semibold underline"
-              style={{ color: "var(--nav-texto)" }}
-            >
-              Salir
-            </button>
-          </form>
-        </div>
+        {/* En móvil la salida va aquí, para no gastar una fila entera */}
+        <form action="/auth/salir" method="post" className="lg:hidden">
+          <button
+            type="submit"
+            className="font-semibold underline"
+            style={{ fontSize: "var(--t-menor)", color: "var(--muted)" }}
+          >
+            Salir
+          </button>
+        </form>
       </div>
 
-      {/* Negocio (solo escritorio) — con punto de actividad en vivo */}
-      <div
-        className="mt-5 hidden rounded-xl px-3 py-3 lg:block"
-        style={{ background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.07)" }}
-      >
+      {/* Negocio — tarjeta blanca sobre el lienzo, igual que el ítem activo */}
+      <div className="tarjeta mt-3 hidden px-2.5 py-2 lg:block">
         <div className="flex items-center gap-2">
           <span className="punto-vivo" aria-hidden="true" />
-          <div className="truncate text-[15px] font-bold text-white">{clienteNombre}</div>
+          <div className="truncate font-semibold" style={{ fontSize: "var(--t-fila)" }}>
+            {clienteNombre}
+          </div>
         </div>
         {clienteRubro && (
           <div
-            className="mt-0.5 truncate pl-4 text-[12px] capitalize"
-            style={{ color: "var(--nav-texto)" }}
+            className="mt-0.5 truncate pl-4 capitalize"
+            style={{ fontSize: "var(--t-micro)", color: "var(--muted-2)" }}
           >
             {clienteRubro}
           </div>
         )}
       </div>
 
-      {/* Navegación: fila desplazable en móvil, columna en escritorio */}
-      <nav className="-mx-1 mt-3 flex gap-1 overflow-x-auto px-1 pb-1 lg:mx-0 lg:mt-6 lg:flex-col lg:overflow-visible lg:pb-0">
-        {ITEMS.map((it) => {
-          const activo = ruta.startsWith(it.href);
-          return (
-            <Link
-              key={it.href}
-              href={it.href}
-              /* Ítem activo: fondo tenue + barra de acento a la izquierda, el
-                 patrón de Linear/Notion. Antes era un bloque índigo sólido con
-                 resplandor: llamaba más la atención que el contenido de la
-                 página, que es lo que el usuario vino a mirar. */
-              className="relative flex shrink-0 items-center gap-2 whitespace-nowrap rounded-lg px-3 py-2 text-[13.5px] font-medium transition-colors duration-100 lg:gap-2.5 lg:text-[14px]"
-              style={
-                activo
-                  ? {
-                      background: "var(--nav-activo)",
-                      color: "var(--nav-texto-activo)",
-                      fontWeight: 600,
-                    }
-                  : { color: "var(--nav-texto)" }
-              }
-              onMouseEnter={(e) => {
-                if (!activo) e.currentTarget.style.background = "var(--nav-hover)";
-                if (!activo) e.currentTarget.style.color = "#e6e8f4";
-              }}
-              onMouseLeave={(e) => {
-                if (!activo) e.currentTarget.style.background = "transparent";
-                if (!activo) e.currentTarget.style.color = "var(--nav-texto)";
+      {/* Móvil: fila desplazable, sin rótulos de grupo (no caben y estorban) */}
+      <nav className="-mx-1 mt-3 flex gap-1 overflow-x-auto px-1 pb-1 lg:hidden">
+        {ITEMS.map((it) => (
+          <ItemNav
+            key={it.href}
+            item={it}
+            activo={ruta.startsWith(it.href)}
+            valor={valorDe(it)}
+          />
+        ))}
+      </nav>
+
+      {/* Escritorio: los cuatro grupos */}
+      <nav className="mt-5 hidden flex-col lg:flex">
+        {GRUPOS.map((g, i) => (
+          <div key={g.titulo} className={i ? "mt-4" : ""}>
+            <div
+              className="px-3 pb-1 font-semibold uppercase"
+              style={{
+                fontSize: "var(--t-columna)",
+                color: "var(--nav-grupo)",
+                letterSpacing: "0.07em",
               }}
             >
-              <svg
-                width="19"
-                height="19"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="1.7"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                className={activo ? "opacity-95" : "opacity-60"}
-              >
-                {it.icono}
-              </svg>
-              {it.label}
-              {activo && (
-                <span
-                  aria-hidden="true"
-                  className="absolute left-0 top-1/2 hidden h-4 w-[3px] -translate-y-1/2 rounded-r lg:block"
-                  style={{ background: "var(--indigo)" }}
+              {g.titulo}
+            </div>
+            <div className="flex flex-col gap-0.5">
+              {g.items.map((it) => (
+                <ItemNav
+                  key={it.href}
+                  item={it}
+                  activo={ruta.startsWith(it.href)}
+                  valor={valorDe(it)}
                 />
-              )}
-            </Link>
-          );
-        })}
+              ))}
+            </div>
+          </div>
+        ))}
       </nav>
 
       {/* Pie (solo escritorio) */}
       <div
-        className="mt-auto hidden pt-4 lg:block"
-        style={{ borderTop: "1px solid rgba(255,255,255,0.08)" }}
+        className="mt-auto hidden pt-3 lg:block"
+        style={{ borderTop: "1px solid var(--nav-borde)" }}
       >
         <div
-          className="truncate px-1 text-[12px]"
-          style={{ color: "#6b7394" }}
+          className="truncate px-1"
+          style={{ fontSize: "var(--t-micro)", color: "var(--muted-2)" }}
           title={email}
         >
           {email}
@@ -184,8 +318,8 @@ export default function Sidebar({
         <form action="/auth/salir" method="post">
           <button
             type="submit"
-            className="mt-1.5 px-1 text-[13px] font-semibold transition hover:text-white"
-            style={{ color: "var(--nav-texto)" }}
+            className="mt-1 px-1 font-medium"
+            style={{ fontSize: "var(--t-menor)", color: "var(--muted)" }}
           >
             Cerrar sesión
           </button>
