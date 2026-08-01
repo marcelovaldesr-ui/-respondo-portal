@@ -57,7 +57,7 @@ export async function crearServicio(formData: FormData) {
     duracion_min: Math.min(480, Math.max(5, numero(formData, "duracion", 30))),
     precio_clp: precio ? Number(precio.replace(/\D/g, "")) || null : null,
   });
-  revalidatePath("/agenda");
+  revalidatePath("/agenda", "layout"); // "layout" = también /agenda/configuracion
 }
 
 /**
@@ -81,7 +81,7 @@ export async function eliminarServicio(formData: FormData) {
 
   const { error } = await supa.from("ed_servicios").delete().eq("id", id).eq("cliente_id", clienteId);
   if (error) console.error("[agenda] eliminarServicio:", error.message);
-  revalidatePath("/agenda");
+  revalidatePath("/agenda", "layout"); // "layout" = también /agenda/configuracion
 }
 
 /** Igual que el anterior, para profesionales. Sus horarios caen por cascada. */
@@ -100,7 +100,7 @@ export async function eliminarProfesional(formData: FormData) {
 
   const { error } = await supa.from("ed_profesionales").delete().eq("id", id).eq("cliente_id", clienteId);
   if (error) console.error("[agenda] eliminarProfesional:", error.message);
-  revalidatePath("/agenda");
+  revalidatePath("/agenda", "layout"); // "layout" = también /agenda/configuracion
 }
 
 export async function alternarServicio(formData: FormData) {
@@ -113,7 +113,7 @@ export async function alternarServicio(formData: FormData) {
     .update({ activo: !activo })
     .eq("id", id)
     .eq("cliente_id", clienteId);
-  revalidatePath("/agenda");
+  revalidatePath("/agenda", "layout"); // "layout" = también /agenda/configuracion
 }
 
 // ---------------------------------------------------------------------------
@@ -125,7 +125,7 @@ export async function crearProfesional(formData: FormData) {
   const nombre = texto(formData, "nombre");
   if (!nombre) return;
   await db().from("ed_profesionales").insert({ cliente_id: clienteId, nombre });
-  revalidatePath("/agenda");
+  revalidatePath("/agenda", "layout"); // "layout" = también /agenda/configuracion
 }
 
 export async function alternarProfesional(formData: FormData) {
@@ -138,7 +138,7 @@ export async function alternarProfesional(formData: FormData) {
     .update({ activo: !activo })
     .eq("id", id)
     .eq("cliente_id", clienteId);
-  revalidatePath("/agenda");
+  revalidatePath("/agenda", "layout"); // "layout" = también /agenda/configuracion
 }
 
 export async function agregarHorario(formData: FormData) {
@@ -167,7 +167,7 @@ export async function agregarHorario(formData: FormData) {
   await db()
     .from("ed_horarios")
     .insert(dias.map((dia) => ({ profesional_id: profesionalId, dia_semana: dia, desde, hasta })));
-  revalidatePath("/agenda");
+  revalidatePath("/agenda", "layout"); // "layout" = también /agenda/configuracion
 }
 
 export async function eliminarHorario(formData: FormData) {
@@ -184,7 +184,7 @@ export async function eliminarHorario(formData: FormData) {
     .maybeSingle();
   if (!h) return;
   await supa.from("ed_horarios").delete().eq("id", id);
-  revalidatePath("/agenda");
+  revalidatePath("/agenda", "layout"); // "layout" = también /agenda/configuracion
 }
 
 // ---------------------------------------------------------------------------
@@ -235,7 +235,7 @@ export async function configurarGoogleProfesional(formData: FormData) {
         .eq("id", profesionalId);
     }
   }
-  revalidatePath("/agenda");
+  revalidatePath("/agenda", "layout"); // "layout" = también /agenda/configuracion
 }
 
 // ---------------------------------------------------------------------------
@@ -255,7 +255,7 @@ export async function crearBloqueo(formData: FormData) {
     hasta: hasta.toISOString(),
     motivo: texto(formData, "motivo") || null,
   });
-  revalidatePath("/agenda");
+  revalidatePath("/agenda", "layout"); // "layout" = también /agenda/configuracion
 }
 
 export async function eliminarBloqueo(formData: FormData) {
@@ -263,7 +263,7 @@ export async function eliminarBloqueo(formData: FormData) {
   const id = texto(formData, "id");
   if (!id) return;
   await db().from("ed_bloqueos").delete().eq("id", id).eq("cliente_id", clienteId);
-  revalidatePath("/agenda");
+  revalidatePath("/agenda", "layout"); // "layout" = también /agenda/configuracion
 }
 
 // ---------------------------------------------------------------------------
@@ -292,7 +292,7 @@ export async function configurarReservas(formData: FormData) {
     })
     .eq("id", clienteId);
   if (error) console.error("[agenda] configurarReservas:", error.message);
-  revalidatePath("/agenda");
+  revalidatePath("/agenda", "layout"); // "layout" = también /agenda/configuracion
 }
 
 // ---------------------------------------------------------------------------
@@ -339,7 +339,7 @@ export async function crearCitaManual(formData: FormData) {
       clienteId,
     }).catch(() => 0);
   }
-  revalidatePath("/agenda");
+  revalidatePath("/agenda", "layout"); // "layout" = también /agenda/configuracion
 }
 
 /**
@@ -361,7 +361,7 @@ export async function reabrirCita(formData: FormData) {
     .eq("id", id)
     .eq("cliente_id", clienteId);
   if (error) console.error("[agenda] reabrirCita:", error.message);
-  revalidatePath("/agenda");
+  revalidatePath("/agenda", "layout"); // "layout" = también /agenda/configuracion
 }
 
 export async function cambiarEstadoCita(formData: FormData) {
@@ -374,5 +374,5 @@ export async function cambiarEstadoCita(formData: FormData) {
   if (estado === "cancelada" || estado === "no_show") {
     await anularSeguimientosDeCita(id);
   }
-  revalidatePath("/agenda");
+  revalidatePath("/agenda", "layout"); // "layout" = también /agenda/configuracion
 }
