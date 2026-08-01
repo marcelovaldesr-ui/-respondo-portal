@@ -163,14 +163,25 @@ export async function listarConversaciones(
     });
   }
 
-  // Primero las que esperan a una persona; dentro de cada grupo, por recencia.
-  return lista.sort((a, b) =>
-    a.esperandoHumano === b.esperandoHumano
-      ? b.ultimoEn.localeCompare(a.ultimoEn)
-      : a.esperandoHumano
-        ? -1
-        : 1,
-  );
+  /**
+   * ORDEN: SIEMPRE de la más reciente a la más antigua. Sin excepciones.
+   *
+   * Antes esto subía primero las que esperaban a una persona y recién dentro de
+   * cada grupo ordenaba por fecha. La intención era buena —lo urgente arriba—
+   * pero el resultado rompía lo único que la gente da por sentado en una
+   * bandeja: que lo de más arriba es lo más nuevo.
+   *
+   * Medido con datos reales el 31-jul: una conversación de las 20:49 y otra de
+   * las 20:20 aparecían DEBAJO de otras de las 17:50, 16:45 y 10:30. Marcelo
+   * abrió la bandeja buscando una conversación recién ocurrida y creyó que
+   * faltaba. Una bandeja en la que hay que buscar el mensaje más nuevo deja de
+   * ser una bandeja.
+   *
+   * Lo urgente no se perdió: sigue marcado en coral en cada fila y tiene su
+   * propia pestaña ("Te esperan"). Para eso está el filtro — no hacía falta
+   * torcer el orden, que es el contrato implícito de la pantalla.
+   */
+  return lista.sort((a, b) => b.ultimoEn.localeCompare(a.ultimoEn));
 }
 
 export async function obtenerConversacion(
