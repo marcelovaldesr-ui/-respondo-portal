@@ -11,7 +11,8 @@ import {
   type ResumenEmpleado,
 } from "@/lib/resumen";
 import { ETIQUETA_TRIGGER } from "@/lib/conversaciones";
-import { contadoresMenu } from "@/lib/contadores";
+import { contadoresMenu, oportunidadesAbiertas } from "@/lib/contadores";
+import { metaEtapa } from "@/lib/embudo";
 import {
   resumenAhorro,
   formatearDuracion as duracionMin,
@@ -199,12 +200,13 @@ function Metrica({
 
 export default async function Inicio() {
   const usuario = await exigirUsuarioPortal();
-  const [empleados, metricas, esperando, ahorro, oportunidades] = await Promise.all([
+  const [empleados, metricas, esperando, ahorro, oportunidades, abiertas] = await Promise.all([
     resumenEmpleados(usuario.clienteId),
     metricasCliente(usuario.clienteId),
     esperandoHumano(usuario.clienteId),
     resumenAhorro(usuario.clienteId, 30),
     contadoresMenu(usuario.clienteId),
+    oportunidadesAbiertas(usuario.clienteId),
   ]);
 
   const { actual, comparacion } = metricas;
@@ -325,18 +327,61 @@ export default async function Inicio() {
         )}
       </Bloque>
 
-      {/* ── 2. ¿Qué está por cerrarse? ─────────────────────────────────────── */}
-      {porCerrarse.length > 0 && (
-        <Bloque titulo="Por cerrarse" href="/embudo" hrefLabel="Ver embudo">
-          <div className="tarjeta flex flex-wrap divide-x" style={{ borderColor: "var(--borde)" }}>
-            {porCerrarse.map((x) => (
-              <div key={x.label} className="min-w-[150px] flex-1 px-5 py-4" style={{ borderColor: "var(--borde)" }}>
-                <div className="h-cifra cifra">{x.valor}</div>
-                <div className="mt-1" style={{ fontSize: "var(--t-menor)", color: "var(--muted)" }}>
-                  {x.label}
-                </div>
+      {/* ── 2. ¿Qué está por cerrarse? ───────────────────────────────────────
+          Los conteos van como píldoras en el encabezado y el cuerpo es la
+          LISTA: a quién hay que insistir, qué pidió y hace cuánto. Un panel que
+          obliga a ir a otra pantalla para actuar no ahorró nada. */}
+      {oportunidades.porCerrar > 0 && (
+        <Bloque
+          titulo="Por cerrarse"
+          nota={porCerrarse.map((x) => `${x.label.toLowerCase()} ${x.valor}`).join(" · ")}
+          href="/embudo"
+          hrefLabel="Ver embudo"
+        >
+          <div className="tarjeta divide-y overflow-hidden" style={{ borderColor: "var(--borde)" }}>
+            {abiertas.map((o) => {
+              const et = metaEtapa(o.etapa);
+              return (
+                <Link
+                  key={o.chatId}
+                  href={`/embudo?chat=${encodeURIComponent(o.chatId)}`}
+                  className="flex items-center gap-3 px-4 py-2.5 transition-colors hover:bg-[var(--fondo-fila)]"
+                  style={{ borderColor: "var(--borde)" }}
+                >
+                  <div className="min-w-0 flex-1">
+                    <div className="truncate font-semibold" style={{ fontSize: "var(--t-fila)" }}>
+                      {o.contacto}
+                    </div>
+                    <div
+                      className="truncate"
+                      style={{ fontSize: "var(--t-menor)", color: "var(--muted)" }}
+                    >
+                      {o.ultimoMensaje || "Sin mensajes recientes"}
+                    </div>
+                  </div>
+                  <span
+                    className="pildora shrink-0"
+                    style={{ background: et.fondo, color: et.color }}
+                  >
+                    {et.label}
+                  </span>
+                  <span
+                    className="cifra shrink-0 text-right"
+                    style={{ fontSize: "var(--t-menor)", color: "var(--muted-2)", minWidth: 52 }}
+                  >
+                    {haceCuanto(o.ultimoEn)}
+                  </span>
+                </Link>
+              );
+            })}
+            {oportunidades.porCerrar > abiertas.length && (
+              <div
+                className="px-4 py-2"
+                style={{ fontSize: "var(--t-menor)", color: "var(--muted-2)" }}
+              >
+                y {oportunidades.porCerrar - abiertas.length} más en el embudo
               </div>
-            ))}
+            )}
           </div>
         </Bloque>
       )}
