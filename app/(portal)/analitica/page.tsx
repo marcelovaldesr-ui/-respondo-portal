@@ -42,9 +42,9 @@ function Metrica({
       className="tarjeta p-4"
       style={destacada ? { borderLeft: "3px solid var(--indigo)" } : undefined}
     >
-      <div className="eyebrow">{titulo}</div>
+      <div style={{ fontSize: "var(--t-menor)", color: "var(--muted)" }}>{titulo}</div>
       <div
-        className="titular mt-1.5 text-[24px] font-extrabold leading-none"
+        className="h-cifra cifra mt-1.5"
         style={{ color: color ?? "var(--tinta)" }}
       >
         {valor}
@@ -102,9 +102,8 @@ export default async function Analitica({
 
   if (!a || a.recibidos + a.enviadosIA + a.enviadosHumano === 0) {
     return (
-      <main className="px-5 py-7 sm:px-8 lg:px-10 lg:py-10">
-        <div className="eyebrow">Resultados</div>
-        <h1 className="h-pagina mt-1">
+      <main className="px-5 py-6 sm:px-7 lg:px-8">
+        <h1 className="h-pagina">
           Analítica
         </h1>
         <div className="tarjeta mt-6 p-10 text-center" style={{ color: "var(--muted)" }}>
@@ -119,14 +118,11 @@ export default async function Analitica({
   const maxSerie = Math.max(1, ...a.serie.map((s) => s.ia + s.humano));
 
   return (
-    <main className="px-5 py-7 sm:px-8 lg:px-10 lg:py-10">
-      <div className="eyebrow">Resultados</div>
-      <h1 className="h-pagina mt-1">
-        Analítica
-      </h1>
-      <p className="sub-pagina" style={{ color: "var(--muted)" }}>
-        Lo que hizo tu equipo digital, en números.
-      </p>
+    <main className="px-5 py-6 sm:px-7 lg:px-8">
+      <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+        <h1 className="h-pagina">Analítica</h1>
+        <span className="sub-titulo">Lo que hizo tu equipo digital, en números</span>
+      </div>
 
       {/* Selector de período */}
       <div className="mt-5 flex flex-wrap gap-2">
@@ -245,7 +241,7 @@ export default async function Analitica({
               ["Conversaciones", a.conversaciones],
             ].map(([t, v]) => (
               <div key={String(t)}>
-                <div className="titular text-[24px] font-extrabold">{String(v)}</div>
+                <div className="h-cifra cifra">{String(v)}</div>
                 <div className="text-[12.5px]" style={{ color: "var(--muted)" }}>
                   {String(t)}
                 </div>

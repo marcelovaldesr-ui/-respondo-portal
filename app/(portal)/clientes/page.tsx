@@ -6,14 +6,54 @@ import { metaEtiqueta } from "@/lib/etiquetas";
 
 export const dynamic = "force-dynamic";
 
-/** "hace 3 días" · "hoy" · "—" */
-function haceCuanto(dias: number | null): string {
-  if (dias === null) return "—";
-  if (dias === 0) return "hoy";
+/**
+ * Cuándo fue el último contacto, en el detalle que corresponde.
+ *
+ * Antes devolvía "hoy" para todo lo del día. La tabla está ordenada por último
+ * contacto, así que las primeras once filas decían "hoy, hoy, hoy…": una
+ * columna entera sin información, justo la que sirve para decidir a quién
+ * retomar. Dentro del día lo que importa es la HORA; a partir de ayer, el día.
+ */
+function ultimoContacto(iso: string | null, dias: number | null): string {
+  if (!iso || dias === null) return "—";
+  if (dias === 0) {
+    return new Intl.DateTimeFormat("es-CL", {
+      timeZone: "America/Santiago",
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: false,
+    }).format(new Date(iso));
+  }
   if (dias === 1) return "ayer";
-  if (dias < 30) return `hace ${dias} días`;
+  if (dias < 30) return `hace ${dias} d`;
   const m = Math.floor(dias / 30);
   return `hace ${m} ${m === 1 ? "mes" : "meses"}`;
+}
+
+/**
+ * Iniciales del cliente. Mismo criterio que en la bandeja: contactos que son
+ * solo emoji, sin nombre o puro número existen de verdad en esta base.
+ */
+function Iniciales({ nombre }: { nombre: string }) {
+  const letras = (nombre.match(/\p{L}+/gu) ?? [])
+    .slice(0, 2)
+    .map((p) => p[0]!.toUpperCase())
+    .join("");
+  const texto = letras || nombre.replace(/\D/g, "").slice(-2) || "?";
+  return (
+    <span
+      aria-hidden="true"
+      className="flex h-8 w-8 shrink-0 items-center justify-center font-semibold"
+      style={{
+        borderRadius: "var(--r-pill)",
+        fontSize: "var(--t-micro)",
+        background: "var(--fondo-hundido)",
+        color: "var(--muted)",
+      }}
+    >
+      {texto}
+    </span>
+  );
 }
 
 export default async function Clientes({
@@ -34,13 +74,15 @@ export default async function Clientes({
   };
 
   return (
-    <main className="px-5 py-7 sm:px-8 lg:px-10 lg:py-10">
-      <div className="eyebrow">Personas</div>
-      <h1 className="h-pagina mt-1">Clientes</h1>
-      <p className="sub-pagina max-w-2xl">
-        Quién es cada persona que te escribió, qué han hecho juntos y desde cuándo no
-        hablan.
-      </p>
+    <main className="px-5 py-6 sm:px-7 lg:px-8">
+      {/* Cabecera en una línea, igual que el resto del portal. */}
+      <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+        <h1 className="h-pagina">Clientes</h1>
+        <span className="sub-titulo">
+          {clientes.length} {clientes.length === 1 ? "persona" : "personas"}
+          {(q || etapa) && " que coinciden"}
+        </span>
+      </div>
 
       <form action="/clientes" method="get" className="mt-5 flex gap-2">
         {etapa && <input type="hidden" name="etapa" value={etapa} />}
@@ -96,91 +138,100 @@ export default async function Clientes({
             : "Todavía no hay clientes. Aparecen solos cuando alguien te escribe."}
         </div>
       ) : (
-        <>
-          <p className="mt-4 text-[12.5px]" style={{ color: "var(--muted-2)" }}>
-            {clientes.length} {clientes.length === 1 ? "cliente" : "clientes"}
-          </p>
-
-          {/* Tabla: es una lista de datos comparables, no tarjetas. Se lee más
-              rápido y aprovecha el ancho. En móvil se desplaza en horizontal. */}
-          <div className="tarjeta mt-2 overflow-x-auto p-0">
-            <table className="w-full min-w-[640px] border-collapse text-left">
-              <thead>
-                <tr style={{ borderBottom: "1px solid var(--borde)" }}>
-                  {["Cliente", "Etapa", "Mensajes", "Último contacto", ""].map((h, i) => (
-                    <th
-                      key={h + i}
-                      className="px-4 py-2.5 text-[11px] font-bold uppercase"
-                      style={{ color: "var(--muted-2)", letterSpacing: "0.06em" }}
-                    >
-                      {h}
-                    </th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {clientes.map((c) => {
-                  const me = metaEtapa(c.etapa);
-                  return (
-                    <tr
-                      key={c.chatId}
-                      className="transition hover:bg-[#FAFAFD]"
-                      style={{ borderBottom: "1px solid var(--borde)" }}
-                    >
-                      <td className="px-4 py-3">
-                        <Link href={`/clientes/${c.chatId}`} className="block">
+        /* Tabla: es una lista de datos comparables, no tarjetas. Se lee más
+           rápido y aprovecha el ancho. En móvil se desplaza en horizontal.
+           Ahora usa la clase .tabla del sistema, así una pantalla nueva hereda
+           el mismo tratamiento sin volver a escribirlo. */
+        <div className="tarjeta mt-4 overflow-x-auto p-0">
+          <table className="tabla min-w-[680px]">
+            <thead>
+              <tr>
+                <th>Cliente</th>
+                <th>Etapa</th>
+                <th className="text-right">Mensajes</th>
+                <th className="text-right">Último contacto</th>
+                <th />
+              </tr>
+            </thead>
+            <tbody>
+              {clientes.map((c) => {
+                const me = metaEtapa(c.etapa);
+                // Una sola etiqueta en la tabla. Con dos, la columna Cliente
+                // pasaba a tener más color que texto y el nombre —que es lo que
+                // se busca— dejaba de destacar.
+                const principal = c.etiquetas[0];
+                const resto = c.etiquetas.length - (principal ? 1 : 0);
+                return (
+                  <tr key={c.chatId}>
+                    <td>
+                      <Link href={`/clientes/${c.chatId}`} className="flex items-center gap-2.5">
+                        <Iniciales nombre={c.nombre} />
+                        <div className="min-w-0">
                           <div className="flex items-center gap-2">
-                            <span className="text-[13.5px] font-semibold">{c.nombre}</span>
+                            <span className="truncate font-semibold" style={{ fontSize: "var(--t-fila)" }}>
+                              {c.nombre}
+                            </span>
                             {c.esperandoHumano && (
-                              <span className="pildora-alerta">Te espera</span>
+                              <span className="pildora-peligro shrink-0">Te espera</span>
                             )}
                           </div>
                           <div className="mt-0.5 flex flex-wrap items-center gap-1.5">
-                            <span className="text-[11.5px]" style={{ color: "var(--muted-2)" }}>
+                            <span
+                              className="cifra"
+                              style={{ fontSize: "var(--t-micro)", color: "var(--muted-2)" }}
+                            >
                               +{c.chatId}
                             </span>
-                            {c.etiquetas.slice(0, 2).map((v) => {
-                              const m = metaEtiqueta(v);
-                              return (
-                                <span
-                                  key={v}
-                                  className="pildora"
-                                  style={{ background: m.fondo, color: m.color }}
-                                >
-                                  {m.label}
-                                </span>
-                              );
-                            })}
+                            {principal &&
+                              (() => {
+                                const m = metaEtiqueta(principal);
+                                return (
+                                  <span
+                                    className="pildora"
+                                    style={{ background: m.fondo, color: m.color }}
+                                  >
+                                    {m.label}
+                                  </span>
+                                );
+                              })()}
+                            {resto > 0 && (
+                              <span
+                                style={{ fontSize: "var(--t-micro)", color: "var(--muted-3)" }}
+                                title={c.etiquetas.slice(1).map((v) => metaEtiqueta(v).label).join(", ")}
+                              >
+                                +{resto}
+                              </span>
+                            )}
                           </div>
-                        </Link>
-                      </td>
-                      <td className="px-4 py-3">
-                        <span className="pildora" style={{ background: me.fondo, color: me.color }}>
-                          {me.label}
-                        </span>
-                      </td>
-                      <td className="px-4 py-3 text-[13px]" style={{ color: "var(--muted)" }}>
-                        {c.mensajes}
-                      </td>
-                      <td className="px-4 py-3 text-[13px]" style={{ color: "var(--muted)" }}>
-                        {haceCuanto(c.diasSinHablar)}
-                      </td>
-                      <td className="px-4 py-3 text-right">
-                        <Link
-                          href={`/clientes/${c.chatId}`}
-                          className="text-[12.5px] font-semibold"
-                          style={{ color: "var(--indigo)" }}
-                        >
-                          Ver ficha
-                        </Link>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        </>
+                        </div>
+                      </Link>
+                    </td>
+                    <td>
+                      <span className="pildora" style={{ background: me.fondo, color: me.color }}>
+                        {me.label}
+                      </span>
+                    </td>
+                    <td className="cifra text-right" style={{ color: "var(--muted)" }}>
+                      {c.mensajes}
+                    </td>
+                    <td className="cifra text-right" style={{ color: "var(--muted)" }}>
+                      {ultimoContacto(c.ultimaVez, c.diasSinHablar)}
+                    </td>
+                    <td className="text-right">
+                      <Link
+                        href={`/clientes/${c.chatId}`}
+                        className="font-semibold"
+                        style={{ fontSize: "var(--t-menor)", color: "var(--indigo)" }}
+                      >
+                        Ver ficha →
+                      </Link>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
       )}
     </main>
   );

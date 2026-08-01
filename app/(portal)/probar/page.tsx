@@ -26,7 +26,7 @@ export default async function Probar() {
   if (empleados.length === 0) {
     return (
       <main className="mx-auto max-w-4xl px-5 py-7 sm:px-8 lg:px-10 lg:py-10">
-        <div className="eyebrow">En vivo</div>
+        <div style={{ fontSize: "var(--t-menor)", color: "var(--muted)" }}>En vivo</div>
         <h1 className="h-pagina mt-1">Probar ahora</h1>
         <div className="tarjeta mt-6 p-8 text-center">
           <h2 className="h-seccion">Todavía no tienes un asistente activo</h2>
@@ -44,7 +44,7 @@ export default async function Probar() {
 
   return (
     <main className="mx-auto max-w-4xl px-5 py-7 sm:px-8 lg:px-10 lg:py-10">
-      <div className="eyebrow">En vivo</div>
+      <div style={{ fontSize: "var(--t-menor)", color: "var(--muted)" }}>En vivo</div>
       <h1 className="h-pagina mt-1">
         Probar ahora
       </h1>

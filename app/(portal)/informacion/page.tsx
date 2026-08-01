@@ -24,7 +24,7 @@ function TarjetaFicha({ f }: { f: Ficha }) {
           <input
             name="titulo"
             defaultValue={f.titulo}
-            className="titular w-full border-0 bg-transparent p-0 text-[17px] font-bold outline-none"
+            className="w-full border-0 bg-transparent p-0 text-[17px] font-bold outline-none"
           />
           {!f.vigente && <span className="pildora shrink-0" style={{ background: "#F1F2F7", color: "var(--muted)" }}>Apagada</span>}
         </div>
@@ -94,7 +94,7 @@ export default async function Informacion() {
 
   return (
     <main className="mx-auto max-w-4xl px-5 py-7 sm:px-8 lg:px-10 lg:py-10">
-      <div className="eyebrow">Cerebro</div>
+      <div style={{ fontSize: "var(--t-menor)", color: "var(--muted)" }}>Cerebro</div>
       <h1 className="h-pagina mt-1">
         Información del negocio
       </h1>
@@ -115,7 +115,7 @@ export default async function Informacion() {
 
       {/* Agregar */}
       <details className="tarjeta mt-7 p-5">
-        <summary className="titular cursor-pointer list-none text-[16px] font-bold">
+        <summary className="cursor-pointer list-none text-[16px] font-bold">
           + Agregar información
         </summary>
         <form action={crearFicha} className="mt-4">
@@ -157,7 +157,7 @@ export default async function Informacion() {
       {/* Fichas */}
       {porCategoria.map((g) => (
         <section key={g.valor} className="mt-9">
-          <h2 className="titular text-[17px] font-bold">{g.etiqueta}</h2>
+          <h2 className="text-[17px] font-bold">{g.etiqueta}</h2>
           <div className="mt-3 grid gap-4">
             {g.fichas.map((f) => (
               <TarjetaFicha key={f.id} f={f} />
@@ -168,7 +168,7 @@ export default async function Informacion() {
 
       {fichas.length === 0 && (
         <div
-          className="mt-7 rounded-2xl border border-dashed p-10 text-center"
+          className="mt-7 rounded-[7px] border border-dashed p-10 text-center"
           style={{ borderColor: "var(--borde-fuerte)", color: "var(--muted)" }}
         >
           Todavía no hay información cargada. Sin esto, tu asistente deriva todas las
@@ -179,7 +179,7 @@ export default async function Informacion() {
       {/* Correcciones */}
       {correcciones.length > 0 && (
         <section className="mt-11">
-          <h2 className="titular text-[17px] font-bold">Correcciones</h2>
+          <h2 className="text-[17px] font-bold">Correcciones</h2>
           <p className="mt-1 text-[14px]" style={{ color: "var(--muted)" }}>
             Respuestas puntuales que tienen prioridad sobre todo lo anterior.
           </p>
@@ -202,7 +202,7 @@ export default async function Informacion() {
 
       {/* Plantillas de rubro */}
       <details className="tarjeta-plana mt-11 p-5">
-        <summary className="titular cursor-pointer list-none text-[16px] font-bold">
+        <summary className="cursor-pointer list-none text-[16px] font-bold">
           Plantillas de rubro (para demostraciones)
         </summary>
         <p className="mt-2 text-[14px]" style={{ color: "var(--muted)" }}>
@@ -214,7 +214,7 @@ export default async function Informacion() {
           {Object.entries(PLANTILLAS).map(([clave, p]) => (
             <form key={clave} action={cargarPlantilla} className="tarjeta p-4">
               <input type="hidden" name="rubro" value={clave} />
-              <div className="titular text-[15px] font-bold">{p.nombre}</div>
+              <div className="text-[15px] font-bold">{p.nombre}</div>
               <div className="mt-0.5 text-[13px]" style={{ color: "var(--muted)" }}>
                 {p.negocio} · {p.fichas.length} fichas
               </div>

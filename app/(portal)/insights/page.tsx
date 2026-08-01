@@ -76,8 +76,8 @@ export default async function Insights({
   const hayDeEstaSemana = semanas.some((s) => s.desde === actual.desde);
 
   return (
-    <main className="px-5 py-7 sm:px-8 lg:px-10 lg:py-10">
-      <div className="eyebrow">Tu semana</div>
+    <main className="px-5 py-6 sm:px-7 lg:px-8">
+      <div style={{ fontSize: "var(--t-menor)", color: "var(--muted)" }}>Tu semana</div>
       <h1 className="h-pagina mt-1">
         Informe
       </h1>
@@ -145,7 +145,7 @@ export default async function Insights({
             className="tarjeta mt-5 p-6"
             style={{ borderLeft: "3px solid var(--indigo)" }}
           >
-            <div className="eyebrow" style={{ color: "var(--indigo)" }}>
+            <div style={{ fontSize: "var(--t-menor)", color: "var(--indigo)" }}>
               Lo importante
             </div>
             <ul className="mt-3 space-y-3">

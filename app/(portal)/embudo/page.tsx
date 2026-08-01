@@ -47,8 +47,8 @@ export default async function Embudo({
   const esperan = tarjetas.filter((t) => t.esperandoHumano).length;
 
   return (
-    <main className="px-5 py-7 sm:px-8 lg:px-10 lg:py-10">
-      <div className="eyebrow">Ventas</div>
+    <main className="px-5 py-6 sm:px-7 lg:px-8">
+      <div style={{ fontSize: "var(--t-menor)", color: "var(--muted)" }}>Ventas</div>
       <h1 className="h-pagina mt-1">Embudo</h1>
       <p className="sub-pagina max-w-2xl" style={{ color: "var(--muted)" }}>
         En qué va cada conversación. Tu asistente las mueve solo según lo que pasa; tú
@@ -110,11 +110,11 @@ export default async function Embudo({
                 return (
                   <section key={e.valor} className="w-[280px] shrink-0">
                     <div
-                      className="rounded-xl px-3.5 py-2.5"
+                      className="rounded-[7px] px-3.5 py-2.5"
                       style={{ background: e.fondo, border: `1px solid ${e.color}22` }}
                     >
                       <div className="flex items-baseline justify-between gap-2">
-                        <h2 className="text-[14px] font-extrabold" style={{ color: e.color }}>
+                        <h2 className="text-[14px] font-semibold" style={{ color: e.color }}>
                           {e.label}
                         </h2>
                         <span className="text-[13px] font-bold" style={{ color: e.color }}>
@@ -133,7 +133,7 @@ export default async function Embudo({
                     <div className="mt-3 space-y-2.5">
                       {items.length === 0 ? (
                         <div
-                          className="rounded-xl border border-dashed px-3 py-6 text-center text-[12.5px]"
+                          className="rounded-[7px] border border-dashed px-3 py-6 text-center text-[12.5px]"
                           style={{ borderColor: "var(--borde-fuerte)", color: "var(--muted-2)" }}
                         >
                           Sin conversaciones
@@ -146,7 +146,7 @@ export default async function Embudo({
                           {items.length > TOPE_COLUMNA && (
                             <Link
                               href="/conversaciones"
-                              className="block rounded-xl border border-dashed px-3 py-3 text-center text-[12.5px] font-semibold"
+                              className="block rounded-[7px] border border-dashed px-3 py-3 text-center text-[12.5px] font-semibold"
                               style={{ borderColor: "var(--borde-fuerte)", color: "var(--muted)" }}
                             >
                               +{items.length - TOPE_COLUMNA} más · verlas en la bandeja

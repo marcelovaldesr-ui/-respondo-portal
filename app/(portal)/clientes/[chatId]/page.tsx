@@ -25,14 +25,14 @@ export default async function Ficha({ params }: { params: { chatId: string } }) 
   const me = metaEtapa(f.etapa);
 
   return (
-    <main className="px-5 py-7 sm:px-8 lg:px-10 lg:py-10">
+    <main className="px-5 py-6 sm:px-7 lg:px-8">
       <Link href="/clientes" className="text-[12.5px] font-semibold" style={{ color: "var(--muted)" }}>
         ← Clientes
       </Link>
 
       <div className="mt-2 flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0">
-          <h1 className="h-pagina">{f.nombre}</h1>
+          <h1 className="h-cifra">{f.nombre}</h1>
           <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
             <span className="text-[12.5px]" style={{ color: "var(--muted)" }}>
               +{f.chatId}
@@ -97,8 +97,8 @@ export default async function Ficha({ params }: { params: { chatId: string } }) 
           ],
         ].map(([t, v]) => (
           <div key={t} className="tarjeta p-3.5">
-            <div className="eyebrow">{t}</div>
-            <div className="titular mt-1 text-[19px] font-extrabold leading-none">{v}</div>
+            <div style={{ fontSize: "var(--t-menor)", color: "var(--muted)" }}>{t}</div>
+            <div className="h-cifra cifra mt-1">{v}</div>
           </div>
         ))}
       </div>
