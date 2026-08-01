@@ -1,4 +1,24 @@
 import { db } from "@/lib/db";
+import { DIAS_SILENCIO } from "@/lib/embudo";
+
+/**
+ * Filtro de "oportunidad viva", en el lenguaje de PostgREST.
+ *
+ * Es la MISMA regla que aplica cargarEmbudo al escribir (ver enSilencio): una
+ * oportunidad está viva si el cliente fue el último en hablar, o si el negocio
+ * habló hace menos de una semana.
+ *
+ * Existe en dos formas —esta de lectura y la de escritura del embudo— por un
+ * motivo concreto: el embudo solo escribe cuando alguien abre esa pantalla, y
+ * el menú se dibuja en cada navegación. Si el contador esperara a la escritura,
+ * mostraría oportunidades muertas hasta que alguien pasara por el tablero.
+ * Aplicando el filtro también al leer, los dos números coinciden siempre,
+ * incluso antes de que el embudo se haya abierto una sola vez.
+ */
+function soloVivas(q: any) {
+  const corte = new Date(Date.now() - DIAS_SILENCIO * 86400_000).toISOString();
+  return q.or(`ultimo_mensaje_rol.eq.cliente,ultimo_mensaje_en.gte.${corte}`);
+}
 
 /**
  * CONTADORES DEL MENÚ — los dos números que van al lado de Conversaciones y de
@@ -33,7 +53,12 @@ export type ContadoresMenu = {
   cotizados: number;
 };
 
-const VACIO: ContadoresMenu = { esperando: 0, porCerrar: 0, interesados: 0, cotizados: 0 };
+const VACIO: ContadoresMenu = {
+  esperando: 0,
+  porCerrar: 0,
+  interesados: 0,
+  cotizados: 0,
+};
 
 /**
  * Ventana de actividad para considerar viva una oportunidad. Es el valor por
@@ -81,32 +106,50 @@ export async function oportunidadesAbiertas(
   diasActividad = DIAS_ACTIVIDAD,
 ): Promise<Oportunidad[]> {
   try {
-    const corte = new Date(Date.now() - diasActividad * 86400_000).toISOString();
-    const { data } = await db()
-      .from("ed_contactos")
-      .select("chat_id, nombre, etapa, ultimo_mensaje_texto, ultimo_mensaje_en")
-      .eq("cliente_id", clienteId)
-      .in("etapa", ["interesado", "cotizado"])
-      .gte("ultimo_mensaje_en", corte)
+    const corte = new Date(
+      Date.now() - diasActividad * 86400_000,
+    ).toISOString();
+    const { data } = await soloVivas(
+      db()
+        .from("ed_contactos")
+        .select(
+          "chat_id, nombre, etapa, ultimo_mensaje_texto, ultimo_mensaje_en",
+        )
+        .eq("cliente_id", clienteId)
+        .in("etapa", ["interesado", "cotizado"])
+        .gte("ultimo_mensaje_en", corte),
+    )
       // Ascendente pone "cotizado" antes que "interesado" (c < i): primero lo
       // que está más cerca de cerrarse.
       .order("etapa", { ascending: true })
       .order("ultimo_mensaje_en", { ascending: false, nullsFirst: false })
       .limit(limite);
 
-    return (data ?? []).map((c) => ({
-      chatId: c.chat_id as string,
-      contacto: (c.nombre as string) || `+${c.chat_id}`,
-      etapa: (c.etapa as string) ?? "interesado",
-      ultimoMensaje: (c.ultimo_mensaje_texto as string) ?? "",
-      ultimoEn: (c.ultimo_mensaje_en as string) ?? null,
+    // soloVivas devuelve `any` (PostgREST no tipa .or encadenado), así que la
+    // forma de la fila se declara acá y no se pierde el tipo hacia afuera.
+    type Fila = {
+      chat_id: string;
+      nombre: string | null;
+      etapa: string | null;
+      ultimo_mensaje_texto: string | null;
+      ultimo_mensaje_en: string | null;
+    };
+
+    return ((data ?? []) as Fila[]).map((c) => ({
+      chatId: c.chat_id,
+      contacto: c.nombre || `+${c.chat_id}`,
+      etapa: c.etapa ?? "interesado",
+      ultimoMensaje: c.ultimo_mensaje_texto ?? "",
+      ultimoEn: c.ultimo_mensaje_en,
     }));
   } catch {
     return [];
   }
 }
 
-export async function contadoresMenu(clienteId: string): Promise<ContadoresMenu> {
+export async function contadoresMenu(
+  clienteId: string,
+): Promise<ContadoresMenu> {
   try {
     const supa = db();
 
@@ -125,14 +168,18 @@ export async function contadoresMenu(clienteId: string): Promise<ContadoresMenu>
      * —badge del menú, encabezado de la portada y tablero— tienen que contar lo
      * mismo o el cliente deja de creerle a los tres.
      */
-    const corte = new Date(Date.now() - DIAS_ACTIVIDAD * 86400_000).toISOString();
+    const corte = new Date(
+      Date.now() - DIAS_ACTIVIDAD * 86400_000,
+    ).toISOString();
     const porEtapa = (etapa: string) =>
-      supa
-        .from("ed_contactos")
-        .select("chat_id", { count: "exact", head: true })
-        .eq("cliente_id", clienteId)
-        .eq("etapa", etapa)
-        .gte("ultimo_mensaje_en", corte);
+      soloVivas(
+        supa
+          .from("ed_contactos")
+          .select("chat_id", { count: "exact", head: true })
+          .eq("cliente_id", clienteId)
+          .eq("etapa", etapa)
+          .gte("ultimo_mensaje_en", corte),
+      );
 
     const [escalaciones, interesados, cotizados] = await Promise.all([
       supa

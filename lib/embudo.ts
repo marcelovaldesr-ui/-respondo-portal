@@ -64,6 +64,39 @@ export const ETAPAS: {
   },
 ];
 
+/**
+ * CIERRE POR SILENCIO — la salida que le faltaba al embudo.
+ *
+ * Una oportunidad entraba a "cotizado" y no salía nunca: la etapa solo avanza
+ * con señales del asistente y ninguna señal dice "esto terminó". Medido en
+ * Impresora Color: de 9 oportunidades abiertas, cuatro eran despedidas.
+ *
+ * LA REGLA, Y EL DETALLE QUE LA HACE CORRECTA
+ * Se cierra cuando el NEGOCIO fue el último en escribir y el cliente no
+ * respondió en una semana. Ese "el negocio fue el último" no es un adorno: si
+ * el último mensaje lo mandó el CLIENTE, la conversación no está en silencio
+ * —te está esperando a ti—, que es exactamente lo contrario de una oportunidad
+ * muerta. Cerrarla sería esconder trabajo pendiente.
+ *
+ * Nunca toca lo que movió una persona (etapa_manual). El criterio del dueño
+ * siempre gana, incluso contra el reloj.
+ */
+export const DIAS_SILENCIO = 7;
+
+/** Motivo que se guarda en ed_contactos.etapa_motivo (migración 251). */
+export const MOTIVO_SILENCIO = "sin_respuesta";
+
+export function enSilencio(
+  ultimoRol: string | null,
+  ultimoEn: string | null,
+  dias = DIAS_SILENCIO,
+): boolean {
+  if (!ultimoEn) return false;
+  // Si habló el cliente al final, la pelota es del negocio: no es silencio.
+  if ((ultimoRol ?? "cliente") === "cliente") return false;
+  return Date.now() - new Date(ultimoEn).getTime() > dias * 86400_000;
+}
+
 /** Orden del embudo: se usa para no retroceder de etapa automáticamente. */
 const ORDEN: Record<Etapa, number> = {
   nuevo: 0,
@@ -102,6 +135,8 @@ export type TarjetaEmbudo = {
   ultimoMensaje: string;
   ultimoEn: string | null;
   esperandoHumano: boolean;
+  /** "sin_respuesta" si la cerró el reloj; null si fue una señal o una persona. */
+  motivo: string | null;
 };
 
 /**
@@ -138,7 +173,7 @@ export async function cargarEmbudo(
     supa
       .from("ed_contactos")
       .select(
-        "chat_id, nombre, etiquetas, etapa, etapa_manual, ultimo_mensaje_en, ultimo_mensaje_texto",
+        "chat_id, nombre, etiquetas, etapa, etapa_manual, etapa_motivo, ultimo_mensaje_en, ultimo_mensaje_texto, ultimo_mensaje_rol",
       )
       .eq("cliente_id", clienteId),
     supa.from("ed_resultados").select("chat_id, tipo").in("empleado_id", ids),
@@ -169,7 +204,7 @@ export async function cargarEmbudo(
    * 1.467 mensajes y creciendo lineal).
    */
 
-  const cambios: { chat_id: string; etapa: Etapa }[] = [];
+  const cambios: { chat_id: string; etapa: Etapa; motivo: string | null }[] = [];
   const tarjetas: TarjetaEmbudo[] = [];
 
   for (const c of contactos) {
@@ -177,8 +212,12 @@ export async function cargarEmbudo(
     const etiquetas = (c.etiquetas as string[] | null) ?? [];
     const guardada = ((c.etapa as string) ?? "nuevo") as Etapa;
     const manual = Boolean(c.etapa_manual);
+    const ultimoEn = (c.ultimo_mensaje_en as string) ?? null;
+    const ultimoRol = (c.ultimo_mensaje_rol as string) ?? null;
 
     let etapa = guardada;
+    let motivo: string | null = (c.etapa_motivo as string) ?? null;
+
     if (!manual) {
       const sugerida = etapaSegunSenales({
         etiquetas,
@@ -188,7 +227,23 @@ export async function cargarEmbudo(
       // Solo avanza; nunca retrocede sola.
       if (ORDEN[sugerida] > ORDEN[guardada]) {
         etapa = sugerida;
-        cambios.push({ chat_id: chatId, etapa });
+        motivo = null;
+        cambios.push({ chat_id: chatId, etapa, motivo });
+      }
+
+      /**
+       * Cierre por silencio. Va DESPUÉS del avance automático para que una
+       * señal fresca —una cotización recién enviada— tenga prioridad sobre el
+       * reloj. Solo aplica a etapas intermedias: "ganado" y "perdido" ya son
+       * terminales y no se reabren solas.
+       */
+      if (
+        (etapa === "interesado" || etapa === "cotizado") &&
+        enSilencio(ultimoRol, ultimoEn)
+      ) {
+        etapa = "perdido";
+        motivo = MOTIVO_SILENCIO;
+        cambios.push({ chat_id: chatId, etapa, motivo });
       }
     }
 
@@ -199,8 +254,9 @@ export async function cargarEmbudo(
       etapaManual: manual,
       etiquetas,
       ultimoMensaje: (c.ultimo_mensaje_texto as string) ?? "",
-      ultimoEn: (c.ultimo_mensaje_en as string) ?? null,
+      ultimoEn,
       esperandoHumano: esperando.has(chatId),
+      motivo,
     });
   }
 
@@ -208,7 +264,11 @@ export async function cargarEmbudo(
   for (const c of cambios) {
     await supa
       .from("ed_contactos")
-      .update({ etapa: c.etapa, etapa_en: new Date().toISOString() })
+      .update({
+        etapa: c.etapa,
+        etapa_motivo: c.motivo,
+        etapa_en: new Date().toISOString(),
+      })
       .eq("cliente_id", clienteId)
       .eq("chat_id", c.chat_id);
   }
@@ -240,7 +300,7 @@ export async function moverEtapa(
   const supa = supaOpt ?? db();
   const { error } = await supa
     .from("ed_contactos")
-    .update({ etapa, etapa_manual: true, etapa_en: new Date().toISOString() })
+    .update({ etapa, etapa_manual: true, etapa_motivo: null, etapa_en: new Date().toISOString() })
     .eq("cliente_id", clienteId) // barrera de acceso
     .eq("chat_id", chatId);
   return error ? { ok: false, error: error.message } : { ok: true };
@@ -296,7 +356,7 @@ export async function liberarEtapa(
 
   const { error } = await supa
     .from("ed_contactos")
-    .update({ etapa_manual: false, etapa, etapa_en: new Date().toISOString() })
+    .update({ etapa_manual: false, etapa, etapa_motivo: null, etapa_en: new Date().toISOString() })
     .eq("cliente_id", clienteId)
     .eq("chat_id", chatId);
   return { ok: !error };
