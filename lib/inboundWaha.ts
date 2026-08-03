@@ -23,8 +23,23 @@ export type ResultadoEntrante = { accion: string; detalle?: string };
 
 /** Espera corta: el mensaje se entiende solo, conviene responder rápido. */
 const ESPERA_CORTA = 6000;
-/** Espera larga: parece que el cliente sigue escribiendo. */
-const ESPERA_LARGA = 15000;
+/**
+ * Espera larga: parece que el cliente sigue escribiendo.
+ *
+ * Subida de 15s a 20s (auditoría Monday-readiness, 3-ago-2026, Impresora
+ * Color): dos incidentes reales de la misma semana mostraban a Tino
+ * preguntando lo mismo 2-4 veces seguidas porque los fragmentos del cliente
+ * llegaban a 15-17s uno del otro — justo en el borde de la ventana anterior,
+ * donde la comprobación de "¿llegó algo más nuevo?" corre casi al mismo
+ * tiempo que se guarda el fragmento siguiente (carrera). Con más margen sobre
+ * los huecos reales observados, la comprobación tiene tiempo de ver el
+ * fragmento nuevo antes de decidir responder. No elimina la carrera de raíz
+ * (seguiría siendo posible con huecos de exactamente 20s), pero la ventana
+ * anterior fallaba con huecos típicos observados en producción, así que era
+ * la prioridad inmediata. Trade-off consciente: un mensaje corto/ambiguo
+ * tarda hasta 20s en responderse en vez de 15s.
+ */
+const ESPERA_LARGA = 20000;
 
 /**
  * CUÁNTO ESPERAR ANTES DE RESPONDER.
