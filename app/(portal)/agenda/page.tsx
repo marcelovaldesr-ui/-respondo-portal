@@ -225,6 +225,11 @@ export default async function Agenda() {
               Ver página de reservas
             </Link>
           )}
+          {/* Clases va ANTES de configuración: se usa todas las semanas, mientras
+              que configuración se toca una vez al mes. */}
+          <Link href="/agenda/clases" className="btn-suave px-3.5 py-2 text-[13.5px]">
+            Clases
+          </Link>
           <Link href="/agenda/configuracion" className="btn-suave px-3.5 py-2 text-[13.5px]">
             Configuración
           </Link>
