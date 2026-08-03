@@ -2,6 +2,8 @@ import { notFound } from "next/navigation";
 import type { Metadata } from "next";
 import { db } from "@/lib/db";
 import ReservaPublica from "@/components/ReservaPublica";
+import ReservaClases from "@/components/ReservaClases";
+import { proximasClases } from "@/lib/clases";
 
 export const dynamic = "force-dynamic";
 
@@ -46,6 +48,20 @@ export default async function PaginaReservas({ params }: Props) {
 
   if (!servicios || servicios.length === 0) notFound();
 
+  /**
+   * ¿Este negocio trabaja con clases?
+   *
+   * Se decide por los datos, no por una casilla de configuración: si tiene
+   * sesiones programadas, es un gimnasio; si no, es una clínica o una barbería
+   * y la página se ve exactamente igual que antes. Una opción más que marcar
+   * sería una cosa más que se nos olvida activar en una implementación.
+   *
+   * Un negocio puede tener las dos cosas —un gimnasio con clases Y evaluación
+   * personal— y por eso las clases van arriba y las horas quedan abajo, en vez
+   * de reemplazarse.
+   */
+  const clases = await proximasClases(cliente.id, { dias: 21 });
+
   // Iniciales para el círculo del encabezado: da identidad sin pedirle un logo
   // al negocio, que es una fricción más al momento de partir.
   const iniciales = cliente.nombre
@@ -76,6 +92,25 @@ export default async function PaginaReservas({ params }: Props) {
           </p>
         </div>
       </header>
+
+      {clases.length > 0 && (
+        <ReservaClases
+          slug={params.slug}
+          clases={clases.map((c) => ({
+            id: c.id,
+            servicio: c.servicioNombre,
+            profesional: c.profesionalNombre,
+            inicio: c.inicio,
+            fin: c.fin,
+            lugaresLibres: c.lugaresLibres,
+            cupoMaximo: c.cupoMaximo,
+          }))}
+        />
+      )}
+
+      {clases.length > 0 && (
+        <h2 className="h-seccion mt-9 mb-1">O reserva una hora personal</h2>
+      )}
 
       <ReservaPublica
         slug={params.slug}
