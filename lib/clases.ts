@@ -1,5 +1,6 @@
 import { db } from "@/lib/db";
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { horaChileAUtc, fechaChileDe } from "@/lib/agendaCore";
 
 /**
  * CLASES GRUPALES CON CUPO — pilates, crossfit, spinning, yoga.
@@ -285,31 +286,50 @@ export async function generarSerie(params: {
   let omitidas = 0;
 
   const [h, m] = params.hora.split(":").map(Number);
-  const hoy = new Date();
 
-  for (let semana = 0; semana < params.semanas; semana++) {
-    for (const dow of params.diasSemana) {
-      const d = new Date(hoy);
-      // Próxima ocurrencia de ese día, más las semanas que correspondan.
-      d.setDate(d.getDate() + ((dow - d.getDay() + 7) % 7) + semana * 7);
-      d.setHours(h ?? 0, m ?? 0, 0, 0);
-      if (d.getTime() <= Date.now()) continue; // no se programa hacia atrás
+  /**
+   * TODO EL CÁLCULO EN HORA DE CHILE, NUNCA CON setHours.
+   *
+   * BUG REAL (2-ago-2026): la primera versión usaba `d.setHours(19, 0)`, que
+   * aplica la zona horaria DEL SERVIDOR. Vercel corre en UTC, así que "19:00"
+   * quedaba guardado como 19:00 UTC — o sea las 15:00 en Chile. Marcelo pidió
+   * clases a las 19:00 y aparecieron a las 15:00, cuatro horas antes.
+   *
+   * El detalle traicionero: en el equipo de desarrollo, con reloj chileno,
+   * funcionaba perfecto. Solo fallaba desplegado.
+   *
+   * `horaChileAUtc` hace la conversión bien e incluye el cambio de horario de
+   * septiembre y abril, así que una serie que cruza esa fecha mantiene la hora
+   * de pared en todas sus sesiones.
+   */
+  // Mediodía como ancla para recorrer días de calendario: lejos de cualquier
+  // salto de horario, así sumar 24 h nunca cae en el día equivocado.
+  const hoyCl = fechaChileDe(new Date());
+  const ancla = horaChileAUtc(hoyCl.anio, hoyCl.mes, hoyCl.dia, 12, 0).getTime();
 
-      const fin = new Date(d.getTime() + params.duracionMin * 60_000);
-      const r = await crearClase({
-        clienteId: params.clienteId,
-        servicioId: params.servicioId,
-        profesionalId: params.profesionalId,
-        inicio: d,
-        fin,
-        cupoMaximo: params.cupoMaximo,
-        supa: params.supa,
-      });
-      if (r.ok) creadas++;
-      else {
-        omitidas++;
-        detalle.push(`${d.toLocaleString("es-CL")}: ${r.error}`);
-      }
+  for (let dias = 0; dias <= params.semanas * 7; dias++) {
+    const cl = fechaChileDe(new Date(ancla + dias * 86400_000));
+    if (!params.diasSemana.includes(cl.diaSemana)) continue;
+
+    const inicio = horaChileAUtc(cl.anio, cl.mes, cl.dia, h ?? 0, m ?? 0);
+    if (inicio.getTime() <= Date.now()) continue; // no se programa hacia atrás
+
+    const fin = new Date(inicio.getTime() + params.duracionMin * 60_000);
+    const r = await crearClase({
+      clienteId: params.clienteId,
+      servicioId: params.servicioId,
+      profesionalId: params.profesionalId,
+      inicio,
+      fin,
+      cupoMaximo: params.cupoMaximo,
+      supa: params.supa,
+    });
+    if (r.ok) creadas++;
+    else {
+      omitidas++;
+      detalle.push(
+        `${inicio.toLocaleString("es-CL", { timeZone: "America/Santiago" })}: ${r.error}`,
+      );
     }
   }
   return { creadas, omitidas, detalle };
