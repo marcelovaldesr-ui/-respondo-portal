@@ -1,4 +1,5 @@
 import { db } from "@/lib/db";
+import { proximasClases, inscribirEnClase } from "@/lib/clases";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import {
   listarServicios,
@@ -37,11 +38,21 @@ export type ContextoAgenda = {
   cupos: Map<string, { servicioId: string; profesionalId: string; inicio: string; servicioNombre: string }>;
   citas: Map<string, Cita>;
   servicios: Servicio[];
+  /**
+   * CLASES GRUPALES, con token propio (K1, K2…).
+   *
+   * Van en el MISMO mecanismo que los cupos 1:1 y no en uno paralelo: el modelo
+   * sigue sin poder inventar nada, solo elegir de una lista que armó el código.
+   * La letra distinta evita que confunda "la hora de las 19:00 con Marcelo" con
+   * "la clase de pilates de las 19:00", que en un gimnasio pueden coexistir.
+   */
+  clases: Map<string, { claseId: string; servicioNombre: string; inicio: string; lugaresLibres: number }>;
 };
 
 export type CitaDelMotor = {
   servicio?: string | null; // token svc (solo informativo; el cupo ya lo trae)
   cupo?: string | null;     // token del cupo elegido (C1, C2, ...)
+  clase?: string | null;    // token de la clase grupal elegida (K1, K2, ...)
   cita?: string | null;     // token de cita vigente (V1, ...) para reagendar/cancelar
   nombre?: string | null;
 };
@@ -56,9 +67,21 @@ export function construirBloqueAgenda(
   serviciosConCupos: ServicioConCupos[],
   citasVigentes: Cita[],
   nombreServicioDeCita: (c: Cita) => string,
-): { texto: string; cupos: ContextoAgenda["cupos"]; citas: ContextoAgenda["citas"] } {
+  clasesDisponibles: {
+    id: string;
+    servicioNombre: string;
+    inicio: string;
+    lugaresLibres: number;
+  }[] = [],
+): {
+  texto: string;
+  cupos: ContextoAgenda["cupos"];
+  citas: ContextoAgenda["citas"];
+  clases: ContextoAgenda["clases"];
+} {
   const cupos: ContextoAgenda["cupos"] = new Map();
   const citas: ContextoAgenda["citas"] = new Map();
+  const clases: ContextoAgenda["clases"] = new Map();
 
   const lineasServicios: string[] = [];
   const lineasCupos: string[] = [];
@@ -85,6 +108,20 @@ export function construirBloqueAgenda(
     }
   }
 
+  // Clases con cupo. Token K para que no se confundan con los cupos 1:1.
+  const lineasClases: string[] = [];
+  clasesDisponibles.forEach((c, i) => {
+    const token = `K${i + 1}`;
+    clases.set(token, {
+      claseId: c.id,
+      servicioNombre: c.servicioNombre,
+      inicio: c.inicio,
+      lugaresLibres: c.lugaresLibres,
+    });
+    const quedan = c.lugaresLibres === 1 ? "queda 1 lugar" : `quedan ${c.lugaresLibres} lugares`;
+    lineasClases.push(`- [${token}] ${c.servicioNombre}: ${formatearSlot(c.inicio)} (${quedan})`);
+  });
+
   const lineasVigentes: string[] = [];
   citasVigentes.forEach((c, i) => {
     const token = `V${i + 1}`;
@@ -100,6 +137,7 @@ ${lineasServicios.join("\n")}
 
 Cupos disponibles (hora de Chile) — SOLO puedes ofrecer y elegir de esta lista:
 ${lineasCupos.length ? lineasCupos.join("\n") : "- (por ahora no hay cupos disponibles: ofrece derivar con el equipo)"}
+${lineasClases.length ? `\nClases con cupo disponible — SOLO puedes ofrecer y elegir de esta lista:\n${lineasClases.join("\n")}` : ""}
 ${lineasVigentes.length ? `\nCitas vigentes de ESTE cliente:\n${lineasVigentes.join("\n")}` : ""}
 
 REGLAS DE AGENDA (se suman a tus reglas; NO reemplazan el formato de salida):
@@ -109,9 +147,17 @@ REGLAS DE AGENDA (se suman a tus reglas; NO reemplazan el formato de salida):
 - Cuando el cliente CONFIRME un cupo y tengas su nombre, responde confirmando en tu texto y agrega en el JSON: "accion":"agendar" y "cita":{"cupo":"<token>","nombre":"<nombre>"}. NO digas que quedó agendado como definitivo hasta que el sistema confirme; di algo natural tipo "te lo dejo reservado".
 - Si quiere CAMBIAR una cita vigente: elige el token de su cita y un cupo nuevo → "accion":"reagendar_cita", "cita":{"cita":"<tokenV>","cupo":"<tokenC>"}.
 - Si quiere CANCELAR una cita vigente → "accion":"cancelar_cita", "cita":{"cita":"<tokenV>"}. Confirma con empatía y ofrece reagendar.
-- Si la persona no da su nombre, pídelo con naturalidad antes de reservar (una sola pregunta).`;
+- Si la persona no da su nombre, pídelo con naturalidad antes de reservar (una sola pregunta).
+${lineasClases.length ? `
+REGLAS DE CLASES (cuando la persona quiere una clase grupal, no una hora personal):
+- Las clases son grupales: varias personas en el mismo horario. Ofrece 2-3 de la lista [K…], diciendo día, hora y cuántos lugares quedan.
+- Menciona los lugares que quedan SOLO cuando son 3 o menos ("quedan 2 lugares"). Con más, no lo digas: suena a presión y no aporta.
+- Para inscribir necesitas la clase elegida + el nombre. El teléfono ya lo tienes.
+- Cuando confirme, agrega en el JSON: "accion":"agendar" y "cita":{"clase":"<tokenK>","nombre":"<nombre>"}.
+- NUNCA prometas un lugar antes de que el sistema confirme: alguien más puede estar inscribiéndose en ese mismo momento. Di "te dejo el cupo" y espera.
+- Si la clase se llenó justo, discúlpate en una línea y ofrece de inmediato otra de la lista, sin dramatizar.` : ""}`;
 
-  return { texto, cupos, citas };
+  return { texto, cupos, citas, clases };
 }
 
 // ---------------------------------------------------------------------------
@@ -140,12 +186,27 @@ export async function contextoAgenda(
     const vigentes = await citasDe(clienteId, chatId, supa);
     const nombrePorId = new Map(servicios.map((s) => [s.id, s.nombre]));
 
-    const { texto, cupos, citas } = construirBloqueAgenda(
+    /**
+     * Clases con cupo. Si el negocio no las usa, la lista viene vacía y el
+     * prompt no menciona una sola palabra de clases — una clínica sigue
+     * comportándose exactamente igual que antes.
+     */
+    const clasesDisp = (await proximasClases(clienteId, { dias: 14, limite: 12, supa })).map(
+      (c) => ({
+        id: c.id,
+        servicioNombre: c.servicioNombre,
+        inicio: c.inicio,
+        lugaresLibres: c.lugaresLibres,
+      }),
+    );
+
+    const { texto, cupos, citas, clases } = construirBloqueAgenda(
       conCupos,
       vigentes,
       (c) => nombrePorId.get(c.servicio_id) ?? "tu hora",
+      clasesDisp,
     );
-    return { texto, cupos, citas, servicios };
+    return { texto, cupos, citas, clases, servicios };
   } catch (e) {
     // Migración no aplicada u otro problema: la agenda jamás rompe al bot.
     console.error("[agendaBot] contexto falló (se sigue sin agenda):", (e as Error).message);
@@ -171,7 +232,10 @@ export function interpretarAccionAgenda(
   cita: CitaDelMotor | null | undefined,
 ): { op: "agendar" | "reagendar" | "cancelar" | null } {
   if (!cita) return { op: null };
-  if (accion === "agendar" && cita.cupo) return { op: "agendar" };
+  // Agendar cubre las dos formas de reservar: una hora personal (token de cupo)
+  // o un lugar en una clase grupal (token de clase). Cuál de las dos es lo
+  // decide después ejecutarAccionAgenda mirando qué token vino.
+  if (accion === "agendar" && (cita.cupo || cita.clase)) return { op: "agendar" };
   if (accion === "reagendar_cita" && cita.cita && cita.cupo) return { op: "reagendar" };
   if (accion === "cancelar_cita" && cita.cita) return { op: "cancelar" };
   return { op: null };
@@ -206,6 +270,54 @@ export async function ejecutarAccionAgenda(params: {
 
   try {
     if (op === "agendar") {
+      /**
+       * INSCRIPCIÓN A UNA CLASE. Va primero porque si el modelo eligió un token
+       * K, la reserva 1:1 no aplica en absoluto.
+       *
+       * El resultado se traduce al MISMO vocabulario que usa la agenda de horas
+       * ("cupo_tomado"), así el resto del flujo —el texto de disculpa, el
+       * reintento— no necesita aprender un caso nuevo.
+       */
+      const tokenClase = String(params.cita?.clase ?? "").trim().toUpperCase();
+      if (tokenClase) {
+        const clase = ctx.clases.get(tokenClase);
+        if (!clase) return { tipo: "ninguna" }; // token inválido: no se inscribe a nadie
+        const nombre = String(params.cita?.nombre ?? "").trim();
+        if (nombre.length < 2) return { tipo: "ninguna" }; // sin nombre no se reserva
+
+        const r = await inscribirEnClase({
+          claseId: clase.claseId,
+          clienteId: params.clienteId,
+          nombre,
+          telefono: `+${params.chatId}`,
+          chatId: params.chatId,
+          origen: "whatsapp",
+          empleadoId: params.empleadoId,
+          supa,
+        });
+
+        if (!r.ok) {
+          if (r.motivo !== "cupo_tomado") return { tipo: "ninguna" };
+          /**
+           * El último lugar se lo llevó otra persona mientras conversaban.
+           * El texto lo escribe CÓDIGO y no el modelo: es el único momento en
+           * que hay que desdecirse de algo que se acaba de ofrecer, y ahí no
+           * conviene improvisar. Se reconoce el error, se explica en una línea
+           * y se devuelve la conversación a elegir otra.
+           */
+          return {
+            tipo: "cupo_tomado",
+            textoReemplazo:
+              "Uf, justo se tomaron el último lugar de esa clase mientras conversábamos 😅 " +
+              "¿Te sirve alguno de los otros horarios? Te dejo el cupo al tiro.",
+          };
+        }
+        return {
+          tipo: "agendada",
+          textoExtra: `✅ Listo, quedaste inscrito: ${clase.servicioNombre} · ${formatearSlot(clase.inicio)}. Te llegará un recordatorio por aquí 🙌`,
+        };
+      }
+
       const cupo = ctx.cupos.get(String(params.cita?.cupo).trim().toUpperCase());
       if (!cupo) return { tipo: "ninguna" }; // token inválido: no se agenda nada
       const nombre = String(params.cita?.nombre ?? "").trim() || "Cliente WhatsApp";
