@@ -120,6 +120,16 @@ export async function responderSiBot(params: {
    * Ver el comentario de la anti-carrera más abajo.
    */
   sigueVigente?: () => Promise<boolean>;
+  /**
+   * Canal por el que entró la conversación. Se guarda en cada mensaje del
+   * asistente para que la analítica y la bandeja sepan de dónde vino.
+   *
+   * Estaba fijo en "whatsapp" porque era el único canal que existía. Al sumar
+   * Instagram, las respuestas seguían guardándose como WhatsApp: la métrica de
+   * "atendido por IA" habría atribuido a un canal lo que pasó en el otro, y sin
+   * ningún síntoma visible hasta que alguien revisara los números.
+   */
+  canal?: string;
 }): Promise<{ accion: string; detalle?: string }> {
   const { clienteId, empleadoId, chatId, cfg } = params;
 
@@ -154,7 +164,7 @@ export async function responderSiBot(params: {
           rol: "empleado",
           texto: rapida,
           waId: "waId" in envioC ? (envioC as { waId?: string }).waId : undefined,
-          canal: "whatsapp",
+          canal: params.canal ?? "whatsapp",
         });
         return {
           accion: "confirmacion_cita",
@@ -193,7 +203,7 @@ export async function responderSiBot(params: {
       rol: "empleado",
       texto: aviso,
       waId: "waId" in envioF ? (envioF as { waId?: string }).waId : undefined,
-      canal: "whatsapp",
+      canal: params.canal ?? "whatsapp",
     });
     await setModo(empleadoId, chatId, "humano", supaF);
     await supaF.from("ed_escalaciones").insert({
@@ -278,7 +288,7 @@ export async function responderSiBot(params: {
     rol: "empleado",
     texto,
     waId: "waId" in envio ? (envio as { waId?: string }).waId : undefined,
-    canal: "whatsapp",
+    canal: params.canal ?? "whatsapp",
   });
 
   // Escalación: si el motor pide humano, silenciar el bot y registrar.
