@@ -158,10 +158,14 @@ export default function ConectarWhatsApp() {
         override_default_response_type: true,
         extras: {
           setup: {},
-          // COEXISTENCIA: permite conectar un número que ya usa la app de
-          // WhatsApp Business (QR desde el teléfono) sin perder la app.
-          featureType: "whatsapp_business_app_onboarding",
-          sessionInfoVersion: "3",
+          // *** DIAGNÓSTICO TEMPORAL 5-ago-2026 — REVERTIR después de probar ***
+          // Coexistencia exige que Meta ya nos reconozca como Tech Provider, y
+          // esa aprobación sigue pendiente. Comentado para probar si el
+          // Embedded Signup SIN Coexistencia funciona con el mismo config_id y
+          // dominio — si esto sí conecta, confirma que el bloqueo es por eso y
+          // no por dominio/config. Volver a activar apenas se confirme.
+          // featureType: "whatsapp_business_app_onboarding",
+          // sessionInfoVersion: "3",
         },
       },
     );
