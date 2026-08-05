@@ -119,7 +119,12 @@ export default function ConectarWhatsApp() {
       return;
     }
     window.fbAsyncInit = () => {
-      window.FB?.init({ appId: APP_ID, autoLogAppEvents: true, xfbml: false, version: "v21.0" });
+      // v21.0 quedó desactualizado y fallaba con "Error al iniciar sesión" en el
+      // popup de FB.login para Coexistencia (5-ago-2026). Diagnóstico: el enlace
+      // "Registro insertado alojado por Meta" para esta misma app/config SÍ
+      // funcionaba, y su URL usaba v26.0 — de ahí el valor exacto acá. Si Meta
+      // vuelve a romper esto, comparar contra la versión que use ese enlace.
+      window.FB?.init({ appId: APP_ID, autoLogAppEvents: true, xfbml: false, version: "v26.0" });
       setEstado({ fase: "listo" });
     };
     const s = document.createElement("script");
