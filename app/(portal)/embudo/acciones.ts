@@ -1,7 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { obtenerUsuarioPortal } from "@/lib/auth";
+import { obtenerUsuarioConPermiso } from "@/lib/auth";
 import { moverEtapa, liberarEtapa, type Etapa } from "@/lib/embudo";
 
 /**
@@ -9,7 +9,7 @@ import { moverEtapa, liberarEtapa, type Etapa } from "@/lib/embudo";
  * El cliente_id sale de la sesión, nunca del formulario (regla de la casa).
  */
 export async function cambiarEtapa(formData: FormData): Promise<{ ok: boolean; error?: string }> {
-  const usuario = await obtenerUsuarioPortal();
+  const usuario = await obtenerUsuarioConPermiso("gestionar_embudo");
   if (!usuario) return { ok: false, error: "Sesión no válida" };
 
   const chatId = String(formData.get("chatId") ?? "");
@@ -24,7 +24,7 @@ export async function cambiarEtapa(formData: FormData): Promise<{ ok: boolean; e
 
 /** Devuelve la etapa al cálculo automático del asistente. */
 export async function volverAutomatico(formData: FormData): Promise<{ ok: boolean }> {
-  const usuario = await obtenerUsuarioPortal();
+  const usuario = await obtenerUsuarioConPermiso("gestionar_embudo");
   if (!usuario) return { ok: false };
   const chatId = String(formData.get("chatId") ?? "");
   if (!chatId) return { ok: false };

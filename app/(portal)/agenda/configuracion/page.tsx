@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { headers } from "next/headers";
-import { exigirUsuarioPortal } from "@/lib/auth";
+import { exigirPermisoPortal } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { formatearSlot } from "@/lib/agendaCore";
 import { googleCalendarConfigurado } from "@/lib/googleCalendar";
@@ -20,6 +20,7 @@ import {
   crearBloqueo,
   eliminarBloqueo,
   configurarReservas,
+  rotarTokenIcal,
   configurarGoogleProfesional,
   desconectarGoogleOauth,
 } from "../acciones";
@@ -33,8 +34,6 @@ export const dynamic = "force-dynamic";
  * después casi nunca, mientras que el calendario se mira todos los días. Antes
  * estaban mezclados y la pantalla parecía un formulario, no una agenda.
  */
-
-const DIAS = ["Domingo", "Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado"];
 
 type Servicio = { id: string; nombre: string; duracion_min: number; precio_clp: number | null; activo: boolean };
 type Profesional = {
@@ -53,9 +52,10 @@ type Bloqueo = { id: string; profesional_id: string | null; desde: string; hasta
 export default async function ConfiguracionAgenda({
   searchParams,
 }: {
-  searchParams?: { gcal_oauth?: string };
+  searchParams?: Promise<{ gcal_oauth?: string }>;
 }) {
-  const usuario = await exigirUsuarioPortal();
+  const params = searchParams ? await searchParams : undefined;
+  const usuario = await exigirPermisoPortal("configurar_agenda");
   const supa = db();
 
   const sonda = await supa.from("ed_servicios").select("id").limit(1);
@@ -147,7 +147,7 @@ export default async function ConfiguracionAgenda({
   const serviciosConCitas = new Set((usados ?? []).map((u) => u.servicio_id as string));
   const profesionalesConCitas = new Set((usados ?? []).map((u) => u.profesional_id as string));
 
-  const cabeceras = headers();
+  const cabeceras = await headers();
   const host = cabeceras.get("x-forwarded-host") ?? cabeceras.get("host") ?? "";
   const protocolo = host.startsWith("localhost") || host.startsWith("127.") ? "http" : "https";
   const base = host ? `${protocolo}://${host}` : "";
@@ -156,7 +156,7 @@ export default async function ConfiguracionAgenda({
   const urlPublica = cliente?.slug && base ? `${base}/reservar/${cliente.slug}` : null;
   const gcalListo = googleCalendarConfigurado();
   const gcalOauthListo = oauthConfigurado();
-  const avisoOauth = searchParams?.gcal_oauth;
+  const avisoOauth = params?.gcal_oauth;
 
   return (
     <main className="mx-auto max-w-4xl px-4 py-6 sm:px-6 lg:px-10 lg:py-9">
@@ -409,14 +409,22 @@ export default async function ConfiguracionAgenda({
             Tus horas aparecerán junto al resto de tu calendario. Google lo actualiza cada algunas horas.
           </p>
           {urlIcal ? (
-            <CampoCopiar valor={urlIcal} />
+            <>
+              <CampoCopiar valor={urlIcal} />
+              <form action={rotarTokenIcal} className="mt-2">
+                <button type="submit" className="btn-chico">
+                  Renovar enlace privado
+                </button>
+              </form>
+            </>
           ) : (
             <p className="mt-2 text-[13.5px]" style={{ color: "var(--muted-2)" }}>
               Disponible al aplicar la migración <code>sql/221_agenda_calendarios.sql</code>.
             </p>
           )}
           <p className="mt-1.5 text-[12px]" style={{ color: "var(--muted-2)" }}>
-            Es un enlace privado: no lo compartas con quien no deba ver tus horas.
+            Es un enlace privado: no lo compartas con quien no deba ver tus horas. Al
+            renovarlo, el enlace anterior deja de funcionar de inmediato.
           </p>
         </div>
 

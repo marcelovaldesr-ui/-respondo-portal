@@ -1,7 +1,8 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { db } from "@/lib/db";
 import { construirIcal, type EventoIcal } from "@/lib/ical";
-import { limitar } from "@/lib/seguridad";
+import { limitarDistribuido } from "@/lib/seguridad";
+import { ipDeRequest } from "@/lib/reservasPublicas";
 
 export const dynamic = "force-dynamic";
 
@@ -19,14 +20,15 @@ export const dynamic = "force-dynamic";
  */
 export async function GET(
   request: NextRequest,
-  { params }: { params: { token: string } },
+  { params }: { params: Promise<{ token: string }> },
 ) {
-  const ip = request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? "?";
-  if (!limitar(`ical:${ip}`, 60, 60).ok) {
+  const ip = ipDeRequest(request.headers);
+  if (!(await limitarDistribuido(`ical:${ip}`, 60, 60)).ok) {
     return new NextResponse("Too Many Requests", { status: 429 });
   }
 
-  const token = (params.token ?? "").replace(/\.ics$/i, "").trim();
+  const { token: tokenParam } = await params;
+  const token = (tokenParam ?? "").replace(/\.ics$/i, "").trim();
   if (!/^[a-f0-9]{32,64}$/i.test(token)) {
     return new NextResponse("No encontrado", { status: 404 });
   }
@@ -48,7 +50,7 @@ export async function GET(
   const { data: citas } = await supa
     .from("ed_citas")
     .select(
-      "id, nombre_contacto, telefono, chat_id, inicio, fin, estado, origen, notas, actualizado_en, ed_servicios(nombre), ed_profesionales(nombre)",
+      "id, nombre_contacto, telefono, chat_id, inicio, fin, estado, origen, actualizado_en, ed_servicios(nombre), ed_profesionales(nombre)",
     )
     .eq("cliente_id", cliente.id as string)
     .gte("inicio", desde)
@@ -65,7 +67,6 @@ export async function GET(
       fin: string;
       estado: string;
       origen: string;
-      notas: string | null;
       actualizado_en: string | null;
       ed_servicios: { nombre: string } | null;
       ed_profesionales: { nombre: string } | null;
@@ -85,7 +86,6 @@ export async function GET(
         profesional ? `Atiende: ${profesional}` : "",
         `Estado: ${fila.estado}`,
         `Reservado vía: ${fila.origen}`,
-        fila.notas ? `Notas: ${fila.notas}` : "",
         "— Agenda de Respondo",
       ]
         .filter(Boolean)
@@ -107,7 +107,9 @@ export async function GET(
       "Content-Disposition": `inline; filename="respondo-${token.slice(0, 8)}.ics"`,
       // Los lectores de calendario reconsultan solos; se evita caché agresiva
       // intermedia para que un cambio se vea en el siguiente refresco.
-      "Cache-Control": "public, max-age=300, s-maxage=300",
+      // El token es una credencial y el feed contiene datos personales: no se
+      // permite que una caché compartida/CDN conserve la respuesta.
+      "Cache-Control": "private, max-age=300",
     },
   });
 }

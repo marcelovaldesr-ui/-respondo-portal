@@ -1,9 +1,16 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { db } from "@/lib/db";
-import { crearCita } from "@/lib/agenda";
+import { crearCita, disponibilidad } from "@/lib/agenda";
 import { programarSeguimientosCita } from "@/lib/agendaSeguimientos";
 import { formatearSlot } from "@/lib/agendaCore";
-import { limitar } from "@/lib/seguridad";
+import { limitarDistribuido } from "@/lib/seguridad";
+import {
+  coincideConSlotOfrecido,
+  ipDeRequest,
+  normalizarNombre,
+  normalizarTelefono,
+  parsearJsonAcotado,
+} from "@/lib/reservasPublicas";
 
 export const dynamic = "force-dynamic";
 
@@ -16,24 +23,14 @@ export const dynamic = "force-dynamic";
  * validación estricta y tope de reservas activas por teléfono.
  */
 
-function normalizarTelefono(crudo: string): string | null {
-  const digitos = crudo.replace(/\D/g, "");
-  if (digitos.length < 8 || digitos.length > 15) return null;
-  if (digitos.startsWith("56")) return digitos;
-  if (digitos.length === 9 && digitos.startsWith("9")) return `56${digitos}`;
-  return digitos;
-}
-
 export async function POST(request: NextRequest) {
-  const ip = request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? "?";
-  if (!limitar(`resv:${ip}`, 6, 300).ok) {
+  const ip = ipDeRequest(request.headers);
+  if (!(await limitarDistribuido(`resv:${ip}`, 6, 300)).ok) {
     return NextResponse.json({ ok: false, error: "Demasiados intentos, espera un momento." }, { status: 429 });
   }
 
-  let body: Record<string, unknown>;
-  try {
-    body = (await request.json()) as Record<string, unknown>;
-  } catch {
+  const body = parsearJsonAcotado(await request.text());
+  if (!body) {
     return NextResponse.json({ ok: false, error: "Solicitud inválida." }, { status: 400 });
   }
 
@@ -46,7 +43,7 @@ export async function POST(request: NextRequest) {
   const servicioId = String(body.servicioId ?? "").trim();
   const profesionalId = String(body.profesionalId ?? "").trim();
   const inicio = String(body.inicio ?? "").trim();
-  const nombre = String(body.nombre ?? "").trim().slice(0, 80);
+  const nombre = normalizarNombre(String(body.nombre ?? ""));
   const telefono = normalizarTelefono(String(body.telefono ?? ""));
 
   if (!slug || !servicioId || !profesionalId || !inicio || nombre.length < 2 || !telefono) {
@@ -65,6 +62,24 @@ export async function POST(request: NextRequest) {
     .eq("activo", true)
     .maybeSingle();
   if (!cliente) return NextResponse.json({ ok: false, error: "Página no disponible." }, { status: 404 });
+
+  // No basta con que servicio y profesional pertenezcan al negocio: el horario
+  // solicitado tiene que ser uno de los slots que el servidor ofreció. Sin
+  // esta comprobación una petición manual podía reservar de madrugada o fuera
+  // del horizonte configurado.
+  const disp = await disponibilidad(cliente.id as string, servicioId, {
+    maxSlots: 120,
+    supa,
+  });
+  if (
+    !disp.ok ||
+    !coincideConSlotOfrecido(disp.slots, profesionalId, inicio)
+  ) {
+    return NextResponse.json(
+      { ok: false, error: "horario_no_disponible", mensaje: "Ese horario ya no está disponible." },
+      { status: 409 },
+    );
+  }
 
   // Tope de reservas activas por teléfono (anti-spam sencillo).
   const { count } = await supa

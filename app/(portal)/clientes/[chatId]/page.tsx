@@ -17,9 +17,10 @@ const ESTILO_EVENTO: Record<EventoCliente["tipo"], { color: string; label: strin
   etapa: { color: "#7C3AED", label: "Embudo" },
 };
 
-export default async function Ficha({ params }: { params: { chatId: string } }) {
+export default async function Ficha({ params }: { params: Promise<{ chatId: string }> }) {
+  const { chatId } = await params;
   const usuario = await exigirUsuarioPortal();
-  const f = await fichaCliente(usuario.clienteId, params.chatId);
+  const f = await fichaCliente(usuario.clienteId, chatId);
   if (!f) notFound();
 
   const me = metaEtapa(f.etapa);

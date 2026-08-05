@@ -62,25 +62,54 @@ async function empleadosDe(clienteId: string, supa: SupabaseClient): Promise<str
  */
 export async function listarClientes(
   clienteId: string,
-  opts?: { q?: string; etapa?: string; supa?: SupabaseClient },
-): Promise<ResumenCliente[]> {
+  opts?: { q?: string; etapa?: string; pagina?: number; porPagina?: number; supa?: SupabaseClient },
+): Promise<{ items: ResumenCliente[]; total: number }> {
   const supa = opts?.supa ?? db();
   const ids = await empleadosDe(clienteId, supa);
-  if (!ids.length) return [];
+  if (!ids.length) return { items: [], total: 0 };
 
-  const [contactosR, escalacionesR, resultadosR] = await Promise.all([
-    supa
-      .from("ed_contactos")
-      .select(
-        "chat_id, nombre, telefono, email, notas, etiquetas, etapa, ultimo_mensaje_en, primer_mensaje_en, total_mensajes",
-      )
-      .eq("cliente_id", clienteId),
-    supa.from("ed_escalaciones").select("chat_id").in("empleado_id", ids).is("atendida_en", null),
-    supa.from("ed_resultados").select("chat_id, tipo").in("empleado_id", ids),
-  ]);
+  const porPagina = Math.min(100, Math.max(1, opts?.porPagina ?? 25));
+  const pagina = Math.max(1, opts?.pagina ?? 1);
+  const desde = (pagina - 1) * porPagina;
+  let consulta = supa
+    .from("ed_contactos")
+    .select(
+      "chat_id, nombre, telefono, email, notas, etiquetas, etapa, ultimo_mensaje_en, primer_mensaje_en, total_mensajes",
+      { count: "exact" },
+    )
+    .eq("cliente_id", clienteId);
+  if (opts?.etapa) consulta = consulta.eq("etapa", opts.etapa);
+  if (opts?.q) {
+    // Evita que comas/paréntesis del usuario alteren la gramática de `.or`.
+    const termino = opts.q.replace(/[,()%_]/g, " ").trim().slice(0, 80);
+    if (termino) {
+      consulta = consulta.or(
+        `nombre.ilike.%${termino}%,chat_id.ilike.%${termino}%,notas.ilike.%${termino}%`,
+      );
+    }
+  }
 
+  const contactosR = await consulta
+    .order("ultimo_mensaje_en", { ascending: false, nullsFirst: false })
+    .order("chat_id", { ascending: true })
+    .range(desde, desde + porPagina - 1);
   const contactos = contactosR.data ?? [];
-  if (!contactos.length) return [];
+  if (!contactos.length) return { items: [], total: contactosR.count ?? 0 };
+  const chats = contactos.map((c) => c.chat_id as string);
+
+  const [escalacionesR, resultadosR] = await Promise.all([
+    supa
+      .from("ed_escalaciones")
+      .select("chat_id")
+      .in("empleado_id", ids)
+      .in("chat_id", chats)
+      .is("atendida_en", null),
+    supa
+      .from("ed_resultados")
+      .select("chat_id, tipo")
+      .in("empleado_id", ids)
+      .in("chat_id", chats),
+  ]);
 
   const esperando = new Set((escalacionesR.data ?? []).map((e) => e.chat_id as string));
   /**
@@ -114,7 +143,7 @@ export async function listarClientes(
    * sin importar cuánto crezca el historial.
    */
 
-  let lista: ResumenCliente[] = contactos.map((c) => {
+  const lista: ResumenCliente[] = contactos.map((c) => {
     const chatId = c.chat_id as string;
     const ultima = (c.ultimo_mensaje_en as string) ?? null;
     return {
@@ -134,20 +163,7 @@ export async function listarClientes(
     };
   });
 
-  if (opts?.etapa) lista = lista.filter((c) => c.etapa === opts.etapa);
-  if (opts?.q) {
-    const q = opts.q.toLowerCase();
-    const dig = opts.q.replace(/\D/g, "");
-    lista = lista.filter(
-      (c) =>
-        c.nombre.toLowerCase().includes(q) ||
-        (!!dig && c.chatId.includes(dig)) ||
-        (c.notas ?? "").toLowerCase().includes(q),
-    );
-  }
-
-  // Sin actividad al final; el resto por lo más reciente.
-  return lista.sort((a, b) => (b.ultimaVez ?? "").localeCompare(a.ultimaVez ?? ""));
+  return { items: lista, total: contactosR.count ?? lista.length };
 }
 
 /**

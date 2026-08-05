@@ -61,6 +61,11 @@ create index if not exists idx_ed_clases_cliente_dia
 create index if not exists idx_ed_clases_servicio
   on ed_clases (servicio_id, inicio);
 
+-- Segunda barrera: esta tabla nació después de 202_rls.sql y por eso debe
+-- activar RLS aquí. Sin policies, anon/authenticated no acceden; el backend
+-- opera con service_role y aplica las reglas de negocio de este módulo.
+alter table ed_clases enable row level security;
+
 -- ---------------------------------------------------------------------------
 -- 2) Una inscripción es una cita que apunta a una clase
 -- ---------------------------------------------------------------------------

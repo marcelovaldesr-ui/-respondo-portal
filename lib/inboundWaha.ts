@@ -115,7 +115,7 @@ export async function manejarEntranteWaha(
     const empleadoId = await tinoDe(clienteId);
     if (!empleadoId) return { accion: "ack_sin_tino" };
     const r = await actualizarEstadoEnvio(db(), empleadoId, ack.waId, ack.estado);
-    if (ack.estado === "error") console.error("[waha ack] envío NO entregado:", ack.waId);
+    if (ack.estado === "error") console.error("[waha ack] envío no entregado");
     return {
       accion: "ack",
       detalle: `${ack.estado}${r.encontrado === false ? " (ajeno)" : ""}`,

@@ -1,4 +1,4 @@
-import { exigirUsuarioPortal } from "@/lib/auth";
+import { exigirPermisoPortal } from "@/lib/auth";
 import { listarFichas, listarCorrecciones, type Ficha } from "@/lib/conocimiento";
 import { CATEGORIAS, PLANTILLAS } from "@/lib/plantillasRubro";
 import {
@@ -10,10 +10,6 @@ import {
 } from "./acciones";
 
 export const dynamic = "force-dynamic";
-
-function etiquetaCategoria(valor: string) {
-  return CATEGORIAS.find((c) => c.valor === valor)?.etiqueta ?? valor;
-}
 
 function TarjetaFicha({ f }: { f: Ficha }) {
   return (
@@ -80,7 +76,7 @@ function TarjetaFicha({ f }: { f: Ficha }) {
 }
 
 export default async function Informacion() {
-  const usuario = await exigirUsuarioPortal();
+  const usuario = await exigirPermisoPortal("editar_conocimiento");
   const [fichas, correcciones] = await Promise.all([
     listarFichas(usuario.clienteId),
     listarCorrecciones(usuario.clienteId),

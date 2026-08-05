@@ -2,11 +2,13 @@
 
 import { revalidatePath } from "next/cache";
 import { db } from "@/lib/db";
-import { obtenerUsuarioPortal } from "@/lib/auth";
+import { obtenerUsuarioConPermiso } from "@/lib/auth";
 import { configPorCliente, enviarTexto } from "@/lib/whatsapp";
 import { enviarTextoWaha, enviarMediaWaha } from "@/lib/waha";
 import { guardarMensaje } from "@/lib/mensajes";
-import { limitar } from "@/lib/seguridad";
+import { limitarDistribuido } from "@/lib/seguridad";
+import type { SupabaseClient } from "@supabase/supabase-js";
+import { validarArchivoBase64 } from "@/lib/archivos";
 
 /**
  * Control del cliente sobre una conversación: pausar al asistente, tomar el
@@ -42,9 +44,6 @@ const MIME_PERMITIDOS = new Set([
   "application/pdf",
 ]);
 
-/** Tope real del archivo (el base64 pesa ~33% más que el binario). */
-const MAX_BASE64 = 12 * 1024 * 1024; // ~9 MB de archivo
-
 /** Nombre de archivo seguro: sin rutas, sin caracteres raros, con largo acotado. */
 function nombreSeguro(nombre: string): string {
   const base = nombre.split(/[/\\]/).pop() ?? "archivo"; // corta cualquier ruta
@@ -68,21 +67,85 @@ function nombreSeguro(nombre: string): string {
  * falla y se asume 'waha' (el comportamiento correcto hoy), así que esto funciona
  * aunque no se haya aplicado la migración.
  */
-async function transporteCloud(
-  clienteId: string,
-): Promise<import("@/lib/whatsapp").ConfigWhatsApp | null> {
+type TransporteSalida =
+  | { tipo: "waha" }
+  | { tipo: "cloud"; config: import("@/lib/whatsapp").ConfigWhatsApp }
+  | { tipo: "error"; error: string };
+
+async function transporteSalida(clienteId: string): Promise<TransporteSalida> {
   const { data, error } = await db()
     .from("ed_clientes")
     .select("transporte")
     .eq("id", clienteId)
     .maybeSingle();
-  const transporte = error ? "waha" : ((data?.transporte as string | null) ?? "waha");
-  if (transporte !== "cloud") return null;
-  return configPorCliente(clienteId);
+  if (error) {
+    return { tipo: "error", error: "No se pudo determinar el canal de salida." };
+  }
+  const transporte = (data?.transporte as string | null) ?? "waha";
+  if (transporte !== "cloud") return { tipo: "waha" };
+  const config = await configPorCliente(clienteId);
+  // Nunca caer a la sesión WAHA global si un cliente Cloud quedó sin token.
+  // Son transportes distintos y usar el fallback equivocado puede enviar desde
+  // el número de otro negocio.
+  if (!config) return { tipo: "error", error: "El número de Meta no tiene credenciales válidas." };
+  return { tipo: "cloud", config };
+}
+
+type ControlTemporal = { marca: string; modoAnterior: Modo; existia: boolean };
+
+/** Silencia al bot durante el envío y permite revertir sin pisar cambios concurrentes. */
+async function tomarControlTemporal(
+  supa: SupabaseClient,
+  empleadoId: string,
+  chatId: string,
+): Promise<ControlTemporal | null> {
+  const { data: anterior, error: lecturaError } = await supa
+    .from("ed_chat_estado")
+    .select("modo")
+    .eq("empleado_id", empleadoId)
+    .eq("chat_id", chatId)
+    .maybeSingle();
+  if (lecturaError) return null;
+
+  const marca = new Date().toISOString();
+  const { error } = await supa.from("ed_chat_estado").upsert(
+    { empleado_id: empleadoId, chat_id: chatId, modo: "humano", actualizado_en: marca },
+    { onConflict: "empleado_id,chat_id" },
+  );
+  if (error) return null;
+  return {
+    marca,
+    modoAnterior: MODOS.includes(anterior?.modo as Modo) ? (anterior?.modo as Modo) : "bot",
+    existia: Boolean(anterior),
+  };
+}
+
+/** Revierte solo si nadie cambió el modo después de nuestra toma temporal. */
+async function restaurarControl(
+  supa: SupabaseClient,
+  empleadoId: string,
+  chatId: string,
+  control: ControlTemporal,
+): Promise<void> {
+  if (control.existia) {
+    await supa
+      .from("ed_chat_estado")
+      .update({ modo: control.modoAnterior, actualizado_en: new Date().toISOString() })
+      .eq("empleado_id", empleadoId)
+      .eq("chat_id", chatId)
+      .eq("actualizado_en", control.marca);
+  } else {
+    await supa
+      .from("ed_chat_estado")
+      .delete()
+      .eq("empleado_id", empleadoId)
+      .eq("chat_id", chatId)
+      .eq("actualizado_en", control.marca);
+  }
 }
 
 export async function cambiarModo(formData: FormData) {
-  const usuario = await obtenerUsuarioPortal();
+  const usuario = await obtenerUsuarioConPermiso("operar_conversaciones");
   if (!usuario) throw new Error("Sesión no válida");
 
   const empleadoId = String(formData.get("empleadoId") ?? "");
@@ -127,61 +190,69 @@ export async function cambiarModo(formData: FormData) {
 
 /**
  * El humano del negocio responde al cliente desde el inbox (Opción B, Fase 3).
- * Guarda el mensaje como 'humano', pone el chat en modo humano (el bot calla) y
- * lo envía por la Cloud API. Si no hay token configurado (dev sin Meta), el
- * mensaje queda guardado pero no se envía, y se informa.
+ * Pone el chat en modo humano, entrega por el transporte configurado y solo
+ * después registra el mensaje y cierra la escalación.
  */
-export async function responderComoHumano(formData: FormData): Promise<void> {
-  const usuario = await obtenerUsuarioPortal();
+export async function responderComoHumano(
+  formData: FormData,
+): Promise<{ ok: boolean; error?: string; enviado?: boolean }> {
+  const usuario = await obtenerUsuarioConPermiso("operar_conversaciones");
   if (!usuario) throw new Error("Sesión no válida");
 
   const empleadoId = String(formData.get("empleadoId") ?? "");
   const chatId = String(formData.get("chatId") ?? "");
   const texto = String(formData.get("texto") ?? "").trim();
-  if (!empleadoId || !chatId || !texto) return;
+  if (!empleadoId || !chatId || !texto) return { ok: false, error: "Faltan datos" };
+  if (texto.length > 4000) return { ok: false, error: "El mensaje es demasiado largo" };
 
   // Anti-abuso: si una sesión se ve comprometida, esto impide usar el número de
   // WhatsApp del negocio para spam masivo (y que WhatsApp lo suspenda).
-  if (!limitar(`enviar:${usuario.email}`, 40, 60).ok) {
-    throw new Error("Demasiados mensajes seguidos. Espera un momento.");
+  if (!(await limitarDistribuido(`enviar:${usuario.email}`, 40, 60)).ok) {
+    return { ok: false, error: "Demasiados mensajes seguidos. Espera un momento." };
   }
 
   const supa = db();
 
-  // Barrera de acceso: el empleado tiene que ser de este cliente.
-  const { data: empleado } = await supa
-    .from("ed_empleados")
-    .select("id")
-    .eq("id", empleadoId)
-    .eq("cliente_id", usuario.clienteId)
-    .maybeSingle();
-  if (!empleado) return;
+  // Barrera de acceso: tanto el empleado como el destinatario deben pertenecer
+  // al tenant. Sin validar el contacto, una acción forjada podía usar el número
+  // del negocio para escribir a un teléfono arbitrario.
+  const [{ data: empleado }, { data: contacto }] = await Promise.all([
+    supa
+      .from("ed_empleados")
+      .select("id")
+      .eq("id", empleadoId)
+      .eq("cliente_id", usuario.clienteId)
+      .maybeSingle(),
+    supa
+      .from("ed_contactos")
+      .select("chat_id")
+      .eq("cliente_id", usuario.clienteId)
+      .eq("chat_id", chatId)
+      .maybeSingle(),
+  ]);
+  if (!empleado || !contacto) return { ok: false, error: "Sin acceso a este chat" };
 
-  // Tomar el control: el bot no responde mientras el humano está en el chat.
-  await supa
-    .from("ed_chat_estado")
-    .upsert(
-      { empleado_id: empleadoId, chat_id: chatId, modo: "humano", actualizado_en: new Date().toISOString() },
-      { onConflict: "empleado_id,chat_id" },
-    );
+  const transporte = await transporteSalida(usuario.clienteId);
+  if (transporte.tipo === "error") return { ok: false, error: transporte.error };
 
-  // Cerrar escalación pendiente de este chat (el humano ya está respondiendo).
-  await supa
-    .from("ed_escalaciones")
-    .update({ atendida_en: new Date().toISOString() })
-    .eq("empleado_id", empleadoId)
-    .eq("chat_id", chatId)
-    .is("atendida_en", null);
+  // Silenciar al bot ANTES de esperar a WhatsApp evita que una respuesta IA en
+  // vuelo hable encima del humano. Si el envío falla se restaura el modo previo.
+  const control = await tomarControlTemporal(supa, empleadoId, chatId);
+  if (!control) return { ok: false, error: "No se pudo tomar el control del chat" };
 
   // Enviar por WhatsApp, eligiendo el transporte SEGÚN EL CLIENTE:
   //  - Cliente marcado como 'cloud' → Meta oficial.
   //  - Resto (por defecto) → WAHA, que es el caso de Impresora Color.
   // (Antes SIEMPRE usaba Cloud API → el texto de la persona no llegaba cuando el
   // cliente está en WAHA.)
-  const cfg = await transporteCloud(usuario.clienteId);
-  const envio = cfg
-    ? await enviarTexto(cfg, chatId, texto)
-    : await enviarTextoWaha(chatId, texto);
+  const envio =
+    transporte.tipo === "cloud"
+      ? await enviarTexto(transporte.config, chatId, texto)
+      : await enviarTextoWaha(chatId, texto);
+  if (!envio.ok) {
+    await restaurarControl(supa, empleadoId, chatId, control);
+    return { ok: false, error: envio.error || "WhatsApp rechazó el envío" };
+  }
 
   // Guardar el mensaje del humano CON el id del envío. Esto es clave: WhatsApp
   // devuelve por el webhook (fromMe/eco de Coexistencia) el mismo mensaje que
@@ -190,7 +261,7 @@ export async function responderComoHumano(formData: FormData): Promise<void> {
   // en el contexto de Tino (bug auditoría 1-ago-2026). Con el id, yaProcesado lo
   // reconoce como eco y lo ignora. guardarMensaje tolera que la columna
   // wa_message_id/canal no exista aún (migración 212/210 sin aplicar).
-  await guardarMensaje(supa, {
+  const guardado = await guardarMensaje(supa, {
     empleadoId,
     chatId,
     rol: "humano",
@@ -198,8 +269,26 @@ export async function responderComoHumano(formData: FormData): Promise<void> {
     waId: envio.ok ? envio.waId : undefined,
     canal: "whatsapp",
   });
+  if (!guardado.ok) {
+    // El mensaje sí salió, pero sin historial el próximo turno tendría contexto
+    // falso. Mantener el chat en humano obliga a revisar el incidente.
+    return {
+      ok: false,
+      enviado: true,
+      error: "El mensaje salió, pero no se pudo registrar. Revisa el chat antes de continuar.",
+    };
+  }
+
+  // Cerrar la escalación recién DESPUÉS de confirmar envío + persistencia.
+  await supa
+    .from("ed_escalaciones")
+    .update({ atendida_en: new Date().toISOString() })
+    .eq("empleado_id", empleadoId)
+    .eq("chat_id", chatId)
+    .is("atendida_en", null);
 
   revalidatePath("/conversaciones");
+  return { ok: true };
 }
 
 /**
@@ -208,14 +297,14 @@ export async function responderComoHumano(formData: FormData): Promise<void> {
  * deja registro en el historial. `data` llega en base64 (sin prefijo) desde el
  * navegador. Devuelve {ok} para que el compositor muestre el error si lo hay.
  *
- * Límite: 12MB de base64 (~9MB de archivo). El tope real lo fija también
+ * Límite: 8MB de archivo antes de codificar. El tope real lo fija también
  * `serverActions.bodySizeLimit` en next.config.mjs; si falta, un archivo grande
  * falla con "Body exceeded limit" antes de llegar acá.
  */
 export async function enviarArchivoComoHumano(
   formData: FormData,
-): Promise<{ ok: boolean; error?: string }> {
-  const usuario = await obtenerUsuarioPortal();
+): Promise<{ ok: boolean; error?: string; enviado?: boolean }> {
+  const usuario = await obtenerUsuarioConPermiso("operar_conversaciones");
   if (!usuario) return { ok: false, error: "Sesión no válida" };
 
   const empleadoId = String(formData.get("empleadoId") ?? "");
@@ -235,50 +324,50 @@ export async function enviarArchivoComoHumano(
       error: "Solo se pueden enviar imágenes (JPG, PNG, WEBP, GIF) o archivos PDF.",
     };
   }
-  if (data.length > MAX_BASE64) {
-    return { ok: false, error: "El archivo supera los 9 MB. Prueba con uno más liviano." };
-  }
-  if (!/^[A-Za-z0-9+/]+={0,2}$/.test(data.slice(0, 512))) {
-    // El contenido debe ser base64 puro (sin el prefijo data: ni binario suelto).
-    return { ok: false, error: "El archivo no se pudo leer correctamente. Intenta de nuevo." };
+  const archivo = validarArchivoBase64(data, mimetype);
+  if (!archivo.ok) {
+    return {
+      ok: false,
+      error:
+        archivo.error === "Archivo demasiado grande"
+          ? "El archivo supera los 8 MB. Prueba con uno más liviano."
+          : "El contenido del archivo no coincide con un formato permitido.",
+    };
   }
 
   const supa = db();
 
-  // Barrera de acceso: el empleado tiene que ser de este cliente.
-  const { data: empleado } = await supa
-    .from("ed_empleados")
-    .select("id")
-    .eq("id", empleadoId)
-    .eq("cliente_id", usuario.clienteId)
-    .maybeSingle();
-  if (!empleado) return { ok: false, error: "Sin acceso a este chat" };
-
-  // Tomar el control: el bot no responde mientras la persona está en el chat.
-  await supa
-    .from("ed_chat_estado")
-    .upsert(
-      { empleado_id: empleadoId, chat_id: chatId, modo: "humano", actualizado_en: new Date().toISOString() },
-      { onConflict: "empleado_id,chat_id" },
-    );
-  await supa
-    .from("ed_escalaciones")
-    .update({ atendida_en: new Date().toISOString() })
-    .eq("empleado_id", empleadoId)
-    .eq("chat_id", chatId)
-    .is("atendida_en", null);
+  const [{ data: empleado }, { data: contacto }] = await Promise.all([
+    supa
+      .from("ed_empleados")
+      .select("id")
+      .eq("id", empleadoId)
+      .eq("cliente_id", usuario.clienteId)
+      .maybeSingle(),
+    supa
+      .from("ed_contactos")
+      .select("chat_id")
+      .eq("cliente_id", usuario.clienteId)
+      .eq("chat_id", chatId)
+      .maybeSingle(),
+  ]);
+  if (!empleado || !contacto) return { ok: false, error: "Sin acceso a este chat" };
 
   // Transporte por cliente (mismo criterio que el texto). El envío de media por
   // Cloud API todavía no está implementado; los clientes marcados como 'cloud'
   // reciben un aviso claro en vez de un envío silencioso por el canal equivocado.
-  const cfg = await transporteCloud(usuario.clienteId);
-  if (cfg) {
+  const transporte = await transporteSalida(usuario.clienteId);
+  if (transporte.tipo === "error") return { ok: false, error: transporte.error };
+  if (transporte.tipo === "cloud") {
     return {
       ok: false,
       error:
         "Por ahora los archivos solo se pueden enviar en los números conectados por WAHA. En Meta (Cloud API) llega en una próxima etapa.",
     };
   }
+
+  const control = await tomarControlTemporal(supa, empleadoId, chatId);
+  if (!control) return { ok: false, error: "No se pudo tomar el control del chat" };
 
   // Enviar por WAHA (imagen inline o documento según el mimetype).
   const r = await enviarMediaWaha(chatId, {
@@ -287,7 +376,10 @@ export async function enviarArchivoComoHumano(
     filename,
     caption: caption || undefined,
   });
-  if (!r.ok) return { ok: false, error: r.error || "No se pudo enviar el archivo" };
+  if (!r.ok) {
+    await restaurarControl(supa, empleadoId, chatId, control);
+    return { ok: false, error: r.error || "No se pudo enviar el archivo" };
+  }
 
   // Registro en el historial CON el id del envío (ver responderComoHumano): sin
   // el id, el eco de este archivo se guardaría de nuevo como mensaje humano
@@ -296,7 +388,7 @@ export async function enviarArchivoComoHumano(
   const etiqueta = mimetype.startsWith("image/")
     ? "📷 Imagen enviada"
     : `📎 Archivo enviado: ${filename}`;
-  await guardarMensaje(supa, {
+  const guardado = await guardarMensaje(supa, {
     empleadoId,
     chatId,
     rol: "humano",
@@ -304,6 +396,19 @@ export async function enviarArchivoComoHumano(
     waId: r.waId,
     canal: "whatsapp",
   });
+  if (!guardado.ok) {
+    return {
+      ok: false,
+      enviado: true,
+      error: "El archivo salió, pero no se pudo registrar. Revisa el chat antes de continuar.",
+    };
+  }
+  await supa
+    .from("ed_escalaciones")
+    .update({ atendida_en: new Date().toISOString() })
+    .eq("empleado_id", empleadoId)
+    .eq("chat_id", chatId)
+    .is("atendida_en", null);
 
   revalidatePath("/conversaciones");
   return { ok: true };
@@ -315,7 +420,7 @@ export async function enviarArchivoComoHumano(
  * contacto sea del cliente logueado.
  */
 export async function cambiarEtiqueta(formData: FormData): Promise<void> {
-  const usuario = await obtenerUsuarioPortal();
+  const usuario = await obtenerUsuarioConPermiso("operar_conversaciones");
   if (!usuario) throw new Error("Sesión no válida");
 
   const chatId = String(formData.get("chatId") ?? "");

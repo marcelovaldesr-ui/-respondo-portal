@@ -1,6 +1,7 @@
 import { redirect } from "next/navigation";
 import { db } from "@/lib/db";
 import { supabaseServidor } from "@/lib/supabaseAuth";
+import { tienePermiso, type PermisoPortal } from "@/lib/permisos";
 
 export type UsuarioPortal = {
   email: string;
@@ -21,7 +22,7 @@ export type UsuarioPortal = {
  * autenticado != autorizado.
  */
 export async function obtenerUsuarioPortal(): Promise<UsuarioPortal | null> {
-  const auth = supabaseServidor();
+  const auth = await supabaseServidor();
   const {
     data: { user },
   } = await auth.auth.getUser();
@@ -54,7 +55,7 @@ export async function obtenerUsuarioPortal(): Promise<UsuarioPortal | null> {
 
 /** Igual que la anterior, pero corta el paso: usar en toda página del portal. */
 export async function exigirUsuarioPortal(): Promise<UsuarioPortal> {
-  const auth = supabaseServidor();
+  const auth = await supabaseServidor();
   const {
     data: { user },
   } = await auth.auth.getUser();
@@ -68,4 +69,19 @@ export async function exigirUsuarioPortal(): Promise<UsuarioPortal> {
   if (!usuario) redirect("/sin-acceso");
 
   return usuario;
+}
+
+/** Igual que exigirUsuarioPortal, pero exige además una capacidad del rol. */
+export async function exigirPermisoPortal(permiso: PermisoPortal): Promise<UsuarioPortal> {
+  const usuario = await exigirUsuarioPortal();
+  if (!tienePermiso(usuario, permiso)) redirect("/sin-permiso");
+  return usuario;
+}
+
+/** Para Route Handlers/Server Actions que deben responder sin redirigir. */
+export async function obtenerUsuarioConPermiso(
+  permiso: PermisoPortal,
+): Promise<UsuarioPortal | null> {
+  const usuario = await obtenerUsuarioPortal();
+  return usuario && tienePermiso(usuario, permiso) ? usuario : null;
 }

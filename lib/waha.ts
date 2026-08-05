@@ -254,12 +254,14 @@ export async function enviarTextoWaha(
         method: "POST",
         headers,
         body: JSON.stringify({ session: SESSION, chatId }),
+        signal: AbortSignal.timeout(5_000),
       });
       await new Promise((r) => setTimeout(r, delayHumano(texto)));
       await fetch(`${BASE}/api/stopTyping`, {
         method: "POST",
         headers,
         body: JSON.stringify({ session: SESSION, chatId }),
+        signal: AbortSignal.timeout(5_000),
       });
     } catch {
       /* presencia opcional */
@@ -274,6 +276,7 @@ export async function enviarTextoWaha(
       method: "POST",
       headers,
       body: JSON.stringify({ session: SESSION, chatId, text: texto }),
+      signal: AbortSignal.timeout(15_000),
     });
     if (!r.ok) {
       const t = await r.text();
@@ -420,6 +423,7 @@ export async function enviarMediaWaha(
         },
         caption: media.caption || undefined,
       }),
+      signal: AbortSignal.timeout(30_000),
     });
     if (!r.ok) {
       const t = await r.text();

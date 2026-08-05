@@ -6,6 +6,8 @@ import { configPorCliente, enviarTexto } from "@/lib/whatsapp";
 import { secretoValido } from "@/lib/seguridad";
 import { LATIDO_CRON_SEGUIMIENTOS, registrarLatido } from "@/lib/latidos";
 import { generarInformesPendientes } from "@/lib/insightsAuto";
+import { renovarTokensIg } from "@/lib/instagram";
+import { reprocesarWebhooksPendientes } from "@/lib/webhookInbox";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -28,10 +30,11 @@ export const maxDuration = 60;
  */
 export async function GET(request: NextRequest) {
   const secreto = process.env.CRON_SECRET || process.env.EVOLUTION_WEBHOOK_SECRET;
-  if (secreto) {
-    const k = new URL(request.url).searchParams.get("k");
-    if (!secretoValido(k, secreto)) return new NextResponse("Forbidden", { status: 403 });
-  }
+  const k = new URL(request.url).searchParams.get("k");
+  // Fail closed: esta ruta ejecuta envíos y usa service_role. Una variable
+  // ausente no puede convertirla silenciosamente en un cron público.
+  if (!secreto) return new NextResponse("Cron no configurado", { status: 503 });
+  if (!secretoValido(k, secreto)) return new NextResponse("Forbidden", { status: 403 });
 
   const supa = db();
 
@@ -83,6 +86,31 @@ export async function GET(request: NextRequest) {
     informes = { generados: 0, detalle: ["error"] };
   }
 
+  /**
+   * TOKENS DE INSTAGRAM — se renuevan acá por la misma razón que el informe.
+   *
+   * Duran 60 días y vencen en silencio: la API deja de aceptar los envíos y en
+   * el portal no se ve nada raro. Sin esta llamada, el canal se apaga solo a los
+   * dos meses de conectarlo y nos enteramos por un cliente. La función retorna
+   * al instante cuando no hay nada por vencer, así que correrla cada 5 minutos
+   * no cuesta nada.
+   */
+  let instagram = { renovados: 0, fallas: [] as string[] };
+  try {
+    instagram = await renovarTokensIg();
+  } catch (e) {
+    console.error("[cron] renovación de tokens de Instagram falló", e);
+  }
+
+  let webhooks = { reintentados: 0, fallidos: 0, purgados: 0 };
+  try {
+    // Acotado porque cada entrante puede invocar IA; el siguiente latido toma
+    // los restantes sin arriesgar el timeout del cron principal.
+    webhooks = await reprocesarWebhooksPendientes(2);
+  } catch (e) {
+    console.error("[cron] reintento de webhooks falló", (e as Error).message);
+  }
+
   // Deja constancia de que el cron corrió, aunque no haya enviado nada. Esto es
   // lo que permite que /api/salud detecte que el cron DEJÓ de correr; sin el
   // latido, un cron muerto se ve igual que un cron sin trabajo pendiente.
@@ -93,5 +121,5 @@ export async function GET(request: NextRequest) {
     pasos: Array.isArray(r.detalle) ? r.detalle.length : 0,
   });
 
-  return NextResponse.json({ ...r, informes });
+  return NextResponse.json({ ...r, informes, instagram, webhooks });
 }

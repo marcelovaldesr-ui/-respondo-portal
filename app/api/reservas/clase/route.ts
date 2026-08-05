@@ -1,6 +1,14 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { db } from "@/lib/db";
 import { inscribirEnClase, proximasClases } from "@/lib/clases";
+import { limitarDistribuido } from "@/lib/seguridad";
+import {
+  esUuid,
+  ipDeRequest,
+  normalizarNombre,
+  normalizarTelefono,
+  parsearJsonAcotado,
+} from "@/lib/reservasPublicas";
 
 export const dynamic = "force-dynamic";
 
@@ -20,6 +28,10 @@ export const dynamic = "force-dynamic";
 
 /** GET — próximas clases del negocio, para pintar la lista. */
 export async function GET(request: NextRequest) {
+  const ip = ipDeRequest(request.headers);
+  if (!(await limitarDistribuido(`clases-lista:${ip}`, 30, 60)).ok) {
+    return NextResponse.json({ error: "rate" }, { status: 429 });
+  }
   const slug = request.nextUrl.searchParams.get("slug")?.trim();
   if (!slug) return NextResponse.json({ error: "falta_slug" }, { status: 400 });
 
@@ -27,6 +39,7 @@ export async function GET(request: NextRequest) {
     .from("ed_clientes")
     .select("id, nombre, reservas_online")
     .eq("slug", slug)
+    .eq("activo", true)
     .maybeSingle();
 
   if (!cliente || cliente.reservas_online === false) {
@@ -50,19 +63,26 @@ export async function GET(request: NextRequest) {
 
 /** POST — inscribir a una persona en una clase. */
 export async function POST(request: NextRequest) {
-  let body: Record<string, unknown>;
-  try {
-    body = (await request.json()) as Record<string, unknown>;
-  } catch {
+  const ip = ipDeRequest(request.headers);
+  if (!(await limitarDistribuido(`clases-inscribir:${ip}`, 6, 300)).ok) {
+    return NextResponse.json({ error: "demasiados_intentos" }, { status: 429 });
+  }
+
+  const body = parsearJsonAcotado(await request.text());
+  if (!body) {
     return NextResponse.json({ error: "json_invalido" }, { status: 400 });
+  }
+
+  if (String(body.web ?? "") !== "") {
+    return NextResponse.json({ ok: true });
   }
 
   const slug = String(body.slug ?? "").trim();
   const claseId = String(body.claseId ?? "").trim();
-  const nombre = String(body.nombre ?? "").trim();
-  const telefono = String(body.telefono ?? "").trim();
+  const nombre = normalizarNombre(String(body.nombre ?? ""));
+  const telefono = normalizarTelefono(String(body.telefono ?? ""));
 
-  if (!slug || !claseId || nombre.length < 2 || !telefono) {
+  if (!slug || !esUuid(claseId) || nombre.length < 2 || !telefono) {
     return NextResponse.json({ error: "datos_incompletos" }, { status: 400 });
   }
 
@@ -70,6 +90,7 @@ export async function POST(request: NextRequest) {
     .from("ed_clientes")
     .select("id, reservas_online")
     .eq("slug", slug)
+    .eq("activo", true)
     .maybeSingle();
 
   if (!cliente || cliente.reservas_online === false) {
@@ -79,7 +100,7 @@ export async function POST(request: NextRequest) {
   // El chat_id es el teléfono en dígitos: la MISMA clave con la que entra por
   // WhatsApp. Así quien reserva por la web y después escribe queda en una sola
   // ficha, no en dos personas distintas.
-  const chatId = telefono.replace(/\D/g, "") || null;
+  const chatId = telefono;
 
   const r = await inscribirEnClase({
     claseId,

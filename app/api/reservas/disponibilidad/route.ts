@@ -1,7 +1,8 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { db } from "@/lib/db";
 import { disponibilidad } from "@/lib/agenda";
-import { limitar } from "@/lib/seguridad";
+import { limitarDistribuido } from "@/lib/seguridad";
+import { ipDeRequest } from "@/lib/reservasPublicas";
 
 export const dynamic = "force-dynamic";
 
@@ -11,8 +12,8 @@ export const dynamic = "force-dynamic";
  * lo mínimo: cupos y datos del servicio. Nada del negocio interno.
  */
 export async function GET(request: NextRequest) {
-  const ip = request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? "?";
-  if (!limitar(`disp:${ip}`, 30, 60).ok) {
+  const ip = ipDeRequest(request.headers);
+  if (!(await limitarDistribuido(`disp:${ip}`, 30, 60)).ok) {
     return NextResponse.json({ ok: false, error: "rate" }, { status: 429 });
   }
 

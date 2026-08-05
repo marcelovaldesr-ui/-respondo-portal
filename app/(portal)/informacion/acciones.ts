@@ -2,7 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { db } from "@/lib/db";
-import { obtenerUsuarioPortal } from "@/lib/auth";
+import { obtenerUsuarioConPermiso } from "@/lib/auth";
 import { PLANTILLAS } from "@/lib/plantillasRubro";
 
 /**
@@ -14,7 +14,7 @@ import { PLANTILLAS } from "@/lib/plantillasRubro";
  */
 
 async function clienteActual(): Promise<string> {
-  const usuario = await obtenerUsuarioPortal();
+  const usuario = await obtenerUsuarioConPermiso("editar_conocimiento");
   if (!usuario) throw new Error("Sesión no válida");
   return usuario.clienteId;
 }

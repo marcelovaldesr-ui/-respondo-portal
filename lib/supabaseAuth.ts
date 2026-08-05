@@ -13,7 +13,7 @@ import { cookies } from "next/headers";
  *  - `lib/db.ts` usa la llave SECRETA (service role): es la que lee los datos
  *    del negocio, siempre filtrando por cliente_id.
  */
-export function supabaseServidor() {
+export async function supabaseServidor() {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const key = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
   if (!url || !key) {
@@ -22,7 +22,7 @@ export function supabaseServidor() {
     );
   }
 
-  const store = cookies();
+  const store = await cookies();
   return createServerClient(url, key, {
     cookies: {
       get(name: string) {

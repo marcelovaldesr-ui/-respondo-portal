@@ -1,8 +1,11 @@
 "use server";
 
+import { randomBytes } from "node:crypto";
 import { revalidatePath } from "next/cache";
 import { db } from "@/lib/db";
-import { obtenerUsuarioPortal } from "@/lib/auth";
+import { obtenerUsuarioConPermiso } from "@/lib/auth";
+import { auditarAccion } from "@/lib/auditoria";
+import type { PermisoPortal } from "@/lib/permisos";
 import { horaChileAUtc } from "@/lib/agendaCore";
 import { crearCita, cambiarEstado, reabrirCita as reabrirCitaDatos } from "@/lib/agenda";
 import {
@@ -20,9 +23,11 @@ import {
  * que el cambio de hora de septiembre no corra la agenda.
  */
 
-async function clienteActual(): Promise<string> {
-  const usuario = await obtenerUsuarioPortal();
-  if (!usuario) throw new Error("Sesión no válida");
+async function clienteActual(
+  permiso: PermisoPortal = "configurar_agenda",
+): Promise<string> {
+  const usuario = await obtenerUsuarioConPermiso(permiso);
+  if (!usuario) throw new Error("Sesión sin permiso");
   return usuario.clienteId;
 }
 
@@ -276,12 +281,22 @@ export async function desconectarGoogleOauth(formData: FormData) {
 // ---------------------------------------------------------------------------
 
 export async function crearBloqueo(formData: FormData) {
-  const clienteId = await clienteActual();
+  const clienteId = await clienteActual("operar_agenda");
   const desde = parsearLocalChile(texto(formData, "desde"));
   const hasta = parsearLocalChile(texto(formData, "hasta"));
   if (!desde || !hasta || desde >= hasta) return;
   const profesional = texto(formData, "profesional");
-  await db().from("ed_bloqueos").insert({
+  const supa = db();
+  if (profesional) {
+    const { data: propio } = await supa
+      .from("ed_profesionales")
+      .select("id")
+      .eq("id", profesional)
+      .eq("cliente_id", clienteId)
+      .maybeSingle();
+    if (!propio) return;
+  }
+  await supa.from("ed_bloqueos").insert({
     cliente_id: clienteId,
     profesional_id: profesional || null,
     desde: desde.toISOString(),
@@ -292,7 +307,7 @@ export async function crearBloqueo(formData: FormData) {
 }
 
 export async function eliminarBloqueo(formData: FormData) {
-  const clienteId = await clienteActual();
+  const clienteId = await clienteActual("operar_agenda");
   const id = texto(formData, "id");
   if (!id) return;
   await db().from("ed_bloqueos").delete().eq("id", id).eq("cliente_id", clienteId);
@@ -328,12 +343,26 @@ export async function configurarReservas(formData: FormData) {
   revalidatePath("/agenda", "layout"); // "layout" = también /agenda/configuracion
 }
 
+/** Invalida inmediatamente el enlace iCal anterior y crea uno impredecible. */
+export async function rotarTokenIcal() {
+  const usuario = await obtenerUsuarioConPermiso("configurar_agenda");
+  if (!usuario) throw new Error("Sesión sin permiso");
+  const token = randomBytes(32).toString("hex");
+  const { error } = await db()
+    .from("ed_clientes")
+    .update({ ical_token: token })
+    .eq("id", usuario.clienteId);
+  if (error) throw new Error("No se pudo renovar el enlace privado");
+  await auditarAccion(usuario, "agenda_ical_token_rotado");
+  revalidatePath("/agenda/configuracion");
+}
+
 // ---------------------------------------------------------------------------
 // Citas
 // ---------------------------------------------------------------------------
 
 export async function crearCitaManual(formData: FormData) {
-  const clienteId = await clienteActual();
+  const clienteId = await clienteActual("operar_agenda");
   const inicio = parsearLocalChile(texto(formData, "inicio"));
   const servicioId = texto(formData, "servicio");
   const profesionalId = texto(formData, "profesional");
@@ -385,7 +414,7 @@ export async function crearCitaManual(formData: FormData) {
  * acción hacía el update acá mismo y se saltaba esa sincronización.
  */
 export async function reabrirCita(formData: FormData) {
-  const clienteId = await clienteActual();
+  const clienteId = await clienteActual("operar_agenda");
   const id = texto(formData, "id");
   if (!id) return;
 
@@ -395,7 +424,7 @@ export async function reabrirCita(formData: FormData) {
 }
 
 export async function cambiarEstadoCita(formData: FormData) {
-  const clienteId = await clienteActual();
+  const clienteId = await clienteActual("operar_agenda");
   const id = texto(formData, "id");
   const estado = texto(formData, "estado");
   if (!id || !["confirmada", "cancelada", "no_show", "completada"].includes(estado)) return;

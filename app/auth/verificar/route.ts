@@ -1,6 +1,7 @@
 import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
 import type { EmailOtpType } from "@supabase/supabase-js";
+import { rutaInterna } from "@/lib/redirecciones";
 
 /**
  * Valida un enlace de acceso por `token_hash` (flujo del lado del SERVIDOR, sin
@@ -20,7 +21,7 @@ export async function GET(request: NextRequest) {
   const { searchParams, origin } = new URL(request.url);
   const token_hash = searchParams.get("token_hash");
   const typeUrl = (searchParams.get("type") ?? "magiclink") as EmailOtpType;
-  const destino = searchParams.get("volver") ?? "/inicio";
+  const destino = rutaInterna(searchParams.get("volver"));
 
   if (!token_hash) {
     return NextResponse.redirect(`${origin}/login?error=enlace-invalido`);
@@ -56,7 +57,5 @@ export async function GET(request: NextRequest) {
     if (/expired|invalid|not found|consumed|already/i.test(error.message)) break;
   }
 
-  return NextResponse.redirect(
-    `${origin}/login?error=${encodeURIComponent(ultimoError || "enlace-invalido")}`,
-  );
+  return NextResponse.redirect(`${origin}/login?error=${ultimoError ? "enlace-expirado" : "enlace-invalido"}`);
 }

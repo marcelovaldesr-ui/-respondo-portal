@@ -166,23 +166,37 @@ export async function cargarEmbudo(
   const ids = await idsEmpleadosDeCliente(clienteId);
   if (!ids.length) return [];
 
-  const [contactosR, resultadosR, escalacionesR] = await Promise.all([
+  const corteActividad =
+    diasActividad > 0
+      ? new Date(Date.now() - diasActividad * 86400_000).toISOString()
+      : null;
+  let consultaContactos = supa
+    .from("ed_contactos")
+    .select(
+      "chat_id, nombre, etiquetas, etapa, etapa_manual, etapa_motivo, ultimo_mensaje_en, ultimo_mensaje_texto, ultimo_mensaje_rol",
+    )
+    .eq("cliente_id", clienteId);
+  if (corteActividad) consultaContactos = consultaContactos.gte("ultimo_mensaje_en", corteActividad);
+
+  const contactosR = await consultaContactos
+    .order("ultimo_mensaje_en", { ascending: false, nullsFirst: false });
+
+  const contactos = contactosR.data ?? [];
+  if (!contactos.length) return [];
+  const chats = contactos.map((c) => c.chat_id as string);
+  const [resultadosR, escalacionesR] = await Promise.all([
     supa
-      .from("ed_contactos")
-      .select(
-        "chat_id, nombre, etiquetas, etapa, etapa_manual, etapa_motivo, ultimo_mensaje_en, ultimo_mensaje_texto, ultimo_mensaje_rol",
-      )
-      .eq("cliente_id", clienteId),
-    supa.from("ed_resultados").select("chat_id, tipo").in("empleado_id", ids),
+      .from("ed_resultados")
+      .select("chat_id, tipo")
+      .in("empleado_id", ids)
+      .in("chat_id", chats),
     supa
       .from("ed_escalaciones")
       .select("chat_id")
       .in("empleado_id", ids)
+      .in("chat_id", chats)
       .is("atendida_en", null),
   ]);
-
-  const contactos = contactosR.data ?? [];
-  if (!contactos.length) return [];
 
   // Señales de "ganado" que vienen de ed_resultados (agenda y ventas).
   const conAgenda = new Set<string>();
@@ -303,10 +317,6 @@ export async function cargarEmbudo(
   // Corte por actividad. Se aplica DESPUÉS de recalcular las etapas para que el
   // estado quede guardado igual, aunque la tarjeta no se muestre hoy: si el
   // cliente vuelve a escribir, reaparece en la etapa correcta.
-  if (diasActividad > 0) {
-    const corte = new Date(Date.now() - diasActividad * 86400_000).toISOString();
-    return tarjetas.filter((t) => (t.ultimoEn ?? "") >= corte);
-  }
   return tarjetas;
 }
 

@@ -59,12 +59,20 @@ function Iniciales({ nombre }: { nombre: string }) {
 export default async function Clientes({
   searchParams,
 }: {
-  searchParams: { q?: string; etapa?: string; p?: string };
+  searchParams: Promise<{ q?: string; etapa?: string; p?: string }>;
 }) {
+  const params = await searchParams;
   const usuario = await exigirUsuarioPortal();
-  const q = (searchParams.q ?? "").trim();
-  const etapa = searchParams.etapa;
-  const todos = await listarClientes(usuario.clienteId, { q, etapa });
+  const q = (params.q ?? "").trim();
+  const etapa = params.etapa;
+  const POR_PAGINA = 25;
+  const solicitada = Math.max(1, Number(params.p ?? 1) || 1);
+  let resultado = await listarClientes(usuario.clienteId, {
+    q,
+    etapa,
+    pagina: solicitada,
+    porPagina: POR_PAGINA,
+  });
 
   /**
    * PAGINACIÓN.
@@ -76,13 +84,19 @@ export default async function Clientes({
    *
    * El corte se aplica DESPUÉS de filtrar, así el buscador sigue mirando todo.
    */
-  const POR_PAGINA = 25;
-  const paginas = Math.max(1, Math.ceil(todos.length / POR_PAGINA));
-  // Si el filtro deja menos páginas que la actual, se vuelve a la primera en vez
-  // de mostrar una tabla vacía sin explicación.
-  const pagina = Math.min(Math.max(1, Number(searchParams.p ?? 1) || 1), paginas);
+  const paginas = Math.max(1, Math.ceil(resultado.total / POR_PAGINA));
+  const pagina = Math.min(solicitada, paginas);
+  if (pagina !== solicitada) {
+    resultado = await listarClientes(usuario.clienteId, {
+      q,
+      etapa,
+      pagina,
+      porPagina: POR_PAGINA,
+    });
+  }
   const desde = (pagina - 1) * POR_PAGINA;
-  const clientes = todos.slice(desde, desde + POR_PAGINA);
+  const clientes = resultado.items;
+  const total = resultado.total;
 
   const urlCon = (cambios: Record<string, string | undefined>) => {
     const p = new URLSearchParams();
@@ -101,7 +115,7 @@ export default async function Clientes({
       <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
         <h1 className="h-pagina">Clientes</h1>
         <span className="sub-titulo">
-          {todos.length} {todos.length === 1 ? "persona" : "personas"}
+          {total} {total === 1 ? "persona" : "personas"}
           {(q || etapa) && " que coinciden"}
         </span>
       </div>
@@ -156,7 +170,7 @@ export default async function Clientes({
       {/* Se pregunta por el TOTAL, no por la página: con la paginación, mirar el
           slice haría que un número de página fuera de rango se viera como "no
           hay clientes" en vez de como lo que es. */}
-      {todos.length === 0 ? (
+      {total === 0 ? (
         <div className="tarjeta vacio mt-4">
           <div className="vacio-titulo">
             {q || etapa ? "Nadie coincide con eso" : "Todavía no hay clientes"}
@@ -288,7 +302,7 @@ export default async function Clientes({
                 <span className="cifra">
                   {desde + 1}–{desde + clientes.length}
                 </span>{" "}
-                de <span className="cifra">{todos.length}</span>
+                de <span className="cifra">{total}</span>
               </span>
               <div className="flex items-center gap-2">
                 {pagina > 1 ? (

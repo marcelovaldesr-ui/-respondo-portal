@@ -32,7 +32,7 @@ Nuevas para Evolution:
 |---|---|
 | `EVOLUTION_API_URL` | `https://evolution-api-production-3386.up.railway.app` |
 | `EVOLUTION_API_KEY` | apikey global de Evolution → Railway → servicio **Evolution API** → **Variables** → `AUTHENTICATION_API_KEY` (la misma con que entras al Manager) |
-| `EVOLUTION_WEBHOOK_SECRET` | `2jQZ3kScL2T61EgUZNnRylJgXp40W6S2` (ya generado, en `.env.local`) |
+| `EVOLUTION_WEBHOOK_SECRET` | `<generar-un-secreto-nuevo>` (solo en `.env.local` / Vercel; nunca en Git) |
 
 ## Pasos de deploy (una vez)
 0. **Aplica la migración `sql/212_convivencia_tino.sql`** en el Supabase del motor
@@ -46,7 +46,7 @@ Nuevas para Evolution:
 3. **Vercel** → New Project → importa el repo `-respondo-portal` → pega TODAS las variables de arriba → Deploy. Anota la URL de producción (ej. `https://respondo-portal.vercel.app`).
 4. **Repunta el webhook de Evolution** al portal (reemplaza la URL de n8n):
    - Evolution Manager → instancia `impresora-color` → **Webhook**.
-   - URL: `https://<tu-portal>.vercel.app/api/whatsapp/webhook-evolution?k=2jQZ3kScL2T61EgUZNnRylJgXp40W6S2`
+   - URL: `https://<tu-portal>.vercel.app/api/whatsapp/webhook-evolution?k=<tu-secreto>`
    - Eventos: **MESSAGES_UPSERT** (solo ese).
    - **Webhook by events: OFF** (una sola URL, sin sufijo por evento).
 5. **Apaga n8n** en Railway (ya no se usa) para no pagarlo ni recibir dobles.

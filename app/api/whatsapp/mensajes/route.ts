@@ -1,5 +1,5 @@
 import { NextResponse, type NextRequest } from "next/server";
-import { obtenerUsuarioPortal } from "@/lib/auth";
+import { obtenerUsuarioConPermiso } from "@/lib/auth";
 import { db } from "@/lib/db";
 
 export const dynamic = "force-dynamic";
@@ -12,7 +12,7 @@ export const dynamic = "force-dynamic";
  * Seguridad: sesión de portal + el empleado debe ser del cliente logueado.
  */
 export async function GET(request: NextRequest) {
-  const usuario = await obtenerUsuarioPortal();
+  const usuario = await obtenerUsuarioConPermiso("operar_conversaciones");
   if (!usuario) return NextResponse.json({ error: "Sesión no válida" }, { status: 401 });
 
   const { searchParams } = new URL(request.url);
@@ -43,7 +43,7 @@ export async function GET(request: NextRequest) {
       .select(COLS_MEDIA)
       .eq("empleado_id", empleadoId)
       .eq("chat_id", chatId)
-      .order("creado_en", { ascending: true })
+      .order("creado_en", { ascending: false })
       .limit(200);
     if (!rica.error) return { data: rica.data, conMedia: true };
     const simple = await supa
@@ -51,7 +51,7 @@ export async function GET(request: NextRequest) {
       .select("id, rol, texto, creado_en")
       .eq("empleado_id", empleadoId)
       .eq("chat_id", chatId)
-      .order("creado_en", { ascending: true })
+      .order("creado_en", { ascending: false })
       .limit(200);
     return { data: simple.data, conMedia: false };
   };
@@ -68,7 +68,9 @@ export async function GET(request: NextRequest) {
 
   return NextResponse.json({
     modo: (estado.data?.modo as string) ?? "bot",
-    mensajes: (mensajes.data ?? []).map((m) => {
+    // Las consultas limitadas leen primero los más recientes; el cliente los
+    // recibe otra vez en orden cronológico para renderizar la conversación.
+    mensajes: [...(mensajes.data ?? [])].reverse().map((m) => {
       const mm = m as Record<string, unknown>;
       const tipo = (mm.media_tipo as string | null) ?? null;
       return {

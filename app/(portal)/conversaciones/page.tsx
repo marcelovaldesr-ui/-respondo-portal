@@ -1,8 +1,8 @@
 import Link from "next/link";
-import { exigirUsuarioPortal } from "@/lib/auth";
+import { exigirPermisoPortal } from "@/lib/auth";
 import { metaEmpleado } from "@/lib/empleados";
 import {
-  listarConversaciones,
+  listarConversacionesPagina,
   obtenerConversacion,
   ETIQUETA_RESULTADO,
   ETIQUETA_TRIGGER,
@@ -96,55 +96,68 @@ function Dato({ etiqueta, children }: { etiqueta: string; children: React.ReactN
 export default async function Conversaciones({
   searchParams,
 }: {
-  searchParams: { emp?: string; chat?: string; etiqueta?: string; q?: string; estado?: string };
+  searchParams: Promise<{ emp?: string; chat?: string; etiqueta?: string; q?: string; estado?: string; p?: string }>;
 }) {
-  const usuario = await exigirUsuarioPortal();
-  const todas = await listarConversaciones(usuario.clienteId);
-
-  // Filtros: etiqueta, estado (triage) y búsqueda (?q=).
-  const filtro = searchParams.etiqueta;
-  const estado = searchParams.estado;
-  const q = (searchParams.q ?? "").trim();
-  const qDigits = q.replace(/\D/g, "");
-  let lista = todas;
-  if (filtro) lista = lista.filter((c) => c.etiquetas.includes(filtro));
-  if (estado === "espera") lista = lista.filter((c) => c.esperandoHumano);
-  else if (estado === "humano") lista = lista.filter((c) => c.modo === "humano" && !c.esperandoHumano);
-  else if (estado === "bot") lista = lista.filter((c) => c.modo === "bot" && !c.esperandoHumano);
-  if (q) {
-    const ql = q.toLowerCase();
-    lista = lista.filter(
-      (c) =>
-        c.contacto.toLowerCase().includes(ql) ||
-        (!!qDigits && c.chatId.includes(qDigits)) ||
-        c.ultimoMensaje.toLowerCase().includes(ql),
-    );
+  const params = await searchParams;
+  const usuario = await exigirPermisoPortal("operar_conversaciones");
+  const filtro = params.etiqueta;
+  const estado = params.estado;
+  const q = (params.q ?? "").trim();
+  const POR_PAGINA = 50;
+  const solicitada = Math.max(1, Number(params.p ?? 1) || 1);
+  let paginaDatos = await listarConversacionesPagina(usuario.clienteId, {
+    q,
+    estado,
+    etiqueta: filtro,
+    pagina: solicitada,
+    porPagina: POR_PAGINA,
+  });
+  const paginas = Math.max(1, Math.ceil(paginaDatos.totalFiltrado / POR_PAGINA));
+  const pagina = Math.min(solicitada, paginas);
+  if (pagina !== solicitada) {
+    paginaDatos = await listarConversacionesPagina(usuario.clienteId, {
+      q,
+      estado,
+      etiqueta: filtro,
+      pagina,
+      porPagina: POR_PAGINA,
+    });
   }
-
-  // Conteos para los chips de estado (siempre sobre el total, no sobre el filtro).
-  const nEspera = todas.filter((c) => c.esperandoHumano).length;
-  const nHumano = todas.filter((c) => c.modo === "humano" && !c.esperandoHumano).length;
-  const nBot = todas.filter((c) => c.modo === "bot" && !c.esperandoHumano).length;
-
-  // Etiquetas presentes en las conversaciones, con su conteo, para la barra.
-  const conteo = new Map<string, number>();
-  for (const c of todas) for (const e of c.etiquetas) conteo.set(e, (conteo.get(e) ?? 0) + 1);
-  const etiquetasBarra = [...conteo.entries()].sort((a, b) => b[1] - a[1]);
+  const lista = paginaDatos.items;
+  const totalFiltrado = paginaDatos.totalFiltrado;
+  const { total: totalConversaciones, espera: nEspera, humano: nHumano, bot: nBot } =
+    paginaDatos.resumen;
+  const etiquetasBarra = Object.entries(paginaDatos.resumen.etiquetas).sort(
+    (a, b) => b[1] - a[1],
+  );
 
   const seleccion =
-    searchParams.emp && searchParams.chat
-      ? await obtenerConversacion(usuario.clienteId, searchParams.emp, searchParams.chat)
+    params.emp && params.chat
+      ? await obtenerConversacion(usuario.clienteId, params.emp, params.chat)
       : null;
 
   const metaSel = seleccion ? metaEmpleado(seleccion.empleadoRol) : null;
   const colorSel = metaSel?.color ?? "var(--indigo)";
-  const esperando = nEspera;
 
   // URLs que COMBINAN filtros: cambiar uno no borra los demás (clave con
   // muchos chats: puedes buscar "rodrigo" Y filtrar "te esperan" a la vez).
   const urlCon = (cambios: Record<string, string | undefined>) => {
     const p = new URLSearchParams();
-    const merged: Record<string, string | undefined> = { q, estado, etiqueta: filtro, ...cambios };
+    const merged: Record<string, string | undefined> = {
+      q,
+      estado,
+      etiqueta: filtro,
+      p: pagina > 1 ? String(pagina) : undefined,
+      ...cambios,
+    };
+    if (
+      ["q", "estado", "etiqueta"].some((k) =>
+        Object.prototype.hasOwnProperty.call(cambios, k),
+      ) &&
+      !("p" in cambios)
+    ) {
+      merged.p = undefined;
+    }
     for (const [k, v] of Object.entries(merged)) if (v) p.set(k, v);
     const s = p.toString();
     return s ? `/conversaciones?${s}` : "/conversaciones";
@@ -162,7 +175,7 @@ export default async function Conversaciones({
     };
   };
   const chips = [
-    chipEstado(undefined, `Todas (${todas.length})`, "var(--indigo)"),
+    chipEstado(undefined, `Todas (${totalConversaciones})`, "var(--indigo)"),
     // Coral, no ámbar: en el sistema el coral significa exclusivamente "alguien
     // te está esperando". Este chip y la píldora de la fila tienen que ser el
     // mismo color o el coral deja de ser una señal.
@@ -307,11 +320,11 @@ export default async function Conversaciones({
           {lista.map((c) => {
             const meta = metaEmpleado(c.empleadoRol);
             const activo =
-              searchParams.emp === c.empleadoId && searchParams.chat === c.chatId;
+              params.emp === c.empleadoId && params.chat === c.chatId;
             return (
               <Link
                 key={`${c.empleadoId}|${c.chatId}`}
-                href={`/conversaciones?emp=${c.empleadoId}&chat=${c.chatId}`}
+                href={urlCon({ emp: c.empleadoId, chat: c.chatId })}
                 className="flex gap-3 border-b px-4 py-3.5 transition last:border-0 hover:bg-[#FAFAFD]"
                 style={{
                   borderColor: "var(--borde)",
@@ -413,6 +426,35 @@ export default async function Conversaciones({
               </Link>
             );
           })}
+          {totalFiltrado > POR_PAGINA && (
+            <nav
+              aria-label="Paginación de conversaciones"
+              className="flex items-center justify-between gap-3 border-t px-4 py-3"
+              style={{ borderColor: "var(--borde)" }}
+            >
+              <span style={{ fontSize: "var(--t-menor)", color: "var(--muted)" }}>
+                Página {pagina} de {paginas} · {totalFiltrado} resultados
+              </span>
+              <div className="flex gap-2">
+                {pagina > 1 && (
+                  <Link
+                    href={urlCon({ p: String(pagina - 1), emp: undefined, chat: undefined })}
+                    className="btn-chico"
+                  >
+                    Anterior
+                  </Link>
+                )}
+                {pagina < paginas && (
+                  <Link
+                    href={urlCon({ p: String(pagina + 1), emp: undefined, chat: undefined })}
+                    className="btn-chico"
+                  >
+                    Siguiente
+                  </Link>
+                )}
+              </div>
+            </nav>
+          )}
         </div>
 
         {/* Detalle — en móvil ocupa toda la pantalla; el panel vacío solo tiene
@@ -514,10 +556,9 @@ export default async function Conversaciones({
 
               {/* Inbox en vivo: control (tomar/devolver) + mensajes + responder manual */}
               <InboxConversacion
-                empleadoId={searchParams.emp!}
+                empleadoId={params.emp!}
                 chatId={seleccion.chatId}
                 empleadoNombre={seleccion.empleadoNombre}
-                color={colorSel}
                 ventana={seleccion.ventana}
                 mensajesIniciales={seleccion.mensajes.map((m) => ({
                   rol: m.rol,

@@ -111,6 +111,7 @@ export async function enviarTexto(
         type: "text",
         text: { body: texto },
       }),
+      signal: AbortSignal.timeout(15_000),
     });
     if (!r.ok) {
       const t = await r.text();

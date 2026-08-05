@@ -54,6 +54,20 @@ export type DetalleConversacion = {
   notas: string | null;
 };
 
+export type ResumenConversaciones = {
+  total: number;
+  espera: number;
+  humano: number;
+  bot: number;
+  etiquetas: Record<string, number>;
+};
+
+export type PaginaConversaciones = {
+  items: ItemConversacion[];
+  totalFiltrado: number;
+  resumen: ResumenConversaciones;
+};
+
 /**
  * Estado de la ventana de 24h a partir del último mensaje entrante del cliente.
  * Defensivo: la columna ultimo_entrante_en la agrega la migración 210; si aún
@@ -88,6 +102,106 @@ async function empleadosDe(clienteId: string) {
   return emps.map((e) => ({ id: e.id, rol: e.rol, nombre_publico: e.nombrePublico }));
 }
 
+/** Bandeja paginada en base de datos (migración 273). */
+export async function listarConversacionesPagina(
+  clienteId: string,
+  opts: {
+    q?: string;
+    estado?: string;
+    etiqueta?: string;
+    pagina?: number;
+    porPagina?: number;
+  } = {},
+): Promise<PaginaConversaciones> {
+  const pagina = Math.max(1, opts.pagina ?? 1);
+  const porPagina = Math.min(100, Math.max(1, opts.porPagina ?? 50));
+  const supa = db();
+  const [filasR, resumenR] = await Promise.all([
+    supa.rpc("ed_listar_conversaciones_portal", {
+      p_cliente_id: clienteId,
+      p_q: opts.q?.trim() || null,
+      p_estado: ["espera", "humano", "bot"].includes(opts.estado ?? "")
+        ? opts.estado
+        : null,
+      p_etiqueta: opts.etiqueta || null,
+      p_limite: porPagina,
+      p_offset: (pagina - 1) * porPagina,
+    }),
+    supa.rpc("ed_resumen_conversaciones_portal", { p_cliente_id: clienteId }),
+  ]);
+  if (filasR.error || resumenR.error) {
+    // Rollout seguro: si el código llega antes que la migración, se conserva
+    // una bandeja funcional y acotada a 100 filas. Al aplicar la 273, filtros,
+    // conteos y paginación pasan automáticamente a Postgres.
+    console.warn(
+      "[conversaciones] usando respaldo acotado; falta migración 273:",
+      filasR.error?.message ?? resumenR.error?.message,
+    );
+    const todos = await listarConversaciones(clienteId);
+    const etiquetas: Record<string, number> = {};
+    for (const item of todos) {
+      for (const etiqueta of item.etiquetas) etiquetas[etiqueta] = (etiquetas[etiqueta] ?? 0) + 1;
+    }
+    const resumen: ResumenConversaciones = {
+      total: todos.length,
+      espera: todos.filter((c) => c.esperandoHumano).length,
+      humano: todos.filter((c) => c.modo === "humano" && !c.esperandoHumano).length,
+      bot: todos.filter((c) => c.modo === "bot" && !c.esperandoHumano).length,
+      etiquetas,
+    };
+    const busqueda = opts.q?.trim().toLocaleLowerCase("es") ?? "";
+    const digitos = busqueda.replace(/\D/g, "");
+    const filtrados = todos.filter((c) => {
+      if (opts.etiqueta && !c.etiquetas.includes(opts.etiqueta)) return false;
+      if (opts.estado === "espera" && !c.esperandoHumano) return false;
+      if (opts.estado === "humano" && (c.modo !== "humano" || c.esperandoHumano)) return false;
+      if (opts.estado === "bot" && (c.modo !== "bot" || c.esperandoHumano)) return false;
+      if (!busqueda) return true;
+      return (
+        c.contacto.toLocaleLowerCase("es").includes(busqueda) ||
+        c.ultimoMensaje.toLocaleLowerCase("es").includes(busqueda) ||
+        (digitos.length > 0 && c.chatId.includes(digitos))
+      );
+    });
+    const inicio = (pagina - 1) * porPagina;
+    return {
+      items: filtrados.slice(inicio, inicio + porPagina),
+      totalFiltrado: filtrados.length,
+      resumen,
+    };
+  }
+  const filas = (filasR.data ?? []) as Record<string, unknown>[];
+  const resumenRaw = (Array.isArray(resumenR.data) ? resumenR.data[0] : resumenR.data) as
+    | Record<string, unknown>
+    | null;
+  const resumen: ResumenConversaciones = {
+    total: Number(resumenRaw?.total ?? 0),
+    espera: Number(resumenRaw?.espera ?? 0),
+    humano: Number(resumenRaw?.humano ?? 0),
+    bot: Number(resumenRaw?.bot ?? 0),
+    etiquetas: (resumenRaw?.etiquetas as Record<string, number> | undefined) ?? {},
+  };
+  return {
+    items: filas.map((f) => ({
+      empleadoId: String(f.empleado_id ?? ""),
+      empleadoNombre: String(f.empleado_nombre ?? ""),
+      empleadoRol: String(f.empleado_rol ?? ""),
+      chatId: String(f.chat_id ?? ""),
+      contacto: String(f.contacto ?? ""),
+      ultimoMensaje: String(f.ultimo_mensaje ?? ""),
+      ultimoEn: String(f.ultimo_en ?? ""),
+      ultimoRol: String(f.ultimo_rol ?? "cliente"),
+      mensajes: Number(f.mensajes ?? 0),
+      modo: String(f.modo ?? "bot"),
+      esperandoHumano: Boolean(f.esperando_humano),
+      etiquetas: (f.etiquetas as string[] | null) ?? [],
+    })),
+    totalFiltrado: Number(filas[0]?.total ?? 0),
+    resumen,
+  };
+}
+
+/** Compatibilidad interna acotada; la UI usa listarConversacionesPagina. */
 export async function listarConversaciones(
   clienteId: string,
 ): Promise<ItemConversacion[]> {
@@ -122,13 +236,19 @@ export async function listarConversaciones(
       )
       .eq("cliente_id", clienteId)
       .not("ultimo_mensaje_en", "is", null)
-      .order("ultimo_mensaje_en", { ascending: false }),
-    supa.from("ed_chat_estado").select("empleado_id, chat_id, modo").in("empleado_id", ids),
+      .order("ultimo_mensaje_en", { ascending: false })
+      .limit(100),
+    supa
+      .from("ed_chat_estado")
+      .select("empleado_id, chat_id, modo")
+      .in("empleado_id", ids)
+      .limit(500),
     supa
       .from("ed_escalaciones")
       .select("empleado_id, chat_id, atendida_en")
       .in("empleado_id", ids)
-      .is("atendida_en", null),
+      .is("atendida_en", null)
+      .limit(500),
   ]);
 
   const modoPorChat = new Map(
@@ -202,7 +322,11 @@ export async function obtenerConversacion(
       .select("rol, texto, creado_en")
       .eq("empleado_id", empleadoId)
       .eq("chat_id", chatId)
-      .order("creado_en", { ascending: true }),
+      // El detalle necesita el tramo más reciente, no cargar indefinidamente
+      // toda la vida del chat en memoria. Se revierte luego para mostrarlo en
+      // orden cronológico.
+      .order("creado_en", { ascending: false })
+      .limit(500),
     supa
       .from("ed_contactos")
       .select("nombre, telefono, etiqueta, etiquetas, etapa, total_mensajes, primer_mensaje_en, notas")
@@ -243,7 +367,7 @@ export async function obtenerConversacion(
     empleadoNombre: (emp.nombre_publico as string) ?? "",
     empleadoRol: emp.rol as string,
     modo: (estado.data?.modo as string) ?? "bot",
-    mensajes: mensajes.data.map((m) => ({
+    mensajes: [...mensajes.data].reverse().map((m) => ({
       rol: m.rol as string,
       texto: m.texto as string,
       creadoEn: m.creado_en as string,

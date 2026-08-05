@@ -106,11 +106,12 @@ function Barra({ tramos }: { tramos: { n: number; color: string; label: string }
 export default async function Analitica({
   searchParams,
 }: {
-  searchParams: { dias?: string };
+  searchParams: Promise<{ dias?: string }>;
 }) {
+  const params = await searchParams;
   const usuario = await exigirUsuarioPortal();
-  const dias = [1, 7, 30, 90].includes(Number(searchParams.dias))
-    ? Number(searchParams.dias)
+  const dias = [1, 7, 30, 90].includes(Number(params.dias))
+    ? Number(params.dias)
     : 30;
   const a = await calcularAnalitica(usuario.clienteId, dias);
 

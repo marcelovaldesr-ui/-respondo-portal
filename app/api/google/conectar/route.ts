@@ -1,6 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { db } from "@/lib/db";
-import { obtenerUsuarioPortal } from "@/lib/auth";
+import { obtenerUsuarioConPermiso } from "@/lib/auth";
 import { oauthConfigurado, urlAutorizacion, firmarEstado } from "@/lib/googleOAuth";
 
 export const dynamic = "force-dynamic";
@@ -17,7 +17,7 @@ export const dynamic = "force-dynamic";
  * negocio con solo cambiar el uuid de la URL.
  */
 export async function GET(req: NextRequest) {
-  const usuario = await obtenerUsuarioPortal();
+  const usuario = await obtenerUsuarioConPermiso("gestionar_integraciones");
   if (!usuario) return NextResponse.redirect(new URL("/login", req.url));
 
   if (!oauthConfigurado()) {

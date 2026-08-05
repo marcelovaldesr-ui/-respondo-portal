@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useState, useTransition } from "react";
 import { cambiarEtapa, volverAutomatico } from "@/app/(portal)/embudo/acciones";
-import { ETAPAS, metaEtapa, type Etapa } from "@/lib/embudo";
+import { ETAPAS, type Etapa } from "@/lib/embudo";
 import { metaEtiqueta } from "@/lib/etiquetas";
 import { fechaCorta } from "@/lib/fechas";
 

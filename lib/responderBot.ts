@@ -6,6 +6,7 @@ import { etiquetasDesdeMotor } from "@/lib/etiquetas";
 import { guardarMensaje } from "@/lib/mensajes";
 import { modoDe, setModo } from "@/lib/estadoChat";
 import { notificarHQ } from "@/lib/hqBridge";
+import type { SupabaseClient } from "@supabase/supabase-js";
 import {
   contextoAgenda,
   ejecutarAccionAgenda,
@@ -32,6 +33,42 @@ type RespuestaMotor = {
   /** F2 (agenda): tokens elegidos por el modelo desde el bloque AGENDA REAL. */
   cita?: CitaDelMotor | null;
 };
+
+/**
+ * Un fallo de transporte no puede quedar como una respuesta fantasma. Se deja
+ * el chat esperando a una persona y se registra el incidente sin guardar como
+ * conversación un texto que el cliente nunca recibió.
+ */
+async function derivarPorFalloDeEnvio(
+  supa: SupabaseClient,
+  params: { clienteId: string; empleadoId: string; chatId: string; detalle: string },
+): Promise<void> {
+  await setModo(params.empleadoId, params.chatId, "humano", supa);
+  const { data: pendiente } = await supa
+    .from("ed_escalaciones")
+    .select("id")
+    .eq("empleado_id", params.empleadoId)
+    .eq("chat_id", params.chatId)
+    .is("atendida_en", null)
+    .limit(1)
+    .maybeSingle();
+  if (!pendiente) {
+    await supa.from("ed_escalaciones").insert({
+      empleado_id: params.empleadoId,
+      chat_id: params.chatId,
+      trigger: "incertidumbre",
+      resumen:
+        "El asistente no pudo entregar su respuesta por un fallo del canal. La conversación quedó esperando a una persona.",
+      notificado_a: [],
+    });
+  }
+  console.error("[responderBot] fallo de entrega:", params.detalle);
+  notificarHQ({
+    tipo: "error",
+    clientePortalId: params.clienteId,
+    detalle: `fallo de entrega: ${params.detalle}`,
+  });
+}
 
 /**
  * Suma etiquetas automáticas a la conversación según lo que detectó el motor.
@@ -120,8 +157,20 @@ export async function responderSiBot(params: {
    * Ver el comentario de la anti-carrera más abajo.
    */
   sigueVigente?: () => Promise<boolean>;
+  /**
+   * Por dónde entró la conversación. Se guarda en cada mensaje del asistente.
+   *
+   * Estaba escrito "whatsapp" a firme en tres lugares, cosa que fue correcta
+   * mientras existió un solo canal. Con Instagram deja de serlo, y de la peor
+   * manera: no rompe nada visible: las respuestas salen bien y el chat se ve
+   * normal, pero la analítica atribuye a WhatsApp conversaciones que llegaron
+   * por Instagram. Un dato equivocado que nadie va a cuestionar es peor que un
+   * error que se cae.
+   */
+  canal?: string;
 }): Promise<{ accion: string; detalle?: string }> {
   const { clienteId, empleadoId, chatId, cfg } = params;
+  const canal = params.canal ?? "whatsapp";
 
   const modo = await modoDe(empleadoId, chatId);
   if (modo !== "bot") return { accion: "silencio", detalle: `modo ${modo}` };
@@ -148,17 +197,35 @@ export async function responderSiBot(params: {
           : cfg
             ? await enviarTexto(cfg, chatId, rapida)
             : { ok: false as const, error: "sin transporte" };
-        await guardarMensaje(supaC, {
+        if (!envioC.ok) {
+          await derivarPorFalloDeEnvio(supaC, {
+            clienteId,
+            empleadoId,
+            chatId,
+            detalle: envioC.error ?? "sin transporte",
+          });
+          return { accion: "error_envio_derivado", detalle: envioC.error ?? "sin transporte" };
+        }
+        const guardadoC = await guardarMensaje(supaC, {
           empleadoId,
           chatId,
           rol: "empleado",
           texto: rapida,
           waId: "waId" in envioC ? (envioC as { waId?: string }).waId : undefined,
-          canal: "whatsapp",
+          canal,
         });
+        if (!guardadoC.ok) {
+          await derivarPorFalloDeEnvio(supaC, {
+            clienteId,
+            empleadoId,
+            chatId,
+            detalle: "confirmación enviada pero no registrada",
+          });
+          return { accion: "envio_sin_registro_derivado" };
+        }
         return {
           accion: "confirmacion_cita",
-          detalle: envioC.ok ? "enviado" : `guardado sin enviar (${envioC.error ?? "?"})`,
+          detalle: "enviado",
         };
       }
     }
@@ -187,14 +254,16 @@ export async function responderSiBot(params: {
         ? await enviarTexto(cfg, chatId, aviso)
         : { ok: false as const, error: "sin transporte" };
 
-    await guardarMensaje(supaF, {
-      empleadoId,
-      chatId,
-      rol: "empleado",
-      texto: aviso,
-      waId: "waId" in envioF ? (envioF as { waId?: string }).waId : undefined,
-      canal: "whatsapp",
-    });
+    if (envioF.ok) {
+      await guardarMensaje(supaF, {
+        empleadoId,
+        chatId,
+        rol: "empleado",
+        texto: aviso,
+        waId: "waId" in envioF ? (envioF as { waId?: string }).waId : undefined,
+        canal,
+      });
+    }
     await setModo(empleadoId, chatId, "humano", supaF);
     await supaF.from("ed_escalaciones").insert({
       empleado_id: empleadoId,
@@ -283,18 +352,37 @@ export async function responderSiBot(params: {
     return { accion: "silencio_obsoleto", detalle: "obsoleto durante el envío (typing)" };
   }
 
+  if (!envio.ok) {
+    await derivarPorFalloDeEnvio(supa, {
+      clienteId,
+      empleadoId,
+      chatId,
+      detalle: envio.error ?? "sin transporte configurado",
+    });
+    return { accion: "error_envio_derivado", detalle: envio.error ?? "sin transporte" };
+  }
+
   // Guardar la respuesta del asistente con el id que devolvió el envío. Ese id
   // permite reconocer luego su ECO en el webhook y NO tratarlo como intervención
   // humana (ver lib/inboundEvolution.ts). Idempotente: guardarMensaje ignora
   // duplicados por el índice único de la migración 212.
-  await guardarMensaje(supa, {
+  const guardado = await guardarMensaje(supa, {
     empleadoId,
     chatId,
     rol: "empleado",
     texto,
     waId: "waId" in envio ? (envio as { waId?: string }).waId : undefined,
-    canal: "whatsapp",
+    canal,
   });
+  if (!guardado.ok) {
+    await derivarPorFalloDeEnvio(supa, {
+      clienteId,
+      empleadoId,
+      chatId,
+      detalle: "respuesta enviada pero no registrada",
+    });
+    return { accion: "envio_sin_registro_derivado" };
+  }
 
   // Escalación: si el motor pide humano, silenciar el bot y registrar.
   if (datos.escalar) {
@@ -323,6 +411,6 @@ export async function responderSiBot(params: {
 
   return {
     accion: datos.escalar ? "respondio_y_escalo" : "respondio",
-    detalle: envio.ok ? "enviado" : `guardado sin enviar (${envio.error ?? "sin token"})`,
+    detalle: "enviado",
   };
 }

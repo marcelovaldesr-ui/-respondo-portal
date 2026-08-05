@@ -21,11 +21,12 @@ export const dynamic = "force-dynamic";
  * OJO CON LA ESCALA: acá NO rige el título de 15px del portal. Esto no es una
  * herramienta densa, es una portada; el titular grande está bien puesto.
  */
-export default function LoginPage({
+export default async function LoginPage({
   searchParams,
 }: {
-  searchParams: { error?: string };
+  searchParams: Promise<{ error?: string }>;
 }) {
+  const params = await searchParams;
   return (
     <main className="flex min-h-screen">
       {/* Panel de marca (solo escritorio) */}
@@ -107,7 +108,7 @@ export default function LoginPage({
           </p>
 
           <div className="tarjeta mt-7 p-6">
-            <FormularioLogin error={searchParams.error} />
+            <FormularioLogin error={params.error} />
           </div>
 
           <p className="mt-5 text-center text-[12.5px]" style={{ color: "var(--muted-2)" }}>

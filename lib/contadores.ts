@@ -16,7 +16,7 @@ import { idsEmpleadosDeCliente } from "@/lib/empleadosCache";
  * Aplicando el filtro también al leer, los dos números coinciden siempre,
  * incluso antes de que el embudo se haya abierto una sola vez.
  */
-function soloVivas(q: any) {
+function soloVivas<T>(q: { or: (filtro: string) => T }): T {
   const corte = new Date(Date.now() - DIAS_SILENCIO * 86400_000).toISOString();
   return q.or(`ultimo_mensaje_rol.eq.cliente,ultimo_mensaje_en.gte.${corte}`);
 }
@@ -126,8 +126,7 @@ export async function oportunidadesAbiertas(
       .order("ultimo_mensaje_en", { ascending: false, nullsFirst: false })
       .limit(limite);
 
-    // soloVivas devuelve `any` (PostgREST no tipa .or encadenado), así que la
-    // forma de la fila se declara acá y no se pierde el tipo hacia afuera.
+    // La forma de la fila se declara acá para no perder el tipo hacia afuera.
     type Fila = {
       chat_id: string;
       nombre: string | null;

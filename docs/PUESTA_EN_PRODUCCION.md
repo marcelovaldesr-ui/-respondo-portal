@@ -35,17 +35,21 @@ que llegue en menos de un minuto, sin caer en spam.
 
 ---
 
-## 2. Migración de RLS (recomendado, 2 minutos)
+## 2. RLS y hardening de base (bloqueante)
 
-Correr `sql/202_rls.sql` en el SQL Editor de Supabase.
+Correr las migraciones pendientes en orden, incluyendo `sql/202_rls.sql`,
+`sql/272_security_hardening.sql` y `sql/273_operational_hardening.sql`, primero
+en staging y luego en producción.
+Antes de la 272 hay que ejecutar su consulta de preflight y revisar cualquier
+duplicado o relación cruzada; no borrar filas automáticamente.
 
 Enciende Row Level Security en todas las tablas. **No rompe nada**: el portal y
 el motor usan la llave secreta, que salta RLS por diseño. Es una segunda barrera
 por si alguna vez cambian los permisos de las tablas.
 
-**Verificación:** la consulta al final del archivo debe devolver `rowsecurity =
-true` en las 14 tablas. Después, entrar al portal y confirmar que todo carga
-igual.
+**Verificación:** confirmar `rowsecurity = true` en todas las tablas `ed_` y
+`portal_usuarios`, probar que anon/authenticated no leen datos, que service role
+sí permite operar el portal y validar aislamiento con dos clientes distintos.
 
 ---
 
@@ -76,6 +80,11 @@ va como **proyecto nuevo y separado**.
    - `GEMINI_API_KEY`
    - `GEMINI_MODEL`
    - `NEXT_PUBLIC_SITE_URL` → la URL final del portal
+   - `WHATSAPP_APP_ID`, `WHATSAPP_APP_SECRET` → Embedded Signup y firma Meta
+   - `NEXT_PUBLIC_WHATSAPP_APP_ID`, `NEXT_PUBLIC_WHATSAPP_CONFIG_ID`
+   - `CRON_SECRET` → autorización del cron
+   - `EVOLUTION_WEBHOOK_SECRET` → webhooks WAHA/Evolution
+   - `WAHA_PAIRING_SECRET` → segundo factor de la operación global de pairing
 3. Elegir un dominio. Sugerencia: `portal.respon-do.com` (subdominio, no toca la
    web principal).
 4. **Actualizar Supabase** → Authentication → URL Configuration:
@@ -103,15 +112,21 @@ las cuatro pantallas.
 
 ---
 
-## Pendientes conocidos (no bloquean, pero conviene saberlos)
+## Pendientes conocidos
 
-- **Sin paginación:** la lista de conversaciones lee hasta 2.000 mensajes. Con
-  un cliente de alto volumen habría que paginar.
-- **Sin actualización automática:** hay que recargar para ver mensajes nuevos.
+- **Aplicación y prueba de las migraciones 272/273:** el código incluye un
+  respaldo acotado para conversaciones, pero el rate limit global, inbox durable
+  y RPC paginadas requieren la base actualizada.
+- **Paginación por cursor a gran escala:** clientes y conversaciones ya paginan
+  en base; si el volumen crece mucho conviene reemplazar offset por cursor.
 - **Supabase plan gratis:** 500 MB de base. Con varios clientes conversando,
   `ed_mensajes` crece rápido — vigilarlo.
 - **Cambio de tarifas de WhatsApp:** hay un cambio de precios de Meta previsto
   que afecta el costo por mensaje. Verificar en la fuente oficial antes de
   cerrar precios anuales con clientes.
-- **Instagram:** requiere App Review de Meta y una columna de canal en
-  `ed_mensajes`. Es un proyecto aparte, no un incremento.
+- **Instagram/Meta:** requieren validación E2E con las apps y cuentas reales,
+  además de App Review cuando corresponda.
+
+Antes de desplegar, revisar también
+`docs/audits/portal-deep-audit/EXECUTIVE_SUMMARY.md` y cerrar sus condiciones de
+salida (rotación de secreto, RLS verificable y actualización de Next).

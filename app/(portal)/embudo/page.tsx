@@ -19,11 +19,12 @@ const PERIODOS = [
 export default async function Embudo({
   searchParams,
 }: {
-  searchParams: { dias?: string };
+  searchParams: Promise<{ dias?: string }>;
 }) {
+  const params = await searchParams;
   const usuario = await exigirUsuarioPortal();
-  const dias = PERIODOS.some((p) => String(p.d) === searchParams.dias)
-    ? Number(searchParams.dias)
+  const dias = PERIODOS.some((p) => String(p.d) === params.dias)
+    ? Number(params.dias)
     : 14;
 
   const [tarjetas, empleadoR] = await Promise.all([

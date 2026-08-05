@@ -4,8 +4,10 @@ Portal donde cada pyme cliente entra y ve a **sus empleados IA** trabajando
 (Tino, Beto, Vera). Lee del schema `ed_` del **motor 2.0** (misma Supabase).
 App separada de `respondo-hq` (panel interno de fundadores) — no lo toca.
 
-**Estado:** MVP completo y verificado en local. Falta ponerlo en producción —
-ver `docs/PUESTA_EN_PRODUCCION.md`.
+**Estado:** código endurecido y validaciones locales en verde; el despliegue
+productivo sigue condicionado a aplicar/verificar migraciones y rotar secretos.
+Ver
+`docs/audits/portal-deep-audit/EXECUTIVE_SUMMARY.md`.
 
 ## Rutas
 
@@ -24,15 +26,16 @@ ver `docs/PUESTA_EN_PRODUCCION.md`.
 
 ## Arquitectura
 
-- **Next.js 14** (App Router) + **Vercel** (proyecto aparte).
+- **Next.js 16.3** (App Router, React 19) + **Vercel** (proyecto aparte).
 - **Supabase** del motor 2.0. La llave secreta se usa **solo en el servidor**
   (`lib/db.ts`); nunca llega al navegador.
 - **Multi-cliente por código:** toda consulta y toda escritura se filtra por el
   `cliente_id` del usuario logueado, resuelto vía `portal_usuarios`. Verificado:
   un cliente no ve ni puede modificar datos de otro.
 - **Auth:** enlace de acceso de un solo uso (magic link) de Supabase.
-- **RLS:** preparado en `sql/202_rls.sql`, pendiente de aplicar. Es una segunda
-  barrera; el aislamiento hoy lo garantiza el código.
+- **RLS:** definido en `sql/202_rls.sql` y reforzado por las migraciones 272/273.
+  Debe comprobarse en la base desplegada; `service_role` hace que la autorización
+  derivada de sesión siga siendo el control primario del backend.
 
 ### Dos reglas que no hay que romper
 
@@ -52,7 +55,10 @@ ver `docs/PUESTA_EN_PRODUCCION.md`.
 | `respondo-2.0/motor/sql/101_addendum_n8n.sql` | `ed_mensajes` y extras |
 | `sql/200_portal.sql` | `portal_usuarios` |
 | `sql/201_resultados_y_seed.sql` | `ed_contactos`, `ed_resultados` + seed demo |
-| `sql/202_rls.sql` | Row Level Security ⚠️ **pendiente de aplicar** |
+| `sql/202_rls.sql` | Row Level Security general ⚠️ verificar/aplicar |
+| `sql/210` … `sql/271` | Canales, agenda, insights, embudo, clases y media |
+| `sql/272_security_hardening.sql` | RLS clases, RPC y relaciones tenant ⚠️ probar/aplicar |
+| `sql/273_operational_hardening.sql` | rate limit global, inbox durable, auditoría, unión tenant y RPC paginadas ⚠️ probar/aplicar |
 
 El 201 reemplaza el seed del 200 y es idempotente: se puede correr las veces que
 haga falta.
@@ -61,6 +67,7 @@ haga falta.
 
 ```
 npm install
+npm run check
 npm run dev
 ```
 
@@ -103,6 +110,8 @@ Devuelve `hashed_token`; el enlace es
 - `docs/MOTOR_REGISTRO_RESULTADOS.md` — nodo de n8n para que el motor escriba en
   `ed_resultados` y `ed_contactos`. **Sin esto, las tarjetas de Beto y Vera
   muestran 0 en producción.**
+- `docs/audits/portal-deep-audit/` — arquitectura, hallazgos, riesgos pendientes
+  y condiciones de salida para producción.
 
 ## Notas para el equipo (2 personas)
 

@@ -1,4 +1,4 @@
-import { exigirUsuarioPortal } from "@/lib/auth";
+import { exigirPermisoPortal } from "@/lib/auth";
 import { db } from "@/lib/db";
 import ConectarWhatsApp from "@/components/ConectarWhatsApp";
 
@@ -9,7 +9,7 @@ export const dynamic = "force-dynamic";
  * con Coexistencia: el número sigue funcionando en la app del negocio).
  */
 export default async function PaginaWhatsApp() {
-  const usuario = await exigirUsuarioPortal();
+  const usuario = await exigirPermisoPortal("gestionar_integraciones");
 
   const { data } = await db()
     .from("ed_clientes")

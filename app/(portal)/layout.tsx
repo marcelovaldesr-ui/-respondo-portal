@@ -26,6 +26,7 @@ export default async function PortalLayout({
         clienteNombre={usuario.clienteNombre}
         clienteRubro={usuario.clienteRubro}
         email={usuario.email}
+        rol={usuario.rol}
         esperando={contadores.esperando}
         porCerrar={contadores.porCerrar}
       />

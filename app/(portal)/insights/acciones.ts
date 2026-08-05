@@ -1,9 +1,9 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { obtenerUsuarioPortal } from "@/lib/auth";
+import { obtenerUsuarioConPermiso } from "@/lib/auth";
 import { generarInsight } from "@/lib/insights";
-import { limitar } from "@/lib/seguridad";
+import { limitarDistribuido } from "@/lib/seguridad";
 
 /**
  * Genera el informe de la semana bajo demanda.
@@ -17,10 +17,10 @@ import { limitar } from "@/lib/seguridad";
 export async function generarInformeAhora(
   formData: FormData,
 ): Promise<{ ok: boolean; motivo?: string }> {
-  const usuario = await obtenerUsuarioPortal();
+  const usuario = await obtenerUsuarioConPermiso("generar_insights");
   if (!usuario) return { ok: false, motivo: "Sesión no válida" };
 
-  if (!limitar(`insight:${usuario.clienteId}`, 4, 600).ok) {
+  if (!(await limitarDistribuido(`insight:${usuario.clienteId}`, 4, 600)).ok) {
     return {
       ok: false,
       motivo: "Ya generaste varios informes seguidos. Espera unos minutos.",

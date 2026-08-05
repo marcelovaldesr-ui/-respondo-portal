@@ -75,11 +75,9 @@ export async function manejarEntranteMeta(
     }
     const r = await actualizarEstadoEnvio(supa, ctx.empleadoId, ack.waId, ack.estado);
     if (ack.estado === "error") {
-      console.error(
-        "[meta ack] envío NO entregado:",
-        ack.waId,
-        ack.errorDetalle ?? "",
-      );
+      console.error("[meta ack] envío no entregado", {
+        codigo: ack.errorDetalle?.slice(0, 80) ?? "sin_detalle",
+      });
     }
     resultados.push({
       accion: "ack",

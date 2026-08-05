@@ -235,7 +235,42 @@ export async function crearClase(params: {
   cupoMaximo: number;
   supa?: SupabaseClient;
 }): Promise<{ ok: boolean; id?: string; error?: string }> {
-  const { data, error } = await (params.supa ?? db())
+  const supa = params.supa ?? db();
+  if (
+    !Number.isFinite(params.cupoMaximo) ||
+    params.cupoMaximo < 1 ||
+    params.cupoMaximo > 500 ||
+    !Number.isFinite(params.inicio.getTime()) ||
+    !Number.isFinite(params.fin.getTime()) ||
+    params.inicio >= params.fin
+  ) {
+    return { ok: false, error: "Datos de la clase inválidos." };
+  }
+
+  // Los UUID vienen del formulario. Validarlos por tenant evita relaciones
+  // cruzadas (clase de A apuntando al servicio/profesional de B) que las FK
+  // simples no alcanzan a impedir.
+  const [{ data: servicio }, { data: profesional }] = await Promise.all([
+    supa
+      .from("ed_servicios")
+      .select("id")
+      .eq("id", params.servicioId)
+      .eq("cliente_id", params.clienteId)
+      .eq("activo", true)
+      .maybeSingle(),
+    supa
+      .from("ed_profesionales")
+      .select("id")
+      .eq("id", params.profesionalId)
+      .eq("cliente_id", params.clienteId)
+      .eq("activo", true)
+      .maybeSingle(),
+  ]);
+  if (!servicio || !profesional) {
+    return { ok: false, error: "Servicio o profesional no pertenece al negocio." };
+  }
+
+  const { data, error } = await supa
     .from("ed_clases")
     .insert({
       cliente_id: params.clienteId,

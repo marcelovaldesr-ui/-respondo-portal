@@ -14,7 +14,7 @@ export default async function Home() {
   let configOk = true;
 
   try {
-    const supa = supabaseServidor();
+    const supa = await supabaseServidor();
     const {
       data: { user },
     } = await supa.auth.getUser();

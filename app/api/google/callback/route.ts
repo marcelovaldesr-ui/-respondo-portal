@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { db } from "@/lib/db";
 import { verificarEstado, intercambiarCodigo, cifrarRefreshToken } from "@/lib/googleOAuth";
+import { auditarSistema } from "@/lib/auditoria";
 
 export const dynamic = "force-dynamic";
 
@@ -62,6 +63,8 @@ export async function GET(req: NextRequest) {
     destino.searchParams.set("gcal_oauth", "error");
     return NextResponse.redirect(destino);
   }
+
+  await auditarSistema(estado.clienteId, "google_calendar_oauth_conectado", estado.profesionalId);
 
   destino.searchParams.set("gcal_oauth", "ok");
   return NextResponse.redirect(destino);

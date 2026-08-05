@@ -1,6 +1,8 @@
 import { NextResponse, type NextRequest } from "next/server";
-import { firmaMetaValida, secretoValido } from "@/lib/seguridad";
+import { firmaValidaCon, secretoValido } from "@/lib/seguridad";
 import { manejarEntranteInstagram } from "@/lib/inboundInstagram";
+import { idSolicitud } from "@/lib/observabilidad";
+import { idEventoWebhook, procesarConInbox } from "@/lib/webhookInbox";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -24,8 +26,9 @@ export const maxDuration = 60;
  *
  * Variables necesarias:
  *   IG_VERIFY_TOKEN   el que se escribe en el panel de Meta al suscribir
- *   META_APP_SECRET   ya existe (se comparte con WhatsApp): valida la firma
- *   IG_TOKEN          token de acceso para responder
+ *   IG_APP_SECRET     secreto de la app de Instagram: valida la firma
+ *   IG_TOKEN          solo para la cuenta de pruebas; en producción el token de
+ *                     cada negocio vive en ed_clientes.ig_token
  */
 
 export async function GET(request: NextRequest) {
@@ -43,6 +46,7 @@ export async function GET(request: NextRequest) {
 }
 
 export async function POST(request: NextRequest) {
+  const requestId = idSolicitud(request.headers);
   /**
    * SEGURIDAD: verificar que el payload viene REALMENTE de Meta.
    *
@@ -52,8 +56,15 @@ export async function POST(request: NextRequest) {
    * texto antes de parsear.
    */
   const crudo = await request.text();
+  if (Buffer.byteLength(crudo, "utf8") > 1024 * 1024) {
+    return new NextResponse("Payload demasiado grande", { status: 413 });
+  }
   const firma = request.headers.get("x-hub-signature-256");
-  if (!firmaMetaValida(crudo, firma)) {
+  // IG_APP_SECRET es el de la app de Instagram. Si la app fuera compartida con
+  // WhatsApp se cae al secreto de WhatsApp, pero se prefiere el propio: es lo
+  // que permite tener Instagram en una app aparte sin tocar la de WhatsApp.
+  const secreto = process.env.IG_APP_SECRET || process.env.WHATSAPP_APP_SECRET;
+  if (!firmaValidaCon(secreto, crudo, firma)) {
     console.warn("[instagram webhook] firma inválida — payload descartado");
     return new NextResponse("Forbidden", { status: 403 });
   }
@@ -62,17 +73,23 @@ export async function POST(request: NextRequest) {
   try {
     payload = JSON.parse(crudo);
   } catch {
-    return NextResponse.json({ ok: true }); // 200 igual: que Meta no reintente
+    return NextResponse.json({ ok: false, error: "json_invalido" }, { status: 400 });
   }
 
   try {
-    const resultados = await manejarEntranteInstagram(payload);
-    return NextResponse.json({ ok: true, resultados });
+    const r = await procesarConInbox({
+      proveedor: "instagram",
+      eventoId: idEventoWebhook("instagram", crudo),
+      payload,
+      requestId,
+      manejar: manejarEntranteInstagram,
+    });
+    return NextResponse.json({ ok: true, duplicado: r.duplicado, resultados: r.resultado });
   } catch (e) {
-    // Nunca romper el 200. Un 500 hace que Meta reintente en bucle y, si se
-    // repite, que desactive la suscripción del webhook — que es justo lo que
-    // hunde una revisión.
-    console.error("[instagram webhook] error:", (e as Error).message);
-    return NextResponse.json({ ok: true });
+    const inbox = (e as Error).message.includes("inbox webhook");
+    return NextResponse.json(
+      { ok: false, requestId },
+      { status: inbox ? 503 : 500, headers: { "Retry-After": "60" } },
+    );
   }
 }

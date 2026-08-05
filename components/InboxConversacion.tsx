@@ -80,7 +80,6 @@ export default function InboxConversacion({
   empleadoId,
   chatId,
   empleadoNombre,
-  color,
   ventana,
   mensajesIniciales,
   modoInicial,
@@ -89,7 +88,6 @@ export default function InboxConversacion({
   empleadoId: string;
   chatId: string;
   empleadoNombre: string;
-  color: string;
   ventana: "abierta" | "cerrada" | "desconocida";
   mensajesIniciales: Msg[];
   modoInicial: string;
@@ -155,7 +153,8 @@ export default function InboxConversacion({
     const limpio = texto.trim();
     if (!limpio || pendiente) return;
     // Al escribir, Cecilia toma el control y Tino se calla.
-    setMensajes((m) => [...m, { rol: "humano", texto: limpio, creadoEn: new Date().toISOString() }]);
+    const creadoOptimista = new Date().toISOString();
+    setMensajes((m) => [...m, { rol: "humano", texto: limpio, creadoEn: creadoOptimista }]);
     setModo("humano");
     setTexto("");
     const fd = new FormData();
@@ -164,7 +163,20 @@ export default function InboxConversacion({
     fd.set("texto", limpio);
     startTransition(async () => {
       try {
-        await responderComoHumano(fd);
+        const r = await responderComoHumano(fd);
+        if (!r.ok) {
+          if (!r.enviado) {
+            setMensajes((m) => m.filter((msg) => msg.creadoEn !== creadoOptimista));
+            setTexto((actual) => actual || limpio);
+          }
+          setAviso(r.error || "No se pudo enviar el mensaje.");
+        } else {
+          setAviso(null);
+        }
+      } catch {
+        setMensajes((m) => m.filter((msg) => msg.creadoEn !== creadoOptimista));
+        setTexto((actual) => actual || limpio);
+        setAviso("No se pudo enviar el mensaje. Intenta de nuevo.");
       } finally {
         areaRef.current?.focus();
         refrescar();
@@ -190,8 +202,10 @@ export default function InboxConversacion({
     const file = e.target.files?.[0];
     if (file) e.target.value = ""; // permitir re-elegir el mismo archivo
     if (!file || subiendo) return;
-    if (file.size > 12 * 1024 * 1024) {
-      setAviso("El archivo supera los 12MB. Prueba con uno más liviano.");
+    // Base64 agrega ~33% y la acción completa tiene tope de 12 MB. Ocho MB de
+    // binario deja margen para FormData y evita fallar antes de llegar al server.
+    if (file.size > 8 * 1024 * 1024) {
+      setAviso("El archivo supera los 8MB. Prueba con uno más liviano.");
       return;
     }
     setAviso(null);
@@ -212,6 +226,12 @@ export default function InboxConversacion({
         setTexto("");
         refrescar();
       } else {
+        // Si el proveedor confirmó el envío pero falló el historial, no dejar
+        // el caption listo para reenviar: eso duplicaría contenido real.
+        if (r.enviado) {
+          setTexto("");
+          refrescar();
+        }
         setAviso(r.error || "No se pudo enviar el archivo.");
       }
     } catch {

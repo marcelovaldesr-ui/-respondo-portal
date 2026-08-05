@@ -14,7 +14,7 @@ export const dynamic = "force-dynamic";
  * cupos, misma garantía anti doble-reserva.
  */
 
-type Props = { params: { slug: string } };
+type Props = { params: Promise<{ slug: string }> };
 
 async function clientePorSlug(slug: string) {
   const { data } = await db()
@@ -28,7 +28,8 @@ async function clientePorSlug(slug: string) {
 }
 
 export async function generateMetadata({ params }: Props): Promise<Metadata> {
-  const cliente = await clientePorSlug(params.slug);
+  const { slug } = await params;
+  const cliente = await clientePorSlug(slug);
   return {
     title: cliente ? `Reserva tu hora · ${cliente.nombre}` : "Reservas",
     robots: { index: true },
@@ -36,7 +37,8 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
 }
 
 export default async function PaginaReservas({ params }: Props) {
-  const cliente = await clientePorSlug(params.slug);
+  const { slug } = await params;
+  const cliente = await clientePorSlug(slug);
   if (!cliente) notFound();
 
   const { data: servicios } = await db()
@@ -95,7 +97,7 @@ export default async function PaginaReservas({ params }: Props) {
 
       {clases.length > 0 && (
         <ReservaClases
-          slug={params.slug}
+          slug={slug}
           clases={clases.map((c) => ({
             id: c.id,
             servicio: c.servicioNombre,
@@ -113,7 +115,7 @@ export default async function PaginaReservas({ params }: Props) {
       )}
 
       <ReservaPublica
-        slug={params.slug}
+        slug={slug}
         servicios={servicios.map((s) => ({
           id: s.id as string,
           nombre: s.nombre as string,

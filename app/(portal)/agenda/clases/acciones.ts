@@ -1,7 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { obtenerUsuarioPortal } from "@/lib/auth";
+import { obtenerUsuarioConPermiso } from "@/lib/auth";
 import { horaChileAUtc } from "@/lib/agendaCore";
 import { crearClase, generarSerie, cancelarClase } from "@/lib/clases";
 
@@ -15,7 +15,7 @@ import { crearClase, generarSerie, cancelarClase } from "@/lib/clases";
 
 /** Crea una sesión suelta ("este jueves hay una clase extra a las 20:00"). */
 export async function crearClaseAccion(formData: FormData) {
-  const usuario = await obtenerUsuarioPortal();
+  const usuario = await obtenerUsuarioConPermiso("operar_agenda");
   if (!usuario) return;
 
   const servicioId = String(formData.get("servicioId") ?? "");
@@ -55,7 +55,7 @@ export async function crearClaseAccion(formData: FormData) {
  * clases al día tendría que crear 180 sesiones a mano cada mes, y no lo haría.
  */
 export async function generarSerieAccion(formData: FormData) {
-  const usuario = await obtenerUsuarioPortal();
+  const usuario = await obtenerUsuarioConPermiso("operar_agenda");
   if (!usuario) return;
 
   const dias = (formData.getAll("dias") as string[]).map(Number).filter((n) => !isNaN(n));
@@ -77,7 +77,7 @@ export async function generarSerieAccion(formData: FormData) {
 
 /** Cancela una sesión. El trigger de la 260 devuelve los cupos solo. */
 export async function cancelarClaseAccion(formData: FormData) {
-  const usuario = await obtenerUsuarioPortal();
+  const usuario = await obtenerUsuarioConPermiso("operar_agenda");
   if (!usuario) return;
   const claseId = String(formData.get("claseId") ?? "");
   if (!claseId) return;

@@ -1,15 +1,15 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { obtenerUsuarioPortal } from "@/lib/auth";
+import { obtenerUsuarioConPermiso } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { guardarDatosCliente } from "@/lib/clientes";
 import { programarSeguimiento } from "@/lib/seguimientos";
-import { limitar } from "@/lib/seguridad";
+import { limitarDistribuido } from "@/lib/seguridad";
 
 /** Guarda nombre, teléfono, correo y notas internas de la ficha. */
 export async function guardarFicha(formData: FormData): Promise<{ ok: boolean; error?: string }> {
-  const usuario = await obtenerUsuarioPortal();
+  const usuario = await obtenerUsuarioConPermiso("editar_clientes");
   if (!usuario) return { ok: false, error: "Sesión no válida" };
 
   const chatId = String(formData.get("chatId") ?? "");
@@ -41,7 +41,7 @@ export async function guardarFicha(formData: FormData): Promise<{ ok: boolean; e
 export async function reactivarCliente(
   formData: FormData,
 ): Promise<{ ok: boolean; error?: string }> {
-  const usuario = await obtenerUsuarioPortal();
+  const usuario = await obtenerUsuarioConPermiso("editar_clientes");
   if (!usuario) return { ok: false, error: "Sesión no válida" };
 
   const chatId = String(formData.get("chatId") ?? "");
@@ -50,7 +50,7 @@ export async function reactivarCliente(
   if (texto.length > 900) return { ok: false, error: "El mensaje es demasiado largo" };
 
   // Anti-abuso: reactivar es un mensaje saliente al WhatsApp de una persona.
-  if (!limitar(`reactivar:${usuario.clienteId}`, 20, 3600).ok) {
+  if (!(await limitarDistribuido(`reactivar:${usuario.clienteId}`, 20, 3600)).ok) {
     return { ok: false, error: "Demasiadas reactivaciones seguidas. Espera un rato." };
   }
 

@@ -1,8 +1,9 @@
 import { db } from "@/lib/db";
 import {
   parsearInstagram,
-  clientePorPaginaIg,
+  cuentaPorIdIg,
   enviarTextoInstagram,
+  type CuentaIg,
 } from "@/lib/instagram";
 import { tinoDe } from "@/lib/whatsapp";
 import { guardarMensaje, yaProcesado, esEcoReciente } from "@/lib/mensajes";
@@ -43,20 +44,26 @@ export async function manejarEntranteInstagram(
   const supa = db();
   const resultados: ResultadoIg[] = [];
   // Una entrega puede traer varios eventos de la misma cuenta: se resuelve una vez.
-  const cache = new Map<string, { clienteId: string; empleadoId: string } | null>();
+  const cache = new Map<
+    string,
+    { clienteId: string; empleadoId: string; cuenta: CuentaIg } | null
+  >();
 
   for (const ev of eventos) {
     let ctx = cache.get(ev.paginaId);
     if (ctx === undefined) {
-      const clienteId = await clientePorPaginaIg(ev.paginaId);
-      const empleadoId = clienteId ? await tinoDe(clienteId) : null;
-      ctx = clienteId && empleadoId ? { clienteId, empleadoId } : null;
+      const cuenta = await cuentaPorIdIg(ev.paginaId);
+      const empleadoId = cuenta ? await tinoDe(cuenta.clienteId) : null;
+      ctx = cuenta && empleadoId ? { clienteId: cuenta.clienteId, empleadoId, cuenta } : null;
       cache.set(ev.paginaId, ctx);
     }
     if (!ctx) {
       resultados.push({ accion: "sin_cliente", detalle: ev.paginaId });
       continue;
     }
+    // Copia a const: `ctx` es `let` y TypeScript pierde el estrechamiento del
+    // null dentro de los cierres que se crean más abajo.
+    const cta = ctx;
 
     // El chat se identifica con prefijo para que un IGSID no pueda colisionar
     // jamás con un número de teléfono en la misma tabla.
@@ -155,7 +162,7 @@ export async function manejarEntranteInstagram(
     const enviar =
       opts?.enviar ??
       (async (_chatId: string, texto: string) =>
-        enviarTextoInstagram(ev.igsid, texto, { vigente: sigueVigente }));
+        enviarTextoInstagram(cta.cuenta, ev.igsid, texto, { vigente: sigueVigente }));
 
     const r = await responderSiBot({
       clienteId: ctx.clienteId,

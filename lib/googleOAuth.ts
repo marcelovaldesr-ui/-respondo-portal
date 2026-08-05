@@ -1,4 +1,11 @@
-import { createCipheriv, createDecipheriv, createHash, createHmac, randomBytes } from "crypto";
+import {
+  createCipheriv,
+  createDecipheriv,
+  createHash,
+  createHmac,
+  randomBytes,
+  timingSafeEqual,
+} from "crypto";
 
 /**
  * GOOGLE CALENDAR POR OAuth ("Conectar Google Calendar", F5-OAuth).
@@ -28,7 +35,10 @@ const TOKEN_URL = "https://oauth2.googleapis.com/token";
 // Fijo a propósito (no derivado del request): tiene que ser BYTE A BYTE el
 // mismo URI que se registró en Google Cloud → Clientes → URIs de
 // redireccionamiento, o Google rechaza el intercambio con redirect_uri_mismatch.
-const URL_PORTAL = "https://respondo-portal.vercel.app";
+const URL_PORTAL = (process.env.NEXT_PUBLIC_SITE_URL || "https://respondo-portal.vercel.app").replace(
+  /\/+$/,
+  "",
+);
 const REDIRECT_URI = `${URL_PORTAL}/api/google/callback`;
 
 // Angosto a propósito (ver C1 del expediente): alcanza para crear, mover y
@@ -59,14 +69,18 @@ export function oauthConfigurado(): boolean {
 function claveFirma(): Buffer {
   // Deriva de un secreto que YA existe y nunca llega al navegador — no hace
   // falta pedirle a Marcelo una variable de entorno más.
-  const base = process.env.SUPABASE_SERVICE_ROLE_KEY ?? "";
+  const base = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  if (!base) throw new Error("SUPABASE_SERVICE_ROLE_KEY no configurada");
   return createHash("sha256").update(`respondo-gcal-state:${base}`).digest();
 }
 
 export type EstadoConexion = { profesionalId: string; clienteId: string };
+type EstadoFirmado = EstadoConexion & { emitidoEn: number };
+const ESTADO_MAX_MS = 15 * 60_000;
 
 export function firmarEstado(estado: EstadoConexion): string {
-  const payload = Buffer.from(JSON.stringify(estado)).toString("base64url");
+  const firmado: EstadoFirmado = { ...estado, emitidoEn: Date.now() };
+  const payload = Buffer.from(JSON.stringify(firmado)).toString("base64url");
   const firma = createHmac("sha256", claveFirma()).update(payload).digest("base64url");
   return `${payload}.${firma}`;
 }
@@ -75,9 +89,25 @@ export function verificarEstado(valor: string): EstadoConexion | null {
   const [payload, firma] = valor.split(".");
   if (!payload || !firma) return null;
   const esperada = createHmac("sha256", claveFirma()).update(payload).digest("base64url");
-  if (firma !== esperada) return null;
+  const recibidaBuf = Buffer.from(firma);
+  const esperadaBuf = Buffer.from(esperada);
+  if (recibidaBuf.length !== esperadaBuf.length || !timingSafeEqual(recibidaBuf, esperadaBuf)) {
+    return null;
+  }
   try {
-    return JSON.parse(Buffer.from(payload, "base64url").toString("utf8")) as EstadoConexion;
+    const estado = JSON.parse(
+      Buffer.from(payload, "base64url").toString("utf8"),
+    ) as Partial<EstadoFirmado>;
+    if (
+      typeof estado.profesionalId !== "string" ||
+      typeof estado.clienteId !== "string" ||
+      typeof estado.emitidoEn !== "number" ||
+      estado.emitidoEn > Date.now() + 60_000 ||
+      Date.now() - estado.emitidoEn > ESTADO_MAX_MS
+    ) {
+      return null;
+    }
+    return { profesionalId: estado.profesionalId, clienteId: estado.clienteId };
   } catch {
     return null;
   }
@@ -185,7 +215,8 @@ export async function accessTokenDesdeRefresh(refreshToken: string): Promise<Res
 // ---------------------------------------------------------------------------
 
 function claveCifrado(): Buffer {
-  const base = process.env.SUPABASE_SERVICE_ROLE_KEY ?? "";
+  const base = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  if (!base) throw new Error("SUPABASE_SERVICE_ROLE_KEY no configurada");
   return createHash("sha256").update(`respondo-gcal-refresh:${base}`).digest();
 }
 

@@ -1,5 +1,6 @@
 import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
+import { rutaInterna } from "@/lib/redirecciones";
 
 /**
  * Destino del enlace mágico enviado por correo (flujo PKCE): canjea el código
@@ -11,7 +12,7 @@ import { NextResponse, type NextRequest } from "next/server";
 export async function GET(request: NextRequest) {
   const { searchParams, origin } = new URL(request.url);
   const code = searchParams.get("code");
-  const destino = searchParams.get("volver") ?? "/inicio";
+  const destino = rutaInterna(searchParams.get("volver"));
 
   if (!code) {
     return NextResponse.redirect(`${origin}/login?error=enlace-invalido`);
@@ -37,7 +38,7 @@ export async function GET(request: NextRequest) {
 
   if (error) {
     return NextResponse.redirect(
-      `${origin}/login?error=${encodeURIComponent(error.message)}`,
+      `${origin}/login?error=enlace-invalido`,
     );
   }
 

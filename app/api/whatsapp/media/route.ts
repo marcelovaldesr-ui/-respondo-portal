@@ -1,5 +1,5 @@
 import { NextResponse, type NextRequest } from "next/server";
-import { obtenerUsuarioPortal } from "@/lib/auth";
+import { obtenerUsuarioConPermiso } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { mediaDeMensajeWaha, reanclarUrlWaha } from "@/lib/waha";
 
@@ -29,7 +29,7 @@ export const maxDuration = 30;
  *    distinto del WAHA propio, sin importar qué haya guardado en la base.
  */
 export async function GET(request: NextRequest) {
-  const usuario = await obtenerUsuarioPortal();
+  const usuario = await obtenerUsuarioConPermiso("operar_conversaciones");
   if (!usuario) return new NextResponse("Sesión no válida", { status: 401 });
 
   const id = new URL(request.url).searchParams.get("id") ?? "";
@@ -89,15 +89,36 @@ export async function GET(request: NextRequest) {
     });
     if (!r.ok) return new NextResponse("No disponible", { status: 502 });
 
-    const buf = await r.arrayBuffer();
-    const tipo = mime || r.headers.get("content-type") || "application/octet-stream";
+    const tipoDeclarado = (mime || r.headers.get("content-type") || "")
+      .split(";")[0]
+      .trim()
+      .toLowerCase();
+    const tiposInline = new Set([
+      "image/jpeg",
+      "image/png",
+      "image/webp",
+      "image/gif",
+      "audio/mpeg",
+      "audio/ogg",
+      "audio/mp4",
+      "audio/wav",
+      "application/pdf",
+    ]);
+    const seguroInline = tiposInline.has(tipoDeclarado);
+    const tipo = seguroInline ? tipoDeclarado : "application/octet-stream";
     const nombre = (msg.media_nombre as string | null) || "archivo";
-    return new NextResponse(buf, {
+    const largo = Number(r.headers.get("content-length") ?? "0");
+    if (Number.isFinite(largo) && largo > 25 * 1024 * 1024) {
+      return new NextResponse("Archivo demasiado grande", { status: 413 });
+    }
+    // Reenviar como stream: un adjunto grande ya no se copia entero a memoria
+    // dentro de la función serverless.
+    return new NextResponse(r.body, {
       status: 200,
       headers: {
         "Content-Type": tipo,
         // Se muestra inline (imágenes/PDF) pero con nombre por si se descarga.
-        "Content-Disposition": `inline; filename="${nombre.replace(/[^\w.\- ]/g, "_")}"`,
+        "Content-Disposition": `${seguroInline ? "inline" : "attachment"}; filename="${nombre.replace(/[^\w.\- ]/g, "_")}"`,
         "Cache-Control": "private, max-age=300",
       },
     });

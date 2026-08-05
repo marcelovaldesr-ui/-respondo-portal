@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import type { ReactElement } from "react";
 
 /* Iconos line-art, en línea con la identidad de la web (nada de emojis). */
 const Icono = {
@@ -44,7 +45,7 @@ const Icono = {
 type ItemMenu = {
   href: string;
   label: string;
-  icono: JSX.Element;
+  icono: ReactElement;
   /** De dónde sale el número que va a la derecha, si corresponde. */
   contador?: "esperando" | "porCerrar";
 };
@@ -198,18 +199,22 @@ export default function Sidebar({
   clienteNombre,
   clienteRubro,
   email,
+  rol,
   esperando = 0,
   porCerrar = 0,
 }: {
   clienteNombre: string;
   clienteRubro?: string;
   email: string;
+  rol: "dueno" | "staff";
   /** Conversaciones derivadas sin atender. Va en coral: es lo único urgente. */
   esperando?: number;
   /** Oportunidades abiertas en el embudo. */
   porCerrar?: number;
 }) {
   const ruta = usePathname();
+  const visible = (it: ItemMenu) =>
+    rol === "dueno" || !["/informacion", "/whatsapp"].includes(it.href);
   const contadores = { esperando, porCerrar } as const;
   const valorDe = (it: ItemMenu) => (it.contador ? contadores[it.contador] : undefined);
 
@@ -265,7 +270,7 @@ export default function Sidebar({
 
       {/* Móvil: fila desplazable, sin rótulos de grupo (no caben y estorban) */}
       <nav className="-mx-1 mt-3 flex gap-1 overflow-x-auto px-1 pb-1 lg:hidden">
-        {ITEMS.map((it) => (
+        {ITEMS.filter(visible).map((it) => (
           <ItemNav
             key={it.href}
             item={it}
@@ -277,7 +282,9 @@ export default function Sidebar({
 
       {/* Escritorio: los cuatro grupos */}
       <nav className="mt-5 hidden flex-col lg:flex">
-        {GRUPOS.map((g, i) => (
+        {GRUPOS.map((g) => ({ ...g, items: g.items.filter(visible) }))
+          .filter((g) => g.items.length > 0)
+          .map((g, i) => (
           <div key={g.titulo} className={i ? "mt-4" : ""}>
             <div
               className="px-3 pb-1 font-semibold uppercase"

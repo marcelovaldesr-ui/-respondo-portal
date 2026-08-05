@@ -65,11 +65,12 @@ function Bloque({
 export default async function Insights({
   searchParams,
 }: {
-  searchParams: { semana?: string };
+  searchParams: Promise<{ semana?: string }>;
 }) {
+  const params = await searchParams;
   const usuario = await exigirUsuarioPortal();
   const [insight, semanas] = await Promise.all([
-    obtenerInsight(usuario.clienteId, searchParams.semana),
+    obtenerInsight(usuario.clienteId, params.semana),
     listarSemanas(usuario.clienteId),
   ]);
   const actual = semanaDe(new Date(), 0);

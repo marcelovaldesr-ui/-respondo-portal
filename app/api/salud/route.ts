@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { db } from "@/lib/db";
-import { secretoValido } from "@/lib/seguridad";
+import { limitarDistribuido, secretoValido } from "@/lib/seguridad";
+import { ipDeRequest } from "@/lib/reservasPublicas";
 import { LATIDO_CRON_SEGUIMIENTOS, estadoDelCron, leerLatido } from "@/lib/latidos";
 
 export const dynamic = "force-dynamic";
@@ -165,6 +166,9 @@ async function chequearMeta(): Promise<Chequeo> {
 }
 
 export async function GET(request: NextRequest) {
+  if (!(await limitarDistribuido(`salud:${ipDeRequest(request.headers)}`, 60, 60)).ok) {
+    return NextResponse.json({ estado: "limitado" }, { status: 429 });
+  }
   const { searchParams } = new URL(request.url);
   const full = searchParams.get("full") === "1";
   const secreto = process.env.CRON_SECRET || process.env.EVOLUTION_WEBHOOK_SECRET;
