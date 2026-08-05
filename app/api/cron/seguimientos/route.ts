@@ -29,7 +29,11 @@ export const maxDuration = 60;
  * (misma regla que el inbox en conversaciones/acciones.ts).
  */
 export async function GET(request: NextRequest) {
-  const secreto = process.env.CRON_SECRET || process.env.EVOLUTION_WEBHOOK_SECRET;
+  // CRON_SECRET es su propio secreto desde el 5-ago-2026 (antes caía al
+  // EVOLUTION_WEBHOOK_SECRET compartido con el webhook de WAHA — resabio
+  // del proveedor viejo ya eliminado). Sepáralos: rotar uno no debe romper
+  // el otro.
+  const secreto = process.env.CRON_SECRET;
   const k = new URL(request.url).searchParams.get("k");
   // Fail closed: esta ruta ejecuta envíos y usa service_role. Una variable
   // ausente no puede convertirla silenciosamente en un cron público.

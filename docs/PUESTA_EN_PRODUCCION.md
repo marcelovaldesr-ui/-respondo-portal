@@ -82,8 +82,8 @@ va como **proyecto nuevo y separado**.
    - `NEXT_PUBLIC_SITE_URL` → la URL final del portal
    - `WHATSAPP_APP_ID`, `WHATSAPP_APP_SECRET` → Embedded Signup y firma Meta
    - `NEXT_PUBLIC_WHATSAPP_APP_ID`, `NEXT_PUBLIC_WHATSAPP_CONFIG_ID`
-   - `CRON_SECRET` → autorización del cron
-   - `EVOLUTION_WEBHOOK_SECRET` → webhooks WAHA/Evolution
+   - `CRON_SECRET` → autorización del cron y de `/api/salud` (propio, ya no comparte valor con el webhook)
+   - `WAHA_WEBHOOK_SECRET` → autorización del webhook de WAHA (antes `EVOLUTION_WEBHOOK_SECRET`, Evolution ya no existe)
    - `WAHA_PAIRING_SECRET` → segundo factor de la operación global de pairing
 3. Elegir un dominio. Sugerencia: `portal.respon-do.com` (subdominio, no toca la
    web principal).

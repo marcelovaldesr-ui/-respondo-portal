@@ -12,12 +12,14 @@ export const maxDuration = 60;
  *
  * Ruta delgada: la lógica vive en lib/inboundWaha.ts. Confirma solo después de
  * persistir/procesar; ante error retorna 5xx para habilitar reintentos. WAHA no
- * firma payloads, por eso EVOLUTION_WEBHOOK_SECRET es obligatorio en ?k=.
+ * firma payloads, por eso WAHA_WEBHOOK_SECRET es obligatorio en ?k=.
+ * (Antes se llamaba EVOLUTION_WEBHOOK_SECRET, resabio del proveedor viejo ya
+ * eliminado — renombrado 5-ago-2026 al rotar el secreto, sin cambiar el uso.)
  */
 export async function POST(request: NextRequest) {
   const requestId = idSolicitud(request.headers);
   // Secreto comparado en tiempo constante (anti timing attack).
-  const secret = process.env.EVOLUTION_WEBHOOK_SECRET;
+  const secret = process.env.WAHA_WEBHOOK_SECRET;
   const k = new URL(request.url).searchParams.get("k");
   // WAHA no firma los payloads. Sin el secreto compartido no hay forma de
   // distinguir un mensaje real de uno fabricado por internet.

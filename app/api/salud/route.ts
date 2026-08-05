@@ -171,7 +171,8 @@ export async function GET(request: NextRequest) {
   }
   const { searchParams } = new URL(request.url);
   const full = searchParams.get("full") === "1";
-  const secreto = process.env.CRON_SECRET || process.env.EVOLUTION_WEBHOOK_SECRET;
+  // CRON_SECRET es su propio secreto desde el 5-ago-2026 (ver cron/seguimientos).
+  const secreto = process.env.CRON_SECRET;
   const autorizado = secretoValido(searchParams.get("k"), secreto);
 
   const chequeos: Record<string, Chequeo> = {
