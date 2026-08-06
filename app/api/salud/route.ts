@@ -4,6 +4,19 @@ import { limitarDistribuido, secretoValido } from "@/lib/seguridad";
 import { ipDeRequest } from "@/lib/reservasPublicas";
 import { LATIDO_CRON_SEGUIMIENTOS, estadoDelCron, leerLatido } from "@/lib/latidos";
 
+/**
+ * Extrae el parámetro ?k= de la URL de webhook que WAHA tiene configurada.
+ * Defensivo: URL rara o ausente → null (no revienta el chequeo de salud).
+ */
+function kDeUrlWebhook(url: string | undefined): string | null {
+  if (!url) return null;
+  try {
+    return new URL(url).searchParams.get("k");
+  } catch {
+    return null;
+  }
+}
+
 export const dynamic = "force-dynamic";
 export const maxDuration = 30;
 
@@ -46,7 +59,19 @@ async function chequearBase(): Promise<Chequeo> {
   return { ok: true, detalle: `${count ?? 0} clientes` };
 }
 
-/** 2) WAHA: ¿la sesión sigue vinculada y trabajando? */
+/**
+ * 2) WAHA: ¿la sesión sigue vinculada y trabajando, Y el secreto del webhook
+ * que WAHA tiene configurado coincide con el que espera este portal?
+ *
+ * POR QUÉ SE AGREGÓ (6-ago-2026): un rename+rotación de
+ * WAHA_WEBHOOK_SECRET dejó a WAHA enviando el ?k= viejo durante ~21 horas.
+ * La sesión seguía "WORKING" todo ese tiempo (WhatsApp conectado, nada raro
+ * a la vista) pero cada webhook llegaba y el portal lo rechazaba con 403 —
+ * así que Tino nunca se enteraba de los mensajes. Este chequeo solo (sesión
+ * WORKING) NUNCA habría detectado ese apagón: revisa la conexión con
+ * WhatsApp, no si el webhook realmente puede entregar algo. Por eso ahora
+ * también compara el secreto en vivo, sin esperar a que lleguen mensajes.
+ */
 async function chequearWaha(): Promise<Chequeo> {
   const base = (process.env.WAHA_API_URL ?? "").replace(/\/+$/, "");
   const key = process.env.WAHA_API_KEY;
@@ -62,13 +87,26 @@ async function chequearWaha(): Promise<Chequeo> {
       cache: "no-store",
     });
     if (!r.ok) return { ok: false, detalle: `HTTP ${r.status}` };
-    const j = (await r.json()) as { status?: string; me?: { id?: string } };
+    const j = (await r.json()) as {
+      status?: string;
+      me?: { id?: string };
+      config?: { webhooks?: { url?: string }[] };
+    };
     const estado = j.status ?? "?";
     // SCAN_QR_CODE / FAILED / STOPPED = Tino NO puede atender por este canal.
-    return {
-      ok: estado === "WORKING",
-      detalle: `${estado}${j.me?.id ? ` · ${j.me.id}` : ""}`,
-    };
+    const sesionSana = estado === "WORKING";
+
+    const kWaha = kDeUrlWebhook(j.config?.webhooks?.[0]?.url);
+    const secretoEsperado = process.env.WAHA_WEBHOOK_SECRET;
+    // Solo se evalúa si ambos lados están configurados; si falta alguno, no es
+    // un desajuste (puede ser un entorno donde WAHA no está en uso todavía).
+    const secretoSincronizado =
+      !secretoEsperado || !kWaha ? true : secretoValido(kWaha, secretoEsperado);
+
+    const detalle = `${estado}${j.me?.id ? ` · ${j.me.id}` : ""}${
+      secretoSincronizado ? "" : " · ⚠ secreto de webhook desincronizado (WAHA vs Vercel)"
+    }`;
+    return { ok: sesionSana && secretoSincronizado, detalle };
   } finally {
     clearTimeout(t);
   }
