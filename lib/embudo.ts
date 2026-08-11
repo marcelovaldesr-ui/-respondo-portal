@@ -1,6 +1,7 @@
 import { db } from "@/lib/db";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { idsEmpleadosDeCliente } from "@/lib/empleadosCache";
+import { notificarSistemaDelCliente } from "@/lib/puenteSalida";
 
 /**
  * EMBUDO — en qué va cada conversación.
@@ -309,6 +310,44 @@ export async function cargarEmbudo(
           .in("chat_id", chats);
       }),
     );
+
+    /**
+     * PUENTE: avisar los cambios de etapa al sistema del cliente, si tiene uno
+     * (agregado 11-ago-2026).
+     *
+     * Importa que esté acá y no solo en el mensaje entrante: dos de los cambios
+     * que hace este cálculo no vienen de un mensaje nuevo. El cierre por
+     * silencio lo dispara el RELOJ (una cotización que llevaba una semana sin
+     * respuesta pasa a perdida), y el avance a "ganado" lo dispara una venta o
+     * un agendamiento. Sin este aviso, esos dos casos quedarían solo en el
+     * portal y los dos sistemas mostrarían estados distintos de la misma
+     * conversación — que es la forma más rápida de que alguien deje de creerle
+     * a los dos.
+     *
+     * Fire-and-forget, igual que el resto del puente: esta función se llama al
+     * abrir una página y no debe esperar a un tercero para pintar.
+     */
+    const porChat = new Map(cambios.map((c) => [c.chat_id, c]));
+    for (const t of tarjetas) {
+      const cambio = porChat.get(t.chatId);
+      if (!cambio) continue;
+      notificarSistemaDelCliente({
+        evento: "etapa",
+        clienteId,
+        contacto: {
+          chatId: t.chatId,
+          nombre: t.contacto.startsWith("+") ? null : t.contacto,
+          // El embudo no distingue canal; se deduce del prefijo que usa
+          // inboundInstagram para que un IGSID no colisione con un teléfono.
+          canal: t.chatId.startsWith("ig:") ? "instagram" : "whatsapp",
+          etapa: cambio.etapa,
+          etapaManual: false, // por construcción: acá solo entran cambios automáticos
+          etiquetas: t.etiquetas,
+          ultimoMensajeEn: t.ultimoEn,
+        },
+        supa,
+      });
+    }
   }
 
   // Más recientes primero dentro de cada columna.
@@ -337,7 +376,30 @@ export async function moverEtapa(
     .update({ etapa, etapa_manual: true, etapa_motivo: null, etapa_en: new Date().toISOString() })
     .eq("cliente_id", clienteId) // barrera de acceso
     .eq("chat_id", chatId);
-  return error ? { ok: false, error: error.message } : { ok: true };
+  if (error) return { ok: false, error: error.message };
+
+  /**
+   * PUENTE: avisar el movimiento manual al sistema del cliente.
+   *
+   * ⚠ Puede quedar sin efecto, y está bien: si en ESE sistema una persona ya
+   * había fijado el estado a mano, allá manda su criterio y el aviso se ignora.
+   * Es la regla acordada para que los dos tableros no se peleen — no un bug.
+   * Cuando pase, los dos guardan la etapa cruda y el desacuerdo se puede
+   * auditar sin adivinar.
+   */
+  notificarSistemaDelCliente({
+    evento: "etapa",
+    clienteId,
+    contacto: {
+      chatId,
+      canal: chatId.startsWith("ig:") ? "instagram" : "whatsapp",
+      etapa,
+      etapaManual: true,
+    },
+    supa,
+  });
+
+  return { ok: true };
 }
 
 /**

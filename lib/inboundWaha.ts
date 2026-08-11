@@ -18,6 +18,7 @@ import {
 import { modoDe, setModo, tocarVentanaEntrante } from "@/lib/estadoChat";
 import { responderSiBot } from "@/lib/responderBot";
 import { empleadoParaEntrante } from "@/lib/seguimientos";
+import { notificarSistemaDelCliente } from "@/lib/puenteSalida";
 
 export type ResultadoEntrante = { accion: string; detalle?: string };
 
@@ -211,18 +212,59 @@ export async function manejarEntranteWaha(
 
   // Contacto: guardar con el número real + nombre visible (best-effort).
   const nombre = m.nombre ?? (await nombreDeContacto(m.jid));
-  await supa.from("ed_contactos").upsert(
-    {
-      cliente_id: clienteId,
-      chat_id: chatId,
-      nombre: nombre ?? undefined,
-      telefono: contacto.telefono ?? undefined,
-      etiqueta: "lead",
-    },
-    { onConflict: "cliente_id,chat_id" },
-  );
+  // Se piden de vuelta etiquetas y etapa (`.select()`) porque el puente hacia el
+  // sistema del cliente las necesita y ya estamos haciendo este viaje a la base:
+  // pedirlas acá evita una consulta extra en el camino de una conversación real.
+  const { data: contactoGuardado } = await supa
+    .from("ed_contactos")
+    .upsert(
+      {
+        cliente_id: clienteId,
+        chat_id: chatId,
+        nombre: nombre ?? undefined,
+        telefono: contacto.telefono ?? undefined,
+        etiqueta: "lead",
+      },
+      { onConflict: "cliente_id,chat_id" },
+    )
+    .select("nombre, telefono, etiquetas, etapa, etapa_manual, ultimo_mensaje_en, ultimo_mensaje_rol")
+    .maybeSingle();
 
   await tocarVentanaEntrante(empleadoId, chatId, supa);
+
+  /**
+   * PUENTE HACIA EL SISTEMA DEL CLIENTE (agregado 11-ago-2026).
+   *
+   * Si este cliente tiene su propia app de gestión configurada
+   * (`ed_integraciones`, migración 274), se le avisa del mensaje para que sus
+   * leads y reportes se llenen solos y la persona que atiende no tenga que
+   * mirar dos pantallas.
+   *
+   * Va ACÁ y no más abajo a propósito: antes del debounce. Las entregas que se
+   * retiran por debounce igual guardaron su mensaje en la base, así que también
+   * tienen que avisarlo — si no, se perderían los fragmentos intermedios de
+   * quien escribe a pedazos.
+   *
+   * Fire-and-forget: NO se hace await. Que la app del cliente esté caída no
+   * puede frenar ni retrasar la respuesta a alguien que está escribiendo.
+   */
+  notificarSistemaDelCliente({
+    evento: "mensaje",
+    clienteId,
+    contacto: {
+      chatId,
+      telefono: contactoGuardado?.telefono ?? contacto.telefono ?? null,
+      nombre: contactoGuardado?.nombre ?? nombre ?? null,
+      canal: "whatsapp",
+      etapa: (contactoGuardado?.etapa as string | null) ?? null,
+      etapaManual: Boolean(contactoGuardado?.etapa_manual),
+      etiquetas: (contactoGuardado?.etiquetas as string[] | null) ?? null,
+      ultimoMensajeEn: (contactoGuardado?.ultimo_mensaje_en as string | null) ?? null,
+      ultimoMensajeRol: (contactoGuardado?.ultimo_mensaje_rol as string | null) ?? null,
+    },
+    mensaje: { waId: m.waId, rol: "cliente", texto: m.texto ?? "" },
+    supa,
+  });
 
   // DEBOUNCE (fix estabilización 24-jul): agrupar mensajes rápidos seguidos.
   // Esperamos una ventana corta; si en ese lapso el cliente manda un mensaje

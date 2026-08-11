@@ -10,6 +10,7 @@ import { guardarMensaje, yaProcesado, esEcoReciente } from "@/lib/mensajes";
 import { setModo, tocarVentanaEntrante } from "@/lib/estadoChat";
 import { responderSiBot } from "@/lib/responderBot";
 import { empleadoParaEntrante } from "@/lib/seguimientos";
+import { notificarSistemaDelCliente } from "@/lib/puenteSalida";
 
 export type ResultadoIg = { accion: string; detalle?: string };
 
@@ -131,18 +132,51 @@ export async function manejarEntranteInstagram(
       continue;
     }
 
-    await supa.from("ed_contactos").upsert(
-      {
-        cliente_id: ctx.clienteId,
-        chat_id: chatId,
-        // No se inventa un nombre: en Instagram el perfil requiere otro permiso
-        // y hasta tenerlo es preferible mostrar el usuario que un dato falso.
-        etiqueta: "lead",
-      },
-      { onConflict: "cliente_id,chat_id" },
-    );
+    const { data: contactoGuardado } = await supa
+      .from("ed_contactos")
+      .upsert(
+        {
+          cliente_id: ctx.clienteId,
+          chat_id: chatId,
+          // No se inventa un nombre: en Instagram el perfil requiere otro permiso
+          // y hasta tenerlo es preferible mostrar el usuario que un dato falso.
+          etiqueta: "lead",
+        },
+        { onConflict: "cliente_id,chat_id" },
+      )
+      .select("nombre, telefono, etiquetas, etapa, etapa_manual, ultimo_mensaje_en, ultimo_mensaje_rol")
+      .maybeSingle();
 
     await tocarVentanaEntrante(empleadoId, chatId, supa);
+
+    /**
+     * PUENTE HACIA EL SISTEMA DEL CLIENTE (agregado 11-ago-2026).
+     * Mismo enganche que en WhatsApp; ver la nota larga en `lib/inboundWaha.ts`.
+     *
+     * OJO CON LA IDENTIDAD: acá el chatId es `ig:<IGSID>`, que NO es un teléfono.
+     * El sistema del cliente identifica sus leads por teléfono, así que un lead
+     * de Instagram va a quedar con el IGSID en ese campo y no se va a poder
+     * cruzar con el historial de pedidos ni abrir un WhatsApp de respuesta. Es
+     * correcto que sea así: unirlos exigiría que la persona diera su teléfono, y
+     * adivinarlo sería peor. Queda distinguible por `canal = 'instagram'`.
+     */
+    notificarSistemaDelCliente({
+      evento: "mensaje",
+      clienteId: cta.clienteId,
+      contacto: {
+        chatId,
+        telefono: (contactoGuardado?.telefono as string | null) ?? null,
+        nombre: (contactoGuardado?.nombre as string | null) ?? null,
+        canal: "instagram",
+        etapa: (contactoGuardado?.etapa as string | null) ?? null,
+        etapaManual: Boolean(contactoGuardado?.etapa_manual),
+        etiquetas: (contactoGuardado?.etiquetas as string[] | null) ?? null,
+        ultimoMensajeEn: (contactoGuardado?.ultimo_mensaje_en as string | null) ?? null,
+        ultimoMensajeRol: (contactoGuardado?.ultimo_mensaje_rol as string | null) ?? null,
+      },
+      mensaje: { waId: ev.mid, rol: "cliente", texto: ev.texto ?? "" },
+      supa,
+    });
 
     /** Igual que en WhatsApp: si llegó algo más nuevo, esta respuesta sobra. */
     const sigueVigente = async (): Promise<boolean> => {
