@@ -154,7 +154,14 @@ console.log(`Mensajes de cliente a procesar: ${mensajes.length}\n`);
 const firmar = (cuerpo, secreto) =>
   `sha256=${createHmac("sha256", secreto).update(cuerpo, "utf8").digest("hex")}`;
 
-const stats = { enviados: 0, duplicados: 0, descartados: 0, errores: 0, conProducto: 0 };
+/**
+ * `simulados` existe aparte de `enviados` por una razón concreta: la primera
+ * versión sumaba los del modo seco a `enviados`, y el resumen terminaba diciendo
+ * "Enviados: 2222" sin haber mandado nada. Se lee como éxito y hace creer que el
+ * trabajo está hecho. Un contador que miente en el caso de prueba es peor que no
+ * tenerlo.
+ */
+const stats = { enviados: 0, simulados: 0, duplicados: 0, descartados: 0, errores: 0, conProducto: 0 };
 
 function armarCuerpo(m) {
   const c = porChat.get(m.chat_id) ?? {};
@@ -195,7 +202,7 @@ function armarCuerpo(m) {
 async function enviar(m) {
   const json = armarCuerpo(m);
   if (seco) {
-    stats.enviados++;
+    stats.simulados++;
     return;
   }
   for (const d of destinos) {
@@ -247,12 +254,23 @@ for (let i = 0; i < mensajes.length; i += ritmo) {
 }
 
 console.log("\n--- Resultado ---");
-console.log(`Enviados:            ${stats.enviados}`);
-console.log(`Ya estaban:          ${stats.duplicados}`);
-console.log(`Descartados (no son clientes): ${stats.descartados}`);
-console.log(`Errores:             ${stats.errores}`);
-console.log(`Con producto identificado:     ${stats.conProducto}`);
-if (stats.errores) {
-  console.log("\nHubo errores. Se puede correr de nuevo: el receptor descarta lo que ya guardó.");
-  process.exit(1);
+if (seco) {
+  // El aviso va al FINAL además del principio: cuando el proceso tarda minutos,
+  // lo que se lee es el resumen, no la primera línea que ya scrolleó.
+  console.log(`Se ENVIARIAN:        ${stats.simulados} mensajes`);
+  console.log(`Con producto identificado:     ${stats.conProducto}`);
+  console.log("\n" + "=".repeat(58));
+  console.log("MODO SECO: NO SE ENVIO NADA. Nada cambio en el otro sistema.");
+  console.log("Para que entre de verdad, corre el MISMO comando SIN --seco.");
+  console.log("=".repeat(58));
+} else {
+  console.log(`Enviados:            ${stats.enviados}`);
+  console.log(`Ya estaban:          ${stats.duplicados}`);
+  console.log(`Descartados (no son clientes): ${stats.descartados}`);
+  console.log(`Errores:             ${stats.errores}`);
+  console.log(`Con producto identificado:     ${stats.conProducto}`);
+  if (stats.errores) {
+    console.log("\nHubo errores. Se puede correr de nuevo: el receptor descarta lo que ya guardó.");
+    process.exit(1);
+  }
 }
