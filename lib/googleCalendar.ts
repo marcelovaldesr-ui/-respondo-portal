@@ -264,7 +264,16 @@ export async function ocupadosDeUnCalendario(
   desdeIso: string,
   hastaIso: string,
   tokenOAuth: string,
-): Promise<Ocupacion[]> {
+  // Devuelve TAMBIÉN el error, no solo la lista.
+  //
+  // Antes retornaba [] ante cualquier fallo y solo dejaba una línea en consola.
+  // Aguas arriba, [] es indistinguible de "el dueño no tiene nada agendado", así
+  // que un 403 por permisos se veía igual que un calendario vacío: Respondo
+  // seguía ofreciendo horas que el dueño ya tenía tomadas, sin una sola señal.
+  // Fue exactamente lo que pasó con el scope `calendar.freebusy` faltante
+  // (12-ago-2026), y se descubrió de casualidad probando el video de
+  // verificación. Ahora el error sube y queda visible en el portal.
+): Promise<{ ok: boolean; ocupaciones: Ocupacion[]; detalle?: string }> {
   const r = await llamar<{
     calendars?: Record<string, { busy?: { start: string; end: string }[] }>;
   }>(
@@ -282,11 +291,12 @@ export async function ocupadosDeUnCalendario(
   );
   if (!r.ok) {
     console.error("[googleCalendar] freeBusy (oauth):", r.motivo, r.detalle);
-    return [];
+    return { ok: false, ocupaciones: [], detalle: r.detalle ?? r.motivo };
   }
+
   const salida: Ocupacion[] = [];
   for (const [cal, info] of Object.entries(r.datos.calendars ?? {})) {
     for (const b of info.busy ?? []) salida.push({ calendarioId: cal, desde: b.start, hasta: b.end });
   }
-  return salida;
+  return { ok: true, ocupaciones: salida };
 }

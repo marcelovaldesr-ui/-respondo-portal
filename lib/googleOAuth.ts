@@ -41,11 +41,38 @@ const URL_PORTAL = (process.env.NEXT_PUBLIC_SITE_URL || "https://respondo-portal
 );
 const REDIRECT_URI = `${URL_PORTAL}/api/google/callback`;
 
-// Angosto a propósito (ver C1 del expediente): alcanza para crear, mover y
-// borrar los eventos de las citas sin pedir el calendario completo.
-// openid+email son scopes básicos (no requieren revisión) solo para poder
-// mostrarle al dueño "Conectado como fulano@gmail.com" en el portal.
-const SCOPES = ["https://www.googleapis.com/auth/calendar.events", "openid", "email"].join(" ");
+/**
+ * Permisos que se le piden al dueño. Angostos a propósito, pero SON DOS —
+ * hacen falta los dos y con uno solo la mitad del producto no funciona:
+ *
+ *  · `calendar.events`   → crear, mover y borrar el evento de cada cita.
+ *  · `calendar.freebusy` → LEER los bloques ocupados de su calendario, para no
+ *                          ofrecer una hora cuando él ya tiene un compromiso.
+ *
+ * BUG REAL (12-ago-2026): faltaba `calendar.freebusy`. La documentación de
+ * Google es explícita —freebusy.query admite `calendar.readonly`, `calendar`,
+ * `calendar.events.freebusy` o `calendar.freebusy`, y `calendar.events` NO
+ * está en esa lista—, así que la llamada devolvía 403.
+ *
+ * Y fallaba en silencio: `ocupadosDeUnCalendario` registra el error en consola
+ * y retorna [], que aguas arriba es indistinguible de "no tiene nada agendado".
+ * Resultado: el dueño se bloqueaba la mañana entera en su Google Calendar y
+ * Respondo seguía ofreciendo esas horas. Se detectó probando el video de
+ * verificación, no por una alerta.
+ *
+ * Se eligió `calendar.freebusy` y no `calendar.readonly` a propósito: solo
+ * expone SI está ocupado y a qué hora, nunca el contenido de sus eventos. Es lo
+ * mínimo que resuelve el caso y lo más fácil de defender ante Google.
+ *
+ * openid+email son básicos (no requieren revisión) y solo sirven para mostrar
+ * "Conectado como fulano@gmail.com" en el portal.
+ */
+const SCOPES = [
+  "https://www.googleapis.com/auth/calendar.events",
+  "https://www.googleapis.com/auth/calendar.freebusy",
+  "openid",
+  "email",
+].join(" ");
 
 function credenciales(): { id: string; secreto: string } | null {
   const id = process.env.GOOGLE_OAUTH_CLIENT_ID?.trim();

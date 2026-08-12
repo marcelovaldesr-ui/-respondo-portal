@@ -131,8 +131,19 @@ export async function ocupadosDesdeGoogle(
   const conOAuth = cals.filter((c) => c.tokenOAuth);
   await Promise.all(
     conOAuth.map(async (c) => {
-      const ocupados = await ocupadosDeUnCalendario(c.calendarioId, desdeIso, hastaIso, c.tokenOAuth!);
-      for (const o of ocupados) salida.push({ profesionalId: c.profesionalId, desde: o.desde, hasta: o.hasta });
+      const r = await ocupadosDeUnCalendario(c.calendarioId, desdeIso, hastaIso, c.tokenOAuth!);
+      if (!r.ok) {
+        // Que quede ESCRITO y visible en la pantalla de configuración. Un fallo
+        // acá no rompe nada a la vista —la agenda sigue ofreciendo horas—, y
+        // ese es justamente el problema: sin dejar rastro, el dueño descubre
+        // que su calendario personal no se respeta cuando alguien le reserva
+        // encima de un compromiso. Ver el scope faltante del 12-ago-2026.
+        await anotarEstadoSync(c.profesionalId, `no se pudo leer tu disponibilidad: ${r.detalle}`, supa);
+        return;
+      }
+      for (const o of r.ocupaciones) {
+        salida.push({ profesionalId: c.profesionalId, desde: o.desde, hasta: o.hasta });
+      }
     }),
   );
 

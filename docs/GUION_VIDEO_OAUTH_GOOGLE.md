@@ -17,6 +17,41 @@
 > de permisos, que es la que el revisor necesita ver. Fue lo que invalidó la
 > toma anterior.
 
+
+## ⚠️ ANTES DE VOLVER A GRABAR — hay que agregar un permiso en Google Cloud
+
+**Hallazgo del 12-ago-2026.** Se probó el paso 10 (bloquear una hora con un
+evento personal) y NO funcionaba: el evento no bloqueaba nada. Causa: pedíamos
+solo `calendar.events`, y la documentación de Google es explícita en que
+`freebusy.query` **no acepta ese scope**. La llamada devolvía 403 y el código lo
+absorbía en silencio, devolviendo "nada ocupado".
+
+Ya está corregido en el código (`lib/googleOAuth.ts` pide también
+`calendar.freebusy`, y ahora el fallo queda visible en la pantalla de
+configuración en vez de pasar callado). **Pero falta declararlo en el panel:**
+
+1. **Google Cloud Console → Google Auth Platform → Acceso a los datos.**
+2. **Agrega permisos manualmente** (el cuadro de abajo, no el buscador de arriba
+   — el buscador combina los filtros con Y y no encuentra nada).
+3. Pega exactamente:
+   ```
+   https://www.googleapis.com/auth/calendar.freebusy
+   ```
+4. Guarda. Deben quedar declarados **cuatro**: `calendar.events`,
+   `calendar.freebusy`, `openid` y `userinfo.email`.
+5. **Revoca el acceso otra vez** en `myaccount.google.com/connections` → Respondo.
+   Es obligatorio: un permiso nuevo exige un consentimiento nuevo, y si no
+   revocas, Google reutiliza el consentimiento viejo y seguirás sin
+   `freebusy`.
+
+Recién ahí graba. En la pantalla de permisos ahora deberían verse **dos líneas**
+en vez de una: la de ver y editar eventos, y la de ver tu disponibilidad.
+
+**No grabes sin haber verificado antes que el paso 10 funciona de verdad.** Con
+el guion viejo el video se habría enviado mostrando una función que no operaba,
+y el propio texto de justificación se lo declara a Google — es de los motivos
+más claros de rechazo.
+
 **Duración objetivo:** 2–3 minutos
 **Cuenta a usar:** hirespondo@gmail.com → cliente "Clínica Dental Sonrisa (demo)"
 **Profesional a conectar:** Dra. Valentina Rojas
@@ -63,7 +98,11 @@
 
 El formulario de Google está en inglés — cópialos y pégalos tal cual.
 
-### 1) ¿Por qué necesitas este scope? (*Scope justification*)
+### 1) ¿Por qué necesitas estos scopes? (*Scope justification*)
+
+> **Son DOS permisos y hay que justificar los dos.** Hasta el 12-ago-2026 se
+> pedía solo `calendar.events`, y con eso la lectura de disponibilidad no
+> funcionaba: `freebusy.query` no acepta ese scope.
 
 ```
 Respondo is a scheduling and customer-communication platform for small
@@ -73,31 +112,42 @@ working hours and customer bookings, which can be created by the business
 itself, by customers through a public booking page, or through the business's
 WhatsApp assistant.
 
-We request https://www.googleapis.com/auth/calendar.events so that a business
-owner who connects their Google Calendar can:
+We request two scopes, each for one half of a single feature: keeping the
+owner's Google Calendar and Respondo's schedule in sync.
 
-1. See every appointment booked through Respondo automatically appear as an
-   event in their own Google Calendar, so they do not have to check two places.
-2. Have that event automatically updated when the appointment is rescheduled and
-   removed when it is cancelled.
-3. Avoid double-booking: we read the busy time blocks of the connected calendar
-   so Respondo never offers a time slot when the owner already has a personal or
-   external commitment.
+1) https://www.googleapis.com/auth/calendar.events  — to WRITE.
+   Every appointment booked through Respondo appears automatically as an event
+   in the owner's own Google Calendar, is updated when the appointment is
+   rescheduled, and is removed when it is cancelled. Without this scope the
+   owner would have to check two places for the same schedule.
 
-All three functions are visible and prominent in the product: they are shown in
-the "Agenda" section of the customer portal, where the owner explicitly connects
+2) https://www.googleapis.com/auth/calendar.freebusy — to READ availability.
+   Before offering a time slot to a customer, we query the owner's free/busy
+   blocks so Respondo never offers a time when the owner already has a personal
+   or external commitment. Without this scope a customer can book on top of the
+   owner's existing appointments, which is the single most damaging failure in
+   a scheduling product.
+
+Both functions are visible and prominent in the product: they are shown in the
+"Agenda" section of the customer portal, where the owner explicitly connects
 the calendar and can disconnect it at any time.
 
-A narrower scope does not work for our use case:
-- calendar.freebusy would let us read availability, but not create, update or
-  delete the appointment events, which is the core of the feature.
+Why not a narrower or broader combination:
+- calendar.freebusy alone would let us read availability, but not create,
+  update or delete the appointment events, which is the other half of the
+  feature.
+- calendar.events alone does not authorize freebusy.query, so we could write
+  events but never avoid double-booking.
+- calendar.readonly would grant freebusy access, but it would also expose the
+  full content of every event in the user's calendar, which we neither need nor
+  want. calendar.freebusy only reveals WHEN the user is busy, never what the
+  commitment is.
 - calendar.events.owned only covers events the user owns, and many of our
   businesses operate shared calendars where staff members are the organizers.
-- calendar.readonly would not allow writing appointments at all.
 
 We deliberately do NOT request the full https://www.googleapis.com/auth/calendar
 scope, because we do not need to manage calendars themselves (create, delete or
-change calendar settings) — only the events.
+change calendar settings) — only events and availability.
 ```
 
 ### 2) ¿Cómo se usan los datos? (*How will the data be used*)
@@ -107,9 +157,10 @@ Google user data is used exclusively to power the calendar synchronization
 feature described above, and only while the business keeps the integration
 enabled.
 
-- We do not store the content of the user's personal calendar events. Busy/free
-  information is queried at the moment we compute available appointment slots
-  and is not persisted.
+- We do not store the content of the user's personal calendar events. In fact
+  the calendar.freebusy scope does not expose event content at all: it only
+  returns time ranges during which the user is busy. That information is queried
+  at the moment we compute available appointment slots and is never persisted.
 - Of the events we create ourselves, we store only the technical event
   identifier, so that we can later update or delete that same event.
 - We never use Google user data for advertising, we do not sell or transfer it,
