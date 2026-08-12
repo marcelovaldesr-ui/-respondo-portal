@@ -202,16 +202,68 @@ export async function nombreDeContacto(jid: string): Promise<string | null> {
   }
 }
 
-/** Resuelve el cliente a partir de la instancia lógica. */
+/**
+ * WAHA ES DE UN SOLO CLIENTE — barrera contra fuga entre negocios.
+ *
+ * HALLAZGO (auditoría 11-ago-2026): WAHA está cableado a un único cliente y
+ * nada lo impedía a nivel de datos.
+ *   - `parsearWaha` fija `instancia: INSTANCIA` (la variable de entorno), o sea
+ *     TODO lo que entra se atribuye a ese cliente, venga de donde venga.
+ *   - `enviarTextoWaha` usa la constante global SESSION: TODO lo que sale se
+ *     manda desde ESE WhatsApp.
+ *
+ * Con un cliente funcionaba. Con dos, los recordatorios del cliente B salen
+ * desde el número del cliente A y quedan guardados en la conversación de A.
+ * No hay error, no hay log raro: se mezclan dos negocios en silencio. Es el
+ * peor fallo posible —privacidad— y el más difícil de notar.
+ *
+ * Verificado en la base el 11-ago: había 4 clientes activos con
+ * transporte='waha' y 5 seguimientos pendientes de clientes de prueba que
+ * habrían salido por el WhatsApp real de Impresora Color, uno de ellos al
+ * número de Marcelo, que ADEMÁS es contacto real de Impresora.
+ *
+ * El camino correcto no es hacer WAHA multi-sesión (es la vía no oficial, de
+ * salida): es que los clientes nuevos entren por Cloud API, que sí es
+ * multi-cliente de verdad. Mientras tanto, esta barrera hace que el estado
+ * peligroso falle de forma segura y visible en vez de filtrar.
+ */
+export async function clienteDuenoDeWaha(): Promise<string | null> {
+  return clientePorInstanciaWaha(INSTANCIA);
+}
+
+/**
+ * Resuelve el cliente a partir de la instancia lógica de WAHA.
+ *
+ * Lee `waha_instancia` (columna propia, migración 275). ANTES leía
+ * `waba_phone_id`, que Meta también usa para su phone_number_id: al terminar el
+ * Embedded Signup ese campo se sobrescribía con el id numérico y los entrantes
+ * de WAHA quedaban huérfanos, dejando a Tino mudo sin vuelta atrás.
+ *
+ * El fallback a `waba_phone_id` es solo para el hueco entre este deploy y la
+ * aplicación de la migración: si `waha_instancia` todavía no existe/está vacía,
+ * se sigue resolviendo como antes en vez de dejar de rutear.
+ */
 export async function clientePorInstanciaWaha(
   instancia: string,
 ): Promise<string | null> {
-  const { data } = await db()
+  const supa = db();
+  // Vía nueva. Si la columna todavía no existe (migración 275 sin aplicar),
+  // Supabase responde error 42703 y `data` viene null: se cae al camino viejo.
+  const { data } = await supa
+    .from("ed_clientes")
+    .select("id")
+    .eq("waha_instancia", instancia)
+    .maybeSingle();
+  if (data?.id) return data.id as string;
+
+  // Compatibilidad: solo aplica mientras waba_phone_id siga guardando nombres
+  // de instancia. La migración 275 los mueve y prohíbe por CHECK que vuelvan.
+  const { data: viejo } = await supa
     .from("ed_clientes")
     .select("id")
     .eq("waba_phone_id", instancia)
     .maybeSingle();
-  return (data?.id as string) ?? null;
+  return (viejo?.id as string) ?? null;
 }
 
 /**
@@ -241,10 +293,31 @@ export async function enviarTextoWaha(
      * el cliente puede seguir escribiendo, y eso es lo normal en WhatsApp.
      */
     vigente?: () => Promise<boolean>;
+    /**
+     * Cliente para el que se envía. Si se pasa y NO es el dueño de la única
+     * sesión de WAHA, el envío se RECHAZA (ver clienteDuenoDeWaha).
+     *
+     * Sin esta barrera, un segundo cliente en transporte='waha' mandaba sus
+     * mensajes desde el WhatsApp del primero. Fallar acá es lo correcto: quien
+     * llama trata el error como fallo de envío y deja la conversación
+     * esperando a una persona, en vez de escribirle a un cliente ajeno.
+     */
+    clienteId?: string;
   },
 ): Promise<{ ok: boolean; waId?: string; error?: string }> {
   const key = process.env.WAHA_API_KEY;
   if (!key || !BASE) return { ok: false, error: "Falta WAHA_API_URL/WAHA_API_KEY" };
+
+  if (opts?.clienteId) {
+    const dueno = await clienteDuenoDeWaha();
+    if (dueno && opts.clienteId !== dueno) {
+      console.error(
+        `[waha] BLOQUEADO: se intentó enviar por la sesión de '${INSTANCIA}' para otro cliente. ` +
+          `WAHA es de un solo negocio; este cliente debe ir por Cloud API (transporte='cloud').`,
+      );
+      return { ok: false, error: "waha_pertenece_a_otro_cliente" };
+    }
+  }
   const chatId = aDestino(destino);
   const headers = { "Content-Type": "application/json", "X-Api-Key": key };
   try {

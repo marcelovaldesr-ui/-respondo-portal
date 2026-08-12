@@ -107,6 +107,32 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    // 1.b) ¿Quedó en COEXISTENCIA o es un número solo-API? Meta lo dice en
+    // is_on_biz_app. Importa distinguirlo: en Coexistencia el negocio sigue
+    // respondiendo desde su teléfono y esos envíos llegan como
+    // smb_message_echoes (toma de control humana). Si no se verifica acá, el
+    // portal no tiene forma de saber en qué modo quedó cada cliente.
+    let coexistencia: boolean | null = null;
+    try {
+      const estadoRes = await fetch(
+        `${GRAPH}/${encodeURIComponent(phoneNumberId)}?fields=is_on_biz_app,platform_type`,
+        {
+          headers: { Authorization: `Bearer ${token}` },
+          cache: "no-store",
+          signal: AbortSignal.timeout(15_000),
+        },
+      );
+      const estadoJson = (await estadoRes.json().catch(() => ({}))) as {
+        is_on_biz_app?: boolean;
+        platform_type?: string;
+      };
+      if (estadoRes.ok && typeof estadoJson.is_on_biz_app === "boolean") {
+        coexistencia = estadoJson.is_on_biz_app;
+      }
+    } catch {
+      // No bloquea la conexión: es un dato informativo, no una barrera.
+    }
+
     // 2) Suscribir NUESTRA app a los webhooks de esa WABA (recibir mensajes).
     const subRes = await fetch(`${GRAPH}/${encodeURIComponent(wabaId)}/subscribed_apps`, {
       method: "POST",
@@ -126,6 +152,10 @@ export async function POST(request: NextRequest) {
       .from("ed_clientes")
       .update({
         waba_id: wabaId,
+        // Desde la migración 275 este campo es SOLO de Meta (numérico). El
+        // nombre de la instancia de WAHA vive en waha_instancia, así que
+        // escribir acá ya no rompe el ruteo del canal no oficial — y volver
+        // atrás es solo `transporte='waha'`.
         waba_phone_id: phoneNumberId,
         waba_token: token,
         // Sin esto, el cron y el inbox seguían mandando por WAHA aunque el
@@ -141,12 +171,22 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "No se pudo guardar la conexión", requestId }, { status: 500 });
     }
 
+    // Dato informativo, en update aparte y best-effort: si la migración 275 aún
+    // no se aplicó la columna no existe, y no queremos que eso haga fallar una
+    // conexión que por lo demás quedó bien hecha.
+    if (coexistencia !== null) {
+      await db()
+        .from("ed_clientes")
+        .update({ waba_coexistencia: coexistencia })
+        .eq("id", usuario.clienteId);
+    }
+
     await auditarAccion(usuario, "integracion_meta_conectada", {
       recursoId: phoneNumberId,
       requestId,
     });
 
-    return NextResponse.json({ ok: true, wabaId, phoneNumberId });
+    return NextResponse.json({ ok: true, wabaId, phoneNumberId, coexistencia });
   } catch (e) {
     console.error("[onboarding] error:", (e as Error).message);
     return NextResponse.json({ error: "No se pudo completar la conexión", requestId }, { status: 500 });

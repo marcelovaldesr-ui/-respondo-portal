@@ -11,6 +11,7 @@ import { setModo, tocarVentanaEntrante } from "@/lib/estadoChat";
 import { responderSiBot } from "@/lib/responderBot";
 import { empleadoParaEntrante } from "@/lib/seguimientos";
 import { notificarSistemaDelCliente } from "@/lib/puenteSalida";
+import { fechaLimiteModelo } from "@/lib/presupuesto";
 
 export type ResultadoIg = { accion: string; detalle?: string };
 
@@ -39,6 +40,8 @@ export async function manejarEntranteInstagram(
     ) => Promise<{ ok: boolean; waId?: string; error?: string }>;
   },
 ): Promise<ResultadoIg[]> {
+  // Presupuesto de tiempo de ESTA invocación (ver lib/presupuesto.ts).
+  const fechaLimite = fechaLimiteModelo(Date.now());
   const eventos = parsearInstagram(payload);
   if (!eventos.length) return [{ accion: "ignorado" }];
 
@@ -205,6 +208,7 @@ export async function manejarEntranteInstagram(
       enviar,
       sigueVigente,
       canal: "instagram",
+      fechaLimiteModelo: fechaLimite,
     });
     resultados.push({ accion: `cliente:${r.accion}`, detalle: r.detalle });
   }

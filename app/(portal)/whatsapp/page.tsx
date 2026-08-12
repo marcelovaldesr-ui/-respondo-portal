@@ -17,6 +17,16 @@ export default async function PaginaWhatsApp() {
     .eq("id", usuario.clienteId)
     .maybeSingle();
 
+  // Aparte y tolerante a fallo: si la migración 275 todavía no se aplicó, la
+  // columna no existe y Supabase devuelve error. Pedirla en el select de arriba
+  // tumbaría la página entera durante la ventana entre deploy y migración.
+  const { data: extra } = await db()
+    .from("ed_clientes")
+    .select("waba_coexistencia")
+    .eq("id", usuario.clienteId)
+    .maybeSingle();
+  const coexistencia = (extra?.waba_coexistencia ?? null) as boolean | null;
+
   const conectado = Boolean(data?.waba_id && data?.waba_phone_id && data?.waba_token);
 
   return (
@@ -54,6 +64,18 @@ export default async function PaginaWhatsApp() {
                   ID del número
                 </dt>
                 <dd className="font-mono">{data?.waba_phone_id}</dd>
+              </div>
+              <div>
+                <dt className="font-semibold" style={{ color: "var(--muted-2)" }}>
+                  Modo
+                </dt>
+                <dd>
+                  {coexistencia === true
+                    ? "Coexistencia — sigues usando tu app normalmente"
+                    : coexistencia === false
+                      ? "Solo API — este número ya no se usa desde la app"
+                      : "Sin verificar"}
+                </dd>
               </div>
             </dl>
             <div className="mt-5 border-t pt-4" style={{ borderColor: "var(--borde)" }}>

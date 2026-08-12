@@ -65,7 +65,11 @@ export async function GET(request: NextRequest) {
         if (!cfg) return { ok: false, error: "cliente cloud sin credenciales" };
         return enviarTexto(cfg, chatId, texto);
       }
-      return enviarTextoWaha(chatId, texto);
+      // BARRERA MULTI-CLIENTE (auditoría 11-ago-2026): WAHA tiene UNA sola
+      // sesión. Sin pasar el clienteId acá, los recordatorios de cualquier otro
+      // cliente en transporte='waha' salían por el WhatsApp del dueño de esa
+      // sesión y quedaban guardados en SU conversación. Ver lib/waha.ts.
+      return enviarTextoWaha(chatId, texto, { clienteId });
     },
   });
 
@@ -106,7 +110,7 @@ export async function GET(request: NextRequest) {
     console.error("[cron] renovación de tokens de Instagram falló", e);
   }
 
-  let webhooks = { reintentados: 0, fallidos: 0, purgados: 0 };
+  let webhooks = { reintentados: 0, fallidos: 0, purgados: 0, borrados: 0 };
   try {
     // Acotado porque cada entrante puede invocar IA; el siguiente latido toma
     // los restantes sin arriesgar el timeout del cron principal.

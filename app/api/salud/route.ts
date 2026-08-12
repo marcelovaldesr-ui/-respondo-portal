@@ -203,6 +203,167 @@ async function chequearMeta(): Promise<Chequeo> {
   }
 }
 
+/**
+ * 7) TOKENS DE LOS CLIENTES REALES en la vía oficial de Meta.
+ *
+ * PUNTO CIEGO QUE CIERRA (auditoría 11-ago-2026, antes de escalar):
+ * chequearMeta() de más arriba solo mira WHATSAPP_TOKEN / WHATSAPP_PHONE_NUMBER_ID
+ * —las variables del NÚMERO DE PRUEBA—. Cada cliente onboardeado por Embedded
+ * Signup guarda SU PROPIO token en ed_clientes.waba_token, y esos no los miraba
+ * nadie.
+ *
+ * O sea: con 10 clientes en Cloud API, si a uno se le revoca el token (el dueño
+ * le quita el acceso a la app desde Meta Business Suite, o Meta lo invalida),
+ * su Tino queda mudo y /api/salud sigue diciendo "ok" porque el número de
+ * prueba está sano. Es EXACTAMENTE el patrón del apagón de 21 h de agosto: el
+ * vigilante mirando el lugar equivocado.
+ *
+ * Acotado a 10 clientes por corrida y en paralelo para no estirar el chequeo.
+ */
+async function chequearTokensClientes(): Promise<Chequeo> {
+  const { data, error } = await db()
+    .from("ed_clientes")
+    .select("nombre, waba_phone_id, waba_token")
+    .eq("transporte", "cloud")
+    .eq("activo", true)
+    .not("waba_token", "is", null)
+    .not("waba_phone_id", "is", null)
+    .limit(10);
+
+  if (error) return { ok: false, detalle: `no se pudo leer: ${error.message}` };
+  if (!data?.length) return { ok: true, detalle: "sin clientes en vía oficial (omitido)" };
+
+  const revisiones = await Promise.all(
+    data.map(async (c) => {
+      const nombre = (c.nombre as string) ?? "sin nombre";
+      try {
+        const r = await fetch(
+          `https://graph.facebook.com/v21.0/${encodeURIComponent(c.waba_phone_id as string)}?fields=quality_rating`,
+          {
+            headers: { Authorization: `Bearer ${c.waba_token as string}` },
+            cache: "no-store",
+            signal: AbortSignal.timeout(8000),
+          },
+        );
+        return { nombre, ok: r.ok, motivo: r.ok ? "" : `HTTP ${r.status}` };
+      } catch (e) {
+        return { nombre, ok: false, motivo: (e as Error).name === "TimeoutError" ? "sin respuesta" : "error de red" };
+      }
+    }),
+  );
+
+  const rotos = revisiones.filter((r) => !r.ok);
+  if (rotos.length === 0) {
+    return { ok: true, detalle: `${revisiones.length} cliente(s) con token válido` };
+  }
+  return {
+    ok: false,
+    detalle: `token inválido: ${rotos.map((r) => `${r.nombre} (${r.motivo})`).join(", ")}`,
+  };
+}
+
+/**
+ * 8) ¿Hay más de un cliente colgado de la ÚNICA sesión de WAHA?
+ *
+ * WAHA es de un solo negocio (ver lib/waha.ts): la instancia de entrada y la
+ * sesión de salida son variables de entorno globales. Un segundo cliente con
+ * transporte='waha' hace que sus mensajes salgan por el WhatsApp del primero.
+ *
+ * La barrera de lib/waha.ts impide la fuga, pero deja al cliente sin poder
+ * responder. Este chequeo avisa ANTES: es un problema de configuración, y el
+ * vigilante externo debe verlo apenas alguien conecte un cliente por la vía
+ * equivocada, no cuando un cliente reclame que su asistente no contesta.
+ */
+async function chequearWahaUnCliente(): Promise<Chequeo> {
+  const instancia = process.env.WAHA_INSTANCIA || "impresora-color";
+  const supa = db();
+
+  // La columna waha_instancia llega con la migración 275. Si todavía no está
+  // aplicada, PostgREST devuelve error y hay que leer el campo viejo: sin este
+  // respaldo el chequeo quedaba ciego justo en la ventana previa a la
+  // migración, que es cuando el riesgo es más alto.
+  type Fila = {
+    id: string;
+    nombre: string | null;
+    waha_instancia?: string | null;
+    waba_phone_id: string | null;
+  };
+  let clientes: Fila[] = [];
+  const conNueva = await supa
+    .from("ed_clientes")
+    .select("id, nombre, waha_instancia, waba_phone_id")
+    .eq("transporte", "waha")
+    .eq("activo", true);
+  if (conNueva.error) {
+    const vieja = await supa
+      .from("ed_clientes")
+      .select("id, nombre, waba_phone_id")
+      .eq("transporte", "waha")
+      .eq("activo", true);
+    if (vieja.error) return { ok: true, detalle: `no verificable (${vieja.error.message})` };
+    clientes = (vieja.data ?? []) as Fila[];
+  } else {
+    clientes = (conNueva.data ?? []) as Fila[];
+  }
+
+  // El dueño es el que declara la instancia global (waha_instancia desde la
+  // migración 275; waba_phone_id mientras no esté aplicada).
+  const ajenos = clientes.filter(
+    (c) => (c.waha_instancia ?? c.waba_phone_id) !== instancia,
+  );
+  if (ajenos.length === 0) {
+    return { ok: true, detalle: `1 negocio en WAHA (${instancia})` };
+  }
+
+  /**
+   * Un cliente ajeno DORMIDO (demo, sin nada programado) no es una alarma: la
+   * barrera de lib/waha.ts ya impide que use el WhatsApp del dueño. Marcarlo en
+   * rojo dejaría el vigilante encendido para siempre por los clientes de
+   * demostración, y un monitor siempre rojo se termina ignorando —que es la
+   * forma más común de perderse la alerta que sí importaba—.
+   *
+   * Se pone en rojo solo cuando hay algo REAL por salir: ahí el cliente se
+   * queda sin sus recordatorios (bloqueados) y hay que actuar.
+   */
+  const nombres = ajenos.map((c) => c.nombre ?? "sin nombre").join(", ");
+
+  // ¿Alguno de esos clientes tiene algo REAL por salir?
+  const { data: empsAjenos } = await supa
+    .from("ed_empleados")
+    .select("id")
+    .in(
+      "cliente_id",
+      ajenos.map((c) => c.id),
+    );
+  const idsEmpleados = (empsAjenos ?? []).map((e) => e.id as string);
+
+  let pendientes = 0;
+  if (idsEmpleados.length) {
+    const { count } = await supa
+      .from("ed_seguimientos")
+      .select("id", { count: "exact", head: true })
+      .is("enviado_en", null)
+      .in("empleado_id", idsEmpleados);
+    pendientes = count ?? 0;
+  }
+
+  if (pendientes > 0) {
+    return {
+      ok: false,
+      detalle:
+        `${ajenos.length} cliente(s) en 'waha' sin ser dueños de la sesión '${instancia}' ` +
+        `(${nombres}) tienen ${pendientes} envío(s) pendientes que quedarán BLOQUEADOS ` +
+        `para no usar el WhatsApp ajeno. Muévelos a Cloud API.`,
+    };
+  }
+  return {
+    ok: true,
+    detalle:
+      `1 negocio real en WAHA (${instancia}); ${ajenos.length} cliente(s) sin tráfico ` +
+      `también marcados 'waha' (${nombres}) — sin envíos pendientes, bloqueados por seguridad.`,
+  };
+}
+
 export async function GET(request: NextRequest) {
   if (!(await limitarDistribuido(`salud:${ipDeRequest(request.headers)}`, 60, 60)).ok) {
     return NextResponse.json({ estado: "limitado" }, { status: 429 });
@@ -219,6 +380,14 @@ export async function GET(request: NextRequest) {
     actividad: await medir(chequearActividad),
     cron_seguimientos: await medir(chequearCron),
   };
+  // Los tokens de los clientes reales se vigilan con el secreto pero SIN exigir
+  // `full=1`: es la falla que deja mudo a un cliente entero, así que tiene que
+  // entrar en el chequeo que corre cada 30 min, no en el manual. No se expone
+  // sin secreto porque haría una llamada a Meta por cliente en cada visita.
+  if (autorizado) {
+    chequeos.tokens_clientes = await medir(chequearTokensClientes);
+    chequeos.waha_un_solo_cliente = await medir(chequearWahaUnCliente);
+  }
   if (full && autorizado) {
     chequeos.modelo_ia = await medir(chequearModelo);
     chequeos.whatsapp_meta = await medir(chequearMeta);

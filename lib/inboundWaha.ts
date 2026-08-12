@@ -19,6 +19,7 @@ import { modoDe, setModo, tocarVentanaEntrante } from "@/lib/estadoChat";
 import { responderSiBot } from "@/lib/responderBot";
 import { empleadoParaEntrante } from "@/lib/seguimientos";
 import { notificarSistemaDelCliente } from "@/lib/puenteSalida";
+import { fechaLimiteModelo } from "@/lib/presupuesto";
 
 export type ResultadoEntrante = { accion: string; detalle?: string };
 
@@ -108,6 +109,10 @@ export async function manejarEntranteWaha(
     ) => Promise<{ ok: boolean; waId?: string; error?: string }>;
   },
 ): Promise<ResultadoEntrante> {
+  // Presupuesto de tiempo de ESTA invocación: se captura al entrar, antes del
+  // debounce (que puede comerse hasta 20 s). Ver lib/presupuesto.ts.
+  const fechaLimite = fechaLimiteModelo(Date.now());
+
   // 0) ACK de entrega.
   const ack = parsearAckWaha(payload);
   if (ack) {
@@ -347,7 +352,11 @@ export async function manejarEntranteWaha(
       // Responder a la dirección ORIGINAL (m.jid): es la que WhatsApp espera y
       // la que ya entrega bien (con @lid o @c.us). La unificación es solo de la
       // CLAVE del chat (chatId = número real), no del transporte.
-      return enviarTextoWaha(m.jid, texto, { vigente: sigueVigente });
+      // clienteId: barrera anti-fuga entre negocios (ver lib/waha.ts). Acá
+      // debería coincidir siempre —el inbound se resolvió por la misma
+      // instancia— pero pasarlo hace que un desajuste de configuración falle
+      // de forma segura en vez de responder desde el WhatsApp equivocado.
+      return enviarTextoWaha(m.jid, texto, { vigente: sigueVigente, clienteId });
     });
 
   const r = await responderSiBot({
@@ -359,6 +368,7 @@ export async function manejarEntranteWaha(
     // del envío real (ver el parámetro `vigente` de enviarTextoWaha), porque
     // entre medio hay hasta 6 s de "escribiendo…".
     sigueVigente,
+    fechaLimiteModelo: fechaLimite,
   });
   return { accion: `cliente:${r.accion}`, detalle: r.detalle };
 }

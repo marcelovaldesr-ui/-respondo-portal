@@ -105,7 +105,10 @@ export async function procesarConInbox<T>(params: {
 export async function reprocesarWebhooksPendientes(limite = 10): Promise<{
   reintentados: number;
   fallidos: number;
+  /** Payloads vaciados (fila conservada) a partir de los 7 días. */
   purgados: number;
+  /** Filas eliminadas por antigüedad (>30 días). Ver migración 276. */
+  borrados: number;
 }> {
   const supa = db();
   const tope = Math.min(50, Math.max(1, limite));
@@ -167,5 +170,36 @@ export async function reprocesarWebhooksPendientes(limite = 10): Promise<{
     .from("ed_rate_limits")
     .delete()
     .lt("actualizado_en", new Date(Date.now() - 2 * 86400_000).toISOString());
-  return { reintentados, fallidos, purgados: purgados?.length ?? 0 };
+
+  /**
+   * BORRADO DE EVENTOS VIEJOS (auditoría 11-ago-2026).
+   *
+   * Vaciar el payload a los 7 días dejaba la FILA para siempre: medido con un
+   * solo cliente, ~4.100 filas al mes. Con 25 clientes son >1,2 millones al
+   * año en una tabla que solo sirve para idempotencia de corto plazo.
+   *
+   * 30 días es holgadísimo: Meta y WAHA reintentan durante horas, no semanas.
+   * Se borra por tandas acotadas para no clavar el cron con un DELETE enorme
+   * la primera vez que corra; las siguientes corridas toman el resto.
+   */
+  let borrados = 0;
+  try {
+    const corte = new Date(Date.now() - 30 * 86400_000).toISOString();
+    const { data: viejos } = await supa
+      .from("ed_webhook_eventos")
+      .select("id")
+      .eq("estado", "procesado")
+      .lt("procesado_en", corte)
+      .limit(500);
+    const ids = (viejos ?? []).map((v) => v.id as string);
+    if (ids.length) {
+      const { error } = await supa.from("ed_webhook_eventos").delete().in("id", ids);
+      if (!error) borrados = ids.length;
+    }
+  } catch (e) {
+    // Nunca romper el cron por la limpieza: los seguimientos importan más.
+    console.error("[webhookInbox] purga de filas viejas falló:", (e as Error).message);
+  }
+
+  return { reintentados, fallidos, purgados: purgados?.length ?? 0, borrados };
 }

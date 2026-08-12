@@ -17,6 +17,7 @@ import {
 import { modoDe, setModo, tocarVentanaEntrante } from "@/lib/estadoChat";
 import { responderSiBot } from "@/lib/responderBot";
 import { empleadoParaEntrante } from "@/lib/seguimientos";
+import { fechaLimiteModelo } from "@/lib/presupuesto";
 
 export type ResultadoMeta = { accion: string; detalle?: string };
 
@@ -44,6 +45,9 @@ export async function manejarEntranteMeta(
     ) => Promise<{ ok: boolean; waId?: string; error?: string }>;
   },
 ): Promise<ResultadoMeta[]> {
+  // Presupuesto de tiempo de ESTA invocación (ver lib/presupuesto.ts): el
+  // modelo no puede consumir el margen que necesita la red de seguridad.
+  const fechaLimite = fechaLimiteModelo(Date.now());
   const resultados: ResultadoMeta[] = [];
   const supa = db();
 
@@ -237,6 +241,7 @@ export async function manejarEntranteMeta(
       chatId,
       enviar,
       sigueVigente,
+      fechaLimiteModelo: fechaLimite,
     });
     resultados.push({ accion: `cliente:${r.accion}`, detalle: r.detalle });
   }

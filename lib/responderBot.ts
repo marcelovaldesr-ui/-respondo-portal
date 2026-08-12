@@ -168,6 +168,16 @@ export async function responderSiBot(params: {
    * error que se cae.
    */
   canal?: string;
+  /**
+   * Timestamp absoluto hasta el que se puede consultar al modelo, calculado por
+   * el manejador del webhook con lib/presupuesto.ts.
+   *
+   * Existe para que la RED DE SEGURIDAD de más abajo (avisarle al cliente y
+   * derivar a una persona) siempre alcance a ejecutarse. Sin este tope, un
+   * Gemini saturado consumía los 60 s de la función y Vercel la mataba ANTES de
+   * la red — el cliente no recibía nada y nadie se enteraba.
+   */
+  fechaLimiteModelo?: number;
 }): Promise<{ accion: string; detalle?: string }> {
   const { clienteId, empleadoId, chatId, cfg } = params;
   const canal = params.canal ?? "whatsapp";
@@ -236,7 +246,9 @@ export async function responderSiBot(params: {
 
   let datos: RespuestaMotor;
   try {
-    datos = JSON.parse(await generarJSON(prompt));
+    datos = JSON.parse(
+      await generarJSON(prompt, { fechaLimite: params.fechaLimiteModelo }),
+    );
   } catch (e) {
     // ── RED DE SEGURIDAD (auditoría 30-jul): el cliente NUNCA queda en silencio ──
     // Antes, si el modelo fallaba (caído, saturado, timeout), la función salía

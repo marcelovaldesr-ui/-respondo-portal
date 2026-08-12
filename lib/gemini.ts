@@ -78,18 +78,49 @@ export async function generarJSON(
    * semanal, que razona sobre cientos de mensajes y demora ~25s— necesita más
    * aire y no gana nada reintentando.
    */
-  opciones?: { timeoutMs?: number; intentosPorModelo?: number; thinkingBudget?: number },
+  opciones?: {
+    timeoutMs?: number;
+    intentosPorModelo?: number;
+    thinkingBudget?: number;
+    /**
+     * Timestamp absoluto (Date.now()) después del cual YA NO se intenta.
+     *
+     * Sin esto, el peor caso —2 modelos × 2 intentos × 20 s— suma 82.7 s dentro
+     * de una función que Vercel corta a los 60 s: el proceso muere antes de
+     * llegar a la red de seguridad de responderBot y el cliente no recibe NADA.
+     * Con la fecha límite, cuando no queda tiempo útil se falla rápido y a
+     * propósito, dejando margen para avisarle al cliente y derivar a una persona.
+     * Ver lib/presupuesto.ts.
+     */
+    fechaLimite?: number;
+  },
 ): Promise<string> {
   const principal = process.env.GEMINI_MODEL || MODELO_RESPALDO;
   const modelos = principal === MODELO_RESPALDO ? [principal] : [principal, MODELO_RESPALDO];
   const timeoutMs = opciones?.timeoutMs ?? TIMEOUT_MS;
   const maxIntentos = opciones?.intentosPorModelo ?? 2;
+  // Por debajo de esto una llamada no alcanza ni a completarse: intentarla solo
+  // consume el tiempo que necesita la red de seguridad.
+  const MINIMO_UTIL_MS = 3_000;
 
   let ultimoError = "";
+  let sinTiempo = false;
   for (const modelo of modelos) {
+    if (sinTiempo) break;
     for (let intento = 1; intento <= maxIntentos; intento++) {
+      // Techo real de esta llamada: lo que quede del presupuesto, si lo hay.
+      let efectivo = timeoutMs;
+      if (typeof opciones?.fechaLimite === "number") {
+        const restante = opciones.fechaLimite - Date.now();
+        if (restante < MINIMO_UTIL_MS) {
+          ultimoError = ultimoError || "sin tiempo de función para consultar al modelo";
+          sinTiempo = true;
+          break;
+        }
+        efectivo = Math.min(timeoutMs, restante);
+      }
       try {
-        const r = await llamar(modelo, prompt, timeoutMs, opciones?.thinkingBudget);
+        const r = await llamar(modelo, prompt, efectivo, opciones?.thinkingBudget);
         if (!r.ok) {
           ultimoError = `${modelo}: HTTP ${r.status}`;
           if (esTransitorio(r.status) && intento < maxIntentos) {

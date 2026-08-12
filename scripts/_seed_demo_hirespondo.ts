@@ -58,6 +58,7 @@ async function main() {
     await supa.from("ed_conocimiento").delete().eq("cliente_id", CLIENTE);
     await supa.from("ed_metricas").delete().eq("cliente_id", CLIENTE);
     await supa.from("ed_empleados").delete().eq("cliente_id", CLIENTE);
+    await supa.from("ed_profesionales").delete().eq("cliente_id", CLIENTE);
   }
 
   console.log("3) Empleados...");
@@ -205,6 +206,16 @@ async function main() {
       { cliente_id: CLIENTE, periodo: "2026-08-01", es_basal: false, conversaciones: 7, leads_capturados: 3, escalaciones: 2, resueltas_sin_humano_pct: 71.4, tiempo_respuesta_seg: 22 },
     ]);
     if (error) throw new Error("ed_metricas: " + error.message);
+  }
+
+  console.log("12) Profesional (para poder mostrar/probar 'Conectar Google Calendar' en /agenda/configuracion)...");
+  {
+    const { error } = await supa.from("ed_profesionales").insert({
+      cliente_id: CLIENTE,
+      nombre: "Dra. Valentina Rojas",
+      activo: true,
+    });
+    if (error) throw new Error("ed_profesionales: " + error.message);
   }
 
   console.log("\n✅ Listo. Entra al portal con hirespondo@gmail.com y revisa el cliente 'Clínica Dental Sonrisa (demo)'.");
