@@ -8,6 +8,7 @@ import { oauthConfigurado } from "@/lib/googleOAuth";
 import CampoCopiar from "@/components/CampoCopiar";
 import FormularioAgregar from "@/components/FormularioAgregar";
 import HorarioSemanal from "@/components/HorarioSemanal";
+import FichaServicioConfig, { type CampoConfig } from "@/components/FichaServicioConfig";
 import {
   crearServicio,
   alternarServicio,
@@ -23,6 +24,10 @@ import {
   rotarTokenIcal,
   configurarGoogleProfesional,
   desconectarGoogleOauth,
+  crearCampoFicha,
+  eliminarCampoFicha,
+  configurarBufferServicio,
+  configurarAutogestion,
 } from "../acciones";
 
 export const dynamic = "force-dynamic";
@@ -35,7 +40,7 @@ export const dynamic = "force-dynamic";
  * estaban mezclados y la pantalla parecía un formulario, no una agenda.
  */
 
-type Servicio = { id: string; nombre: string; duracion_min: number; precio_clp: number | null; activo: boolean };
+type Servicio = { id: string; nombre: string; duracion_min: number; precio_clp: number | null; activo: boolean; buffer_min?: number | null };
 type Profesional = {
   id: string;
   nombre: string;
@@ -73,11 +78,23 @@ export default async function ConfiguracionAgenda({
 
   const [{ data: servicios }, { data: profesionales }, { data: cliente }] = await Promise.all([
     supa
+      // buffer_min llega con la migración 277: si no está aplicada, pedirlo
+      // dejaría la pantalla SIN servicios. Se reintenta sin la columna.
       .from("ed_servicios")
-      .select("id, nombre, duracion_min, precio_clp, activo")
+      .select("id, nombre, duracion_min, precio_clp, activo, buffer_min")
       .eq("cliente_id", usuario.clienteId)
       .order("orden", { ascending: true })
-      .order("creado_en", { ascending: true }),
+      .order("creado_en", { ascending: true })
+      .then((r) =>
+        r.error
+          ? supa
+              .from("ed_servicios")
+              .select("id, nombre, duracion_min, precio_clp, activo")
+              .eq("cliente_id", usuario.clienteId)
+              .order("orden", { ascending: true })
+              .order("creado_en", { ascending: true })
+          : r,
+      ),
     // Las columnas de Google son de las migraciones 221 y 222: si faltan, se
     // reintenta con juegos de columnas más chicos y la pantalla sigue andando.
     supa
@@ -121,6 +138,37 @@ export default async function ConfiguracionAgenda({
 
   const listaServicios = (servicios ?? []) as Servicio[];
   const listaProfesionales = (profesionales ?? []) as Profesional[];
+
+  /**
+   * Ficha personalizable por servicio (migración 277). Tolerante a que no esté
+   * aplicada: sin la tabla, `campos` queda vacío y la sección se ve como antes.
+   */
+  const { data: camposCrudos } = await supa
+    .from("ed_servicio_campos")
+    .select("id, servicio_id, etiqueta, tipo, opciones, obligatorio, ayuda, orden")
+    .in("servicio_id", listaServicios.map((s) => s.id))
+    .order("orden", { ascending: true });
+  const camposPorServicio = new Map<string, CampoConfig[]>();
+  for (const c of camposCrudos ?? []) {
+    const sid = c.servicio_id as string;
+    camposPorServicio.set(sid, [...(camposPorServicio.get(sid) ?? []), c as unknown as CampoConfig]);
+  }
+
+  /**
+   * Reglas de autogestión. En consulta aparte y tolerante a error: las columnas
+   * llegan con la migración 277 y pedirlas en el select principal tumbaría toda
+   * la pantalla de configuración en la ventana previa a aplicarla.
+   */
+  const { data: cfgAuto } = await supa
+    .from("ed_clientes")
+    .select("permite_cancelar_online, permite_reagendar_online, cancelacion_min_horas")
+    .eq("id", usuario.clienteId)
+    .maybeSingle();
+  const autogestion = {
+    permiteCancelar: (cfgAuto?.permite_cancelar_online as boolean | undefined) ?? true,
+    permiteReagendar: (cfgAuto?.permite_reagendar_online as boolean | undefined) ?? true,
+    cancelacionMinHoras: (cfgAuto?.cancelacion_min_horas as number | undefined) ?? 4,
+  };
 
   const profIds = listaProfesionales.map((p) => p.id);
   const [{ data: horarios }, { data: bloqueos }] = await Promise.all([
@@ -185,31 +233,45 @@ export default async function ConfiguracionAgenda({
           {listaServicios.map((s) => (
             <div
               key={s.id}
-              className="flex flex-wrap items-center justify-between gap-3 rounded-[7px] border p-3"
+              className="rounded-[7px] border p-3"
               style={{ borderColor: "var(--borde)", opacity: s.activo ? 1 : 0.55 }}
             >
-              <div className="min-w-0 text-[14px] font-bold">
-                {s.nombre}
-                <span className="font-normal" style={{ color: "var(--muted)" }}>
-                  {" "}· {s.duracion_min} min ·{" "}
-                  {s.precio_clp != null ? `$${s.precio_clp.toLocaleString("es-CL")}` : "según evaluación"}
-                </span>
-              </div>
-              <div className="flex shrink-0 gap-1.5">
-                <form action={alternarServicio}>
-                  <input type="hidden" name="id" value={s.id} />
-                  <input type="hidden" name="activo" value={String(s.activo)} />
-                  <button className="btn-suave px-3 py-1.5 text-[12px]">{s.activo ? "Apagar" : "Encender"}</button>
-                </form>
-                {!serviciosConCitas.has(s.id) && (
-                  <form action={eliminarServicio}>
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div className="min-w-0 text-[14px] font-bold">
+                  {s.nombre}
+                  <span className="font-normal" style={{ color: "var(--muted)" }}>
+                    {" "}· {s.duracion_min} min ·{" "}
+                    {s.precio_clp != null ? `$${s.precio_clp.toLocaleString("es-CL")}` : "según evaluación"}
+                  </span>
+                </div>
+                <div className="flex shrink-0 gap-1.5">
+                  <form action={alternarServicio}>
                     <input type="hidden" name="id" value={s.id} />
-                    <button className="btn-suave px-3 py-1.5 text-[12px]" style={{ color: "#B33A3A" }} title="Eliminar definitivamente (no tiene citas)">
-                      Eliminar
-                    </button>
+                    <input type="hidden" name="activo" value={String(s.activo)} />
+                    <button className="btn-suave px-3 py-1.5 text-[12px]">{s.activo ? "Apagar" : "Encender"}</button>
                   </form>
-                )}
+                  {!serviciosConCitas.has(s.id) && (
+                    <form action={eliminarServicio}>
+                      <input type="hidden" name="id" value={s.id} />
+                      <button className="btn-suave px-3 py-1.5 text-[12px]" style={{ color: "#B33A3A" }} title="Eliminar definitivamente (no tiene citas)">
+                        Eliminar
+                      </button>
+                    </form>
+                  )}
+                </div>
               </div>
+
+              {/* Ficha del servicio + preparación (migración 277). Es lo que
+                  hace que la misma agenda sirva para una clínica y un taller. */}
+              <FichaServicioConfig
+                servicioId={s.id}
+                servicioNombre={s.nombre}
+                campos={camposPorServicio.get(s.id) ?? []}
+                bufferMin={s.buffer_min ?? 0}
+                crearCampo={crearCampoFicha}
+                eliminarCampo={eliminarCampoFicha}
+                guardarBuffer={configurarBufferServicio}
+              />
             </div>
           ))}
           {listaServicios.length === 0 && (
@@ -393,6 +455,70 @@ export default async function ConfiguracionAgenda({
           </label>
           <div className="sm:col-span-2">
             <button type="submit" className="btn-primario px-5 py-2 text-[14px]">Guardar configuración</button>
+          </div>
+        </form>
+      </Seccion>
+
+      {/* ── Autogestión del cliente final (migración 277) ────────────── */}
+      <Seccion
+        titulo="Que tus clientes se muevan solos"
+        ayuda="En la confirmación y el recordatorio va un enlace propio de cada hora. Desde ahí el cliente la cambia o la anula sin escribirte."
+      >
+        <div className="rounded-[7px] p-3.5 text-[13.5px]" style={{ background: "var(--indigo-suave)", color: "var(--indigo)" }}>
+          Cuando alguien anula por su cuenta, el cupo se libera <b>al instante</b> y
+          otra persona puede tomarlo. Si tiene que escribirte, la hora se pierde
+          igual pero el cupo queda ocupado hasta que alcances a moverlo.
+        </div>
+
+        <form action={configurarAutogestion} className="mt-4 grid gap-3.5 sm:grid-cols-2">
+          <label className="flex items-start gap-2.5 rounded-[7px] border p-3 text-[14px] font-semibold" style={{ borderColor: "var(--borde)" }}>
+            <input
+              type="checkbox"
+              name="reagendar"
+              defaultChecked={autogestion.permiteReagendar}
+              className="mt-0.5"
+            />
+            <span>
+              Puede cambiar día u hora
+              <span className="block text-[12.5px] font-normal" style={{ color: "var(--muted)" }}>
+                Elige entre los cupos que tengas libres. Nunca fuera de tu horario.
+              </span>
+            </span>
+          </label>
+
+          <label className="flex items-start gap-2.5 rounded-[7px] border p-3 text-[14px] font-semibold" style={{ borderColor: "var(--borde)" }}>
+            <input
+              type="checkbox"
+              name="cancelar"
+              defaultChecked={autogestion.permiteCancelar}
+              className="mt-0.5"
+            />
+            <span>
+              Puede anular su hora
+              <span className="block text-[12.5px] font-normal" style={{ color: "var(--muted)" }}>
+                Se le pide confirmación antes. El cupo queda libre al tiro.
+              </span>
+            </span>
+          </label>
+
+          <div>
+            <label className="text-[13px] font-bold">Se cierra cuántas horas antes</label>
+            <input
+              type="number"
+              name="cancelacion_horas"
+              min={0}
+              max={168}
+              defaultValue={autogestion.cancelacionMinHoras}
+              className="campo mt-1.5"
+            />
+            <p className="mt-1 text-[12px]" style={{ color: "var(--muted-2)" }}>
+              Pasado ese punto ya no puede por internet y se le pide que te escriba.
+              Con 0, puede hasta la hora misma.
+            </p>
+          </div>
+
+          <div className="sm:col-span-2">
+            <button type="submit" className="btn-primario px-5 py-2 text-[14px]">Guardar</button>
           </div>
         </form>
       </Seccion>

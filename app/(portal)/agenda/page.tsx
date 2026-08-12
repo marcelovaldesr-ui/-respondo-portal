@@ -31,6 +31,8 @@ type CitaFila = {
   profesional_id: string;
   ed_servicios: { nombre: string } | null;
   ed_profesionales: { nombre: string } | null;
+  /** Ficha del servicio respondida al reservar (migración 277). */
+  datos_extra?: Record<string, string> | null;
 };
 
 const ACTIVOS = ["agendada", "confirmada", "reagendada"];
@@ -105,15 +107,32 @@ export default async function Agenda() {
         .select("id, nombre, activo")
         .eq("cliente_id", usuario.clienteId)
         .order("creado_en", { ascending: true }),
-      supa
-        .from("ed_citas")
-        .select(
-          "id, nombre_contacto, telefono, chat_id, inicio, fin, estado, origen, profesional_id, ed_servicios(nombre), ed_profesionales(nombre)",
-        )
-        .eq("cliente_id", usuario.clienteId)
-        .gte("inicio", desdeIso)
-        .lte("inicio", hastaIso)
-        .order("inicio", { ascending: true }),
+      // `datos_extra` llega con la migración 277. Si todavía no está aplicada,
+      // PostgREST devuelve error por columna desconocida y la agenda quedaría
+      // VACÍA — la pantalla que el negocio mira todos los días. Por eso se
+      // intenta con la columna y se reintenta sin ella: el orden del deploy
+      // deja de poder romper nada.
+      (async () => {
+        const conFicha = await supa
+          .from("ed_citas")
+          .select(
+            "id, nombre_contacto, telefono, chat_id, inicio, fin, estado, origen, profesional_id, datos_extra, ed_servicios(nombre), ed_profesionales(nombre)",
+          )
+          .eq("cliente_id", usuario.clienteId)
+          .gte("inicio", desdeIso)
+          .lte("inicio", hastaIso)
+          .order("inicio", { ascending: true });
+        if (!conFicha.error) return conFicha;
+        return supa
+          .from("ed_citas")
+          .select(
+            "id, nombre_contacto, telefono, chat_id, inicio, fin, estado, origen, profesional_id, ed_servicios(nombre), ed_profesionales(nombre)",
+          )
+          .eq("cliente_id", usuario.clienteId)
+          .gte("inicio", desdeIso)
+          .lte("inicio", hastaIso)
+          .order("inicio", { ascending: true });
+      })(),
       supa
         .from("ed_clientes")
         .select("slug, reservas_online")
@@ -160,6 +179,7 @@ export default async function Agenda() {
     servicio: c.ed_servicios?.nombre ?? "Servicio",
     profesionalId: c.profesional_id,
     profesional: c.ed_profesionales?.nombre ?? "—",
+    datosExtra: c.datos_extra ?? null,
   }));
 
   const profCal: ProfCal[] = profActivos.map((p) => ({ id: p.id, nombre: p.nombre }));

@@ -1,7 +1,7 @@
 import { notFound } from "next/navigation";
 import type { Metadata } from "next";
 import { db } from "@/lib/db";
-import ReservaPublica from "@/components/ReservaPublica";
+import ReservaPublica, { type CampoPublico } from "@/components/ReservaPublica";
 import ReservaClases from "@/components/ReservaClases";
 import { proximasClases } from "@/lib/clases";
 
@@ -49,6 +49,26 @@ export default async function PaginaReservas({ params }: Props) {
     .order("orden", { ascending: true });
 
   if (!servicios || servicios.length === 0) notFound();
+
+  /**
+   * Ficha personalizable por servicio (migración 277): lo que este negocio le
+   * pregunta a quien reserva. Puede ser nada (barbería), o RUT + previsión
+   * (clínica), o patente + kilometraje (taller).
+   *
+   * Tolerante a que la migración no esté aplicada: en ese caso no hay campos y
+   * el formulario queda exactamente como antes.
+   */
+  const { data: camposCrudos } = await db()
+    .from("ed_servicio_campos")
+    .select("id, servicio_id, etiqueta, tipo, opciones, obligatorio, ayuda, orden")
+    .in("servicio_id", servicios.map((s) => s.id as string))
+    .order("orden", { ascending: true });
+
+  const camposPorServicio = new Map<string, unknown[]>();
+  for (const c of camposCrudos ?? []) {
+    const sid = c.servicio_id as string;
+    camposPorServicio.set(sid, [...(camposPorServicio.get(sid) ?? []), c]);
+  }
 
   /**
    * ¿Este negocio trabaja con clases?
@@ -122,6 +142,7 @@ export default async function PaginaReservas({ params }: Props) {
           descripcion: (s.descripcion as string) ?? null,
           duracionMin: s.duracion_min as number,
           precioClp: (s.precio_clp as number) ?? null,
+          campos: (camposPorServicio.get(s.id as string) ?? []) as CampoPublico[],
         }))}
       />
 

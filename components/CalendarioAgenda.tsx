@@ -35,6 +35,8 @@ export type CitaCal = {
   servicio: string;
   profesionalId: string;
   profesional: string;
+  /** Ficha del servicio respondida al reservar (migración 277). */
+  datosExtra?: Record<string, string> | null;
 };
 
 export type ProfCal = { id: string; nombre: string };
@@ -670,6 +672,21 @@ export default function CalendarioAgenda({
               <Dato etiqueta="Contacto" valor={detalle.telefono ?? "sin teléfono"} />
               <Dato etiqueta="Reservó por" valor={detalle.origen} />
             </div>
+
+            {/* Ficha del servicio (migración 277). Va en su propio bloque y no
+                mezclada con los datos de la hora: para una clínica esto es lo
+                PRIMERO que se mira al abrir la cita —RUT y previsión—, no un
+                detalle secundario. */}
+            {detalle.datosExtra && Object.keys(detalle.datosExtra).length > 0 && (
+              <div className="mt-3 rounded-[7px] border p-4" style={{ borderColor: "var(--borde)" }}>
+                <div className="eyebrow">Datos que dejó</div>
+                <div className="mt-1.5">
+                  {Object.entries(detalle.datosExtra).map(([k, v]) => (
+                    <Dato key={k} etiqueta={k} valor={String(v)} />
+                  ))}
+                </div>
+              </div>
+            )}
 
             <div className="mt-5 grid gap-2">
               {ACTIVOS.includes(detalle.estado) ? (

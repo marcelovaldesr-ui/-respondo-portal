@@ -29,12 +29,28 @@ const MESES = [
   "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre",
 ];
 
+/**
+ * Un campo de la ficha que el negocio definió para ESTE servicio
+ * (migración 277). Lo que hace que la misma pantalla sirva para una barbería
+ * que no pregunta nada y para una clínica que necesita RUT y previsión.
+ */
+export type CampoPublico = {
+  id: string;
+  etiqueta: string;
+  tipo: "texto" | "parrafo" | "numero" | "telefono" | "email" | "opciones" | "si_no" | "fecha" | "rut";
+  opciones: string[] | null;
+  obligatorio: boolean;
+  ayuda: string | null;
+  orden: number;
+};
+
 type Servicio = {
   id: string;
   nombre: string;
   descripcion: string | null;
   duracionMin: number;
   precioClp: number | null;
+  campos?: CampoPublico[];
 };
 
 type Slot = { inicio: string; profesionalId: string };
@@ -114,7 +130,30 @@ export default function ReservaPublica({
   const [telefono, setTelefono] = useState("");
   const [enviando, setEnviando] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [listo, setListo] = useState<{ cuando: string; whatsapp: string | null; pendiente: boolean } | null>(null);
+  // Respuestas de la ficha del servicio, por id de campo.
+  const [ficha, setFicha] = useState<Record<string, string>>({});
+  const [erroresFicha, setErroresFicha] = useState<Record<string, string>>({});
+  const [listo, setListo] = useState<{
+    cuando: string;
+    whatsapp: string | null;
+    pendiente: boolean;
+    gestion: string | null;
+  } | null>(null);
+
+  const campos = useMemo(
+    () => [...(servicio?.campos ?? [])].sort((a, b) => a.orden - b.orden),
+    [servicio],
+  );
+
+  // Cambiar de servicio cambia la ficha: las respuestas viejas no aplican.
+  useEffect(() => {
+    setFicha({});
+    setErroresFicha({});
+  }, [servicio?.id]);
+
+  const fichaCompleta = campos
+    .filter((c) => c.obligatorio)
+    .every((c) => (ficha[c.id] ?? "").trim().length > 0);
 
   // Cargar disponibilidad al elegir servicio.
   useEffect(() => {
@@ -178,6 +217,7 @@ export default function ReservaPublica({
     if (!servicio || !slot) return;
     setEnviando(true);
     setError(null);
+    setErroresFicha({});
     try {
       const r = await fetch("/api/reservas", {
         method: "POST",
@@ -189,12 +229,23 @@ export default function ReservaPublica({
           inicio: slot.inicio,
           nombre,
           telefono,
+          ficha,
           web: "", // honeypot
         }),
       });
       const d = await r.json();
       if (d.ok) {
-        setListo({ cuando: d.cuando, whatsapp: d.whatsapp ?? null, pendiente: !!d.requiereConfirmacion });
+        setListo({
+          cuando: d.cuando,
+          whatsapp: d.whatsapp ?? null,
+          pendiente: !!d.requiereConfirmacion,
+          gestion: d.gestion ?? null,
+        });
+      } else if (d.error === "ficha_invalida") {
+        // El servidor manda el detalle por campo: se pinta donde corresponde en
+        // vez de un error genérico arriba, que obliga a adivinar cuál falló.
+        setErroresFicha((d.errores ?? {}) as Record<string, string>);
+        setError("Revisa los datos marcados.");
       } else if (d.error === "cupo_tomado") {
         setError(d.mensaje ?? "Ese horario se acaba de ocupar. Elige otro, por favor.");
         setSlot(null);
@@ -254,9 +305,29 @@ export default function ReservaPublica({
               Escribirnos por WhatsApp
             </a>
           )}
-          <p className="mt-3 text-[12.5px]" style={{ color: "var(--muted-2)" }}>
-            ¿Necesitas moverla o anularla? Escríbenos y lo hacemos al tiro.
-          </p>
+          {/* Autogestión (migración 277): quien reserva por la web puede no
+              tener WhatsApp con el negocio; este enlace es su forma de moverse
+              solo. Se muestra completo para que pueda guardarlo. */}
+          {listo.gestion ? (
+            <div className="mt-4 rounded-xl border p-3.5 text-left" style={{ borderColor: "var(--borde)" }}>
+              <div className="text-[13px] font-bold">¿Necesitas moverla o anularla?</div>
+              <p className="mt-0.5 text-[12.5px]" style={{ color: "var(--muted)" }}>
+                Guarda este enlace — desde ahí la cambias tú mismo, sin esperar
+                a que te respondan.
+              </p>
+              <a
+                href={listo.gestion}
+                className="mt-2 inline-block w-full rounded-lg px-3 py-2.5 text-center text-[13.5px] font-bold"
+                style={{ background: "var(--indigo-suave)", color: "var(--indigo)" }}
+              >
+                Administrar mi hora
+              </a>
+            </div>
+          ) : (
+            <p className="mt-3 text-[12.5px]" style={{ color: "var(--muted-2)" }}>
+              ¿Necesitas moverla o anularla? Escríbenos y lo hacemos al tiro.
+            </p>
+          )}
         </div>
       </div>
     );
@@ -483,12 +554,32 @@ export default function ReservaPublica({
                   Ahí te llega la confirmación y el recordatorio. No lo usamos para nada más.
                 </p>
               </div>
+
+              {/* Ficha del servicio: lo que ESTE negocio necesita saber. */}
+              {campos.map((c) => (
+                <CampoFormulario
+                  key={c.id}
+                  campo={c}
+                  valor={ficha[c.id] ?? ""}
+                  error={erroresFicha[c.id]}
+                  onChange={(v) => setFicha((f) => ({ ...f, [c.id]: v }))}
+                />
+              ))}
+
               <button
                 onClick={reservar}
-                disabled={enviando || nombre.trim().length < 2 || telefono.replace(/\D/g, "").length < 8}
+                disabled={
+                  enviando ||
+                  nombre.trim().length < 2 ||
+                  telefono.replace(/\D/g, "").length < 8 ||
+                  !fichaCompleta
+                }
                 className="btn-primario w-full px-5 py-3 text-[15px]"
                 style={
-                  enviando || nombre.trim().length < 2 || telefono.replace(/\D/g, "").length < 8
+                  enviando ||
+                  nombre.trim().length < 2 ||
+                  telefono.replace(/\D/g, "").length < 8 ||
+                  !fichaCompleta
                     ? { opacity: 0.45, cursor: "not-allowed" }
                     : undefined
                 }
@@ -542,6 +633,109 @@ export default function ReservaPublica({
           cambiarla, escríbenos por WhatsApp.
         </p>
       </aside>
+    </div>
+  );
+}
+
+/**
+ * Un campo de la ficha. Se elige el control por TIPO, no un input de texto para
+ * todo: en el celular la diferencia es enorme —un teclado numérico, un
+ * desplegable en vez de escribir "Fonasa" a mano, dos botones para sí/no—.
+ * Cada control equivocado es gente que abandona la reserva.
+ */
+function CampoFormulario({
+  campo,
+  valor,
+  error,
+  onChange,
+}: {
+  campo: CampoPublico;
+  valor: string;
+  error?: string;
+  onChange: (v: string) => void;
+}) {
+  const borde = error ? { borderColor: "#D98282" } : undefined;
+
+  return (
+    <div>
+      <label className="text-[13px] font-bold">
+        {campo.etiqueta}
+        {!campo.obligatorio && (
+          <span className="ml-1.5 font-semibold" style={{ color: "var(--muted-2)" }}>
+            (opcional)
+          </span>
+        )}
+      </label>
+
+      {campo.tipo === "opciones" ? (
+        <select
+          value={valor}
+          onChange={(e) => onChange(e.target.value)}
+          className="campo mt-1.5"
+          style={borde}
+        >
+          <option value="">Elige una opción…</option>
+          {(campo.opciones ?? []).map((o) => (
+            <option key={o} value={o}>{o}</option>
+          ))}
+        </select>
+      ) : campo.tipo === "si_no" ? (
+        <div className="mt-1.5 grid grid-cols-2 gap-2">
+          {["Sí", "No"].map((o) => (
+            <button
+              key={o}
+              type="button"
+              onClick={() => onChange(o)}
+              className="rounded-xl border py-2.5 text-[14px] font-bold transition"
+              style={
+                valor === o
+                  ? { background: "var(--indigo)", color: "#fff", borderColor: "var(--indigo)" }
+                  : { background: "#fff", borderColor: "var(--borde)", color: "var(--tinta)" }
+              }
+            >
+              {o}
+            </button>
+          ))}
+        </div>
+      ) : campo.tipo === "parrafo" ? (
+        <textarea
+          value={valor}
+          onChange={(e) => onChange(e.target.value)}
+          rows={3}
+          className="campo mt-1.5"
+          style={borde}
+          placeholder={campo.ayuda ?? ""}
+        />
+      ) : (
+        <input
+          value={valor}
+          onChange={(e) => onChange(e.target.value)}
+          className="campo mt-1.5"
+          style={borde}
+          type={campo.tipo === "fecha" ? "date" : "text"}
+          inputMode={
+            campo.tipo === "numero" || campo.tipo === "telefono"
+              ? "numeric"
+              : campo.tipo === "email"
+                ? "email"
+                : undefined
+          }
+          placeholder={
+            campo.tipo === "rut"
+              ? "12.345.678-9"
+              : campo.tipo === "email"
+                ? "tucorreo@ejemplo.cl"
+                : (campo.ayuda ?? "")
+          }
+          autoComplete={campo.tipo === "email" ? "email" : campo.tipo === "telefono" ? "tel" : "off"}
+        />
+      )}
+
+      {error ? (
+        <p className="mt-1 text-[12px] font-semibold" style={{ color: "#B33A3A" }}>{error}</p>
+      ) : campo.ayuda && campo.tipo !== "parrafo" ? (
+        <p className="mt-1 text-[12px]" style={{ color: "var(--muted-2)" }}>{campo.ayuda}</p>
+      ) : null}
     </div>
   );
 }

@@ -36,6 +36,8 @@ export type Servicio = {
   requiere_abono: boolean;
   activo: boolean;
   orden: number;
+  /** Minutos de preparación después de la hora (migración 277). */
+  buffer_min: number;
 };
 
 export type Cita = {
@@ -52,6 +54,11 @@ export type Cita = {
   origen: string;
   empleado_id: string | null;
   notas: string | null;
+  /**
+   * Credencial del enlace de autogestión (migración 277). Puede venir null si
+   * la migración todavía no se aplicó: quien la use debe tolerarlo.
+   */
+  gestion_token?: string | null;
 };
 
 export type ResultadoCita =
@@ -73,7 +80,7 @@ export async function listarServicios(
 ): Promise<Servicio[]> {
   const { data } = await supa
     .from("ed_servicios")
-    .select("id, nombre, descripcion, duracion_min, precio_clp, cupo, requiere_abono, activo, orden")
+    .select("id, nombre, descripcion, duracion_min, precio_clp, cupo, requiere_abono, activo, orden, buffer_min")
     .eq("cliente_id", clienteId)
     .eq("activo", true)
     .order("orden", { ascending: true });
@@ -113,7 +120,7 @@ export async function disponibilidad(
 
   const { data: servicio } = await supa
     .from("ed_servicios")
-    .select("id, nombre, descripcion, duracion_min, precio_clp, cupo, requiere_abono, activo, orden")
+    .select("id, nombre, descripcion, duracion_min, precio_clp, cupo, requiere_abono, activo, orden, buffer_min")
     .eq("id", servicioId)
     .eq("cliente_id", clienteId) // barrera de acceso
     .eq("activo", true)
@@ -181,17 +188,23 @@ export async function disponibilidad(
   const ocupadosGoogle = await ocupadosDesdeGoogle(profesionalIds, ahoraIso, hastaIso, supa);
 
   const ocupados: Ocupado[] = [
+    // Los bloqueos NO llevan preparación: si el negocio para 13-14 para
+    // almorzar, la tarde parte a las 14:00 exactas (ver Ocupado.tipo).
     ...(bloqueos ?? []).map((b) => ({
       profesionalId: (b.profesional_id as string | null) ?? null,
       desde: b.desde as string,
       hasta: b.hasta as string,
+      tipo: "bloqueo" as const,
     })),
     ...(citas ?? []).map((c) => ({
       profesionalId: c.profesional_id as string,
       desde: c.inicio as string,
       hasta: c.fin as string,
+      tipo: "cita" as const,
     })),
-    ...ocupadosGoogle,
+    // Compromisos personales del Google Calendar del dueño: son eventos
+    // ajenos a la agenda, no citas nuestras — sin buffer.
+    ...ocupadosGoogle.map((o) => ({ ...o, tipo: "bloqueo" as const })),
   ];
 
   const slots = computarSlots({
@@ -200,6 +213,7 @@ export async function disponibilidad(
     ventanas,
     ocupados,
     duracionMin: (servicio as Servicio).duracion_min,
+    bufferMin: (servicio as Servicio).buffer_min ?? 0,
     anticipacionMin,
     maxSlots: opts.maxSlots ?? 60,
   });
@@ -224,6 +238,11 @@ export async function crearCita(
     empleadoId?: string;
     notas?: string;
     estado?: "agendada" | "confirmada";
+    /**
+     * Respuestas de la ficha del servicio (migración 277), ya validadas por
+     * lib/fichaServicio. Se guardan tal cual en ed_citas.datos_extra.
+     */
+    datosExtra?: Record<string, string> | null;
   },
   supa: SupabaseClient = db(),
 ): Promise<ResultadoCita> {
@@ -265,6 +284,7 @@ export async function crearCita(
       origen: params.origen,
       empleado_id: params.empleadoId ?? null,
       notas: params.notas ?? null,
+      ...(params.datosExtra ? { datos_extra: params.datosExtra } : {}),
     })
     .select("*")
     .single();

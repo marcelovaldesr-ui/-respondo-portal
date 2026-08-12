@@ -29,6 +29,25 @@ function horaChile(iso: string): string {
   }).format(new Date(iso));
 }
 
+/**
+ * Enlace de autogestión de la cita (migración 277).
+ *
+ * Va en la confirmación y en el recordatorio porque es JUSTO ahí donde la
+ * persona decide que no va a poder ir. Si en ese momento la única salida es
+ * escribir y esperar respuesta, la hora se pierde igual pero el cupo queda
+ * ocupado. Con el enlace, se libera al instante y alguien más la toma.
+ *
+ * Devuelve "" si no hay token (migración sin aplicar): en ese caso los mensajes
+ * salen exactamente como antes, sin una línea rota ni una URL a medias.
+ */
+function enlaceGestion(cita: Cita): string {
+  const token = cita.gestion_token;
+  if (!token) return "";
+  const base = (process.env.NEXT_PUBLIC_SITE_URL || "https://respondo-portal.vercel.app")
+    .replace(/\/+$/, "");
+  return `${base}/cita/${token}`;
+}
+
 async function empleadoPorRol(
   clienteId: string,
   rol: string,
@@ -99,6 +118,9 @@ export async function programarSeguimientosCita(params: {
   const nombre = cita.nombre_contacto?.split(" ")[0] ?? "";
   const saludo = nombre ? `Hola ${nombre} 👋` : "Hola 👋";
   const cuando = formatearSlot(cita.inicio);
+  const enlace = enlaceGestion(cita);
+  // Línea aparte y solo si hay enlace: evita dejar un "Cámbiala acá:" huérfano.
+  const lineaGestion = enlace ? `\n\n¿Necesitas moverla o anularla? Acá: ${enlace}` : "";
 
   const tino =
     (cita.empleado_id as string | null) ??
@@ -115,7 +137,10 @@ export async function programarSeguimientosCita(params: {
       tipo: "confirmacion_cita",
       citaId: cita.id,
       programadoPara: new Date(inicioMs - 24 * 3600_000),
-      texto: `${saludo} Te esperamos mañana para tu ${params.servicioNombre} (${cuando}). ¿Me confirmas que vienes? Responde SÍ para confirmar, o CAMBIAR si necesitas otro horario 🙌`,
+      texto:
+        `${saludo} Te esperamos mañana para tu ${params.servicioNombre} (${cuando}). ` +
+        `¿Me confirmas que vienes? Responde SÍ para confirmar 🙌` +
+        lineaGestion,
     });
     if (ok) programados++;
   }
@@ -128,7 +153,10 @@ export async function programarSeguimientosCita(params: {
       tipo: "recordatorio_cita",
       citaId: cita.id,
       programadoPara: new Date(inicioMs - 3 * 3600_000),
-      texto: `${saludo} Te esperamos hoy a las ${horaChile(cita.inicio)} para tu ${params.servicioNombre} 🙌 ¡Nos vemos!`,
+      texto:
+        `${saludo} Te esperamos hoy a las ${horaChile(cita.inicio)} para tu ` +
+        `${params.servicioNombre} 🙌 ¡Nos vemos!` +
+        lineaGestion,
     });
     if (ok) programados++;
   }

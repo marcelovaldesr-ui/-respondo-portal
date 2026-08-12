@@ -4,6 +4,7 @@ import { crearCita, disponibilidad } from "@/lib/agenda";
 import { programarSeguimientosCita } from "@/lib/agendaSeguimientos";
 import { formatearSlot } from "@/lib/agendaCore";
 import { limitarDistribuido } from "@/lib/seguridad";
+import { validarFicha, type CampoFicha } from "@/lib/fichaServicio";
 import {
   coincideConSlotOfrecido,
   ipDeRequest,
@@ -81,6 +82,32 @@ export async function POST(request: NextRequest) {
     );
   }
 
+  /**
+   * FICHA DEL SERVICIO (migración 277) — se valida ACÁ, en el servidor.
+   *
+   * El formulario del navegador ayuda a que la persona no se equivoque, pero no
+   * es una barrera: cualquiera puede mandar este POST a mano. Sin esta
+   * validación se podría guardar una previsión que el negocio no ofrece, un RUT
+   * inventado o un texto de 100 KB.
+   */
+  const { data: camposCrudos } = await supa
+    .from("ed_servicio_campos")
+    .select("id, etiqueta, tipo, opciones, obligatorio, ayuda, orden")
+    .eq("servicio_id", servicioId)
+    .order("orden", { ascending: true });
+
+  let datosExtra: Record<string, string> | null = null;
+  if (camposCrudos?.length) {
+    const validada = validarFicha(camposCrudos as unknown as CampoFicha[], body.ficha);
+    if (!validada.ok) {
+      return NextResponse.json(
+        { ok: false, error: "ficha_invalida", errores: validada.errores },
+        { status: 400 },
+      );
+    }
+    datosExtra = Object.keys(validada.datos).length ? validada.datos : null;
+  }
+
   // Tope de reservas activas por teléfono (anti-spam sencillo).
   const { count } = await supa
     .from("ed_citas")
@@ -106,6 +133,7 @@ export async function POST(request: NextRequest) {
       telefono,
       chatId: telefono,
       origen: "web",
+      datosExtra,
     },
     supa,
   );
@@ -141,10 +169,18 @@ export async function POST(request: NextRequest) {
     `Hola! Soy ${nombre}, acabo de reservar ${(svc?.nombre as string) ?? "una hora"} para el ${formatearSlot(r.cita.inicio)} 🙌`,
   );
 
+  // Enlace de autogestión (migración 277): quien reserva por la web puede no
+  // tener WhatsApp con el negocio, así que este enlace es su ÚNICA forma de
+  // moverse solo. Se muestra en la pantalla de éxito para que lo guarde.
+  const base = (process.env.NEXT_PUBLIC_SITE_URL || "https://respondo-portal.vercel.app")
+    .replace(/\/+$/, "");
+  const gestion = r.cita.gestion_token ? `${base}/cita/${r.cita.gestion_token}` : null;
+
   return NextResponse.json({
     ok: true,
     cuando: formatearSlot(r.cita.inicio),
     requiereConfirmacion: cliente.confirmacion_automatica === false,
     whatsapp: telNegocio ? `https://wa.me/${telNegocio}?text=${textoWa}` : null,
+    gestion,
   });
 }

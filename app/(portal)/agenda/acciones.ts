@@ -65,6 +65,121 @@ export async function crearServicio(formData: FormData) {
   revalidatePath("/agenda", "layout"); // "layout" = también /agenda/configuracion
 }
 
+// ---------------------------------------------------------------------------
+// Ficha del servicio: lo que el negocio le pregunta a quien reserva (mig. 277)
+// ---------------------------------------------------------------------------
+
+/** Comprueba que el servicio sea de este cliente. Nunca confiar en el form. */
+async function servicioDelCliente(servicioId: string, clienteId: string): Promise<boolean> {
+  if (!servicioId) return false;
+  const { data } = await db()
+    .from("ed_servicios")
+    .select("id")
+    .eq("id", servicioId)
+    .eq("cliente_id", clienteId)
+    .maybeSingle();
+  return Boolean(data);
+}
+
+const TIPOS_VALIDOS = [
+  "texto", "parrafo", "numero", "telefono", "email", "opciones", "si_no", "fecha", "rut",
+];
+
+export async function crearCampoFicha(formData: FormData) {
+  const clienteId = await clienteActual();
+  const servicioId = texto(formData, "servicio");
+  if (!(await servicioDelCliente(servicioId, clienteId))) return;
+
+  const etiqueta = texto(formData, "etiqueta").slice(0, 60);
+  const tipo = texto(formData, "tipo");
+  if (!etiqueta || !TIPOS_VALIDOS.includes(tipo)) return;
+
+  // Las opciones llegan separadas por coma o por línea: se limpian y se
+  // deduplican. Un desplegable con opciones repetidas se ve improvisado.
+  const opciones =
+    tipo === "opciones"
+      ? [
+          ...new Set(
+            texto(formData, "opciones")
+              .split(/[\n,]/)
+              .map((o) => o.trim())
+              .filter(Boolean)
+              .map((o) => o.slice(0, 60)),
+          ),
+        ].slice(0, 20)
+      : null;
+  // El CHECK de la migración lo rechazaría igual, pero fallar acá evita que el
+  // dueño vea un error crudo de Postgres.
+  if (tipo === "opciones" && (!opciones || opciones.length === 0)) return;
+
+  const { data: ultimo } = await db()
+    .from("ed_servicio_campos")
+    .select("orden")
+    .eq("servicio_id", servicioId)
+    .order("orden", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  await db().from("ed_servicio_campos").insert({
+    servicio_id: servicioId,
+    etiqueta,
+    tipo,
+    opciones,
+    obligatorio: texto(formData, "obligatorio") === "on",
+    ayuda: texto(formData, "ayuda").slice(0, 120) || null,
+    orden: ((ultimo?.orden as number) ?? -1) + 1,
+  });
+  revalidatePath("/agenda", "layout");
+}
+
+export async function eliminarCampoFicha(formData: FormData) {
+  const clienteId = await clienteActual();
+  const id = texto(formData, "id");
+  const servicioId = texto(formData, "servicio");
+  if (!id || !(await servicioDelCliente(servicioId, clienteId))) return;
+
+  // El filtro por servicio_id (ya validado como del cliente) es lo que impide
+  // borrar un campo de otro negocio mandando un id cualquiera.
+  await db().from("ed_servicio_campos").delete().eq("id", id).eq("servicio_id", servicioId);
+  revalidatePath("/agenda", "layout");
+}
+
+/** Tiempo de preparación después de cada hora de este servicio. */
+export async function configurarBufferServicio(formData: FormData) {
+  const clienteId = await clienteActual();
+  const servicioId = texto(formData, "servicio");
+  if (!(await servicioDelCliente(servicioId, clienteId))) return;
+
+  const bruto = Number(texto(formData, "buffer"));
+  const buffer = Number.isFinite(bruto) ? Math.min(120, Math.max(0, Math.floor(bruto))) : 0;
+
+  await db()
+    .from("ed_servicios")
+    .update({ buffer_min: buffer })
+    .eq("id", servicioId)
+    .eq("cliente_id", clienteId);
+  revalidatePath("/agenda", "layout");
+}
+
+/** Reglas de autogestión del cliente final (cancelar / reagendar solo). */
+export async function configurarAutogestion(formData: FormData) {
+  const clienteId = await clienteActual();
+  const horasBrutas = Number(texto(formData, "cancelacion_horas"));
+  const horas = Number.isFinite(horasBrutas)
+    ? Math.min(168, Math.max(0, Math.floor(horasBrutas)))
+    : 4;
+
+  await db()
+    .from("ed_clientes")
+    .update({
+      permite_cancelar_online: texto(formData, "cancelar") === "on",
+      permite_reagendar_online: texto(formData, "reagendar") === "on",
+      cancelacion_min_horas: horas,
+    })
+    .eq("id", clienteId);
+  revalidatePath("/agenda", "layout");
+}
+
 /**
  * Elimina un servicio DEFINITIVAMENTE. La página solo ofrece este botón cuando
  * el servicio no tiene ninguna cita (si la tuviera, la llave foránea lo

@@ -31,6 +31,19 @@ export type Ocupado = {
   profesionalId: string | null; // null = aplica a todos (bloqueo del negocio)
   desde: string;
   hasta: string;
+  /**
+   * Qué tipo de ocupación es. Importa para el tiempo de preparación:
+   *
+   *  - 'cita'    → hay que dejar el buffer del servicio antes y después (limpiar
+   *                el box, guardar herramientas, dar la pasada al sillón).
+   *  - 'bloqueo' → NO lleva buffer. Si el negocio bloquea 13:00-14:00 para
+   *                almorzar, la primera hora de la tarde es a las 14:00, no a
+   *                las 14:15. Aplicarle buffer le comería tiempo real de
+   *                atención todos los días sin que nadie entienda por qué.
+   *
+   * Por defecto 'cita' (comportamiento conservador para quien no lo indique).
+   */
+  tipo?: "cita" | "bloqueo";
 };
 
 /** Cupo ofrecible. */
@@ -140,6 +153,15 @@ export type ParamsSlots = {
   anticipacionMin: number;
   /** Tope de cupos a devolver (los más próximos). */
   maxSlots?: number;
+  /**
+   * Minutos de preparación que hay que respetar ENTRE horas (migración 277).
+   * Se aplica solo contra otras citas, nunca contra bloqueos (ver Ocupado.tipo).
+   *
+   * No alarga la cita: la hora sigue durando lo que dice el servicio y a quien
+   * reserva se le muestra su hora real. Lo único que cambia es que el cupo
+   * pegado deja de ofrecerse.
+   */
+  bufferMin?: number;
 };
 
 /**
@@ -159,12 +181,19 @@ export function computarSlots(params: ParamsSlots): Slot[] {
   const desdeMs = ahora.getTime() + anticipacionMin * 60_000;
   const max = params.maxSlots ?? 60;
 
-  // Ocupados pre-parseados una sola vez.
-  const ocupadosMs = ocupados.map((o) => ({
-    profesionalId: o.profesionalId,
-    ini: Date.parse(o.desde),
-    fin: Date.parse(o.hasta),
-  }));
+  // Ocupados pre-parseados una sola vez. El buffer se aplica ACÁ, ensanchando
+  // el rango ocupado por las citas: así el cupo pegado deja de ofrecerse sin
+  // tener que alargar la cita ni mentirle la hora a quien reserva.
+  const buffer = Math.max(0, params.bufferMin ?? 0) * 60_000;
+  const ocupadosMs = ocupados.map((o) => {
+    const esCita = (o.tipo ?? "cita") === "cita";
+    const margen = esCita ? buffer : 0;
+    return {
+      profesionalId: o.profesionalId,
+      ini: Date.parse(o.desde) - margen,
+      fin: Date.parse(o.hasta) + margen,
+    };
+  });
 
   const slots: Slot[] = [];
 
