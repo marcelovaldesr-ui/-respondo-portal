@@ -142,30 +142,26 @@ export type CuentaIg = {
 /**
  * De qué negocio es esta cuenta de Instagram, y con qué credenciales responde.
  *
- * Busca por `ig_user_id` (camino con Login de Instagram) y, si no encuentra,
- * por `ig_page_id` (camino viejo con Login de Facebook), para que un cliente
- * que ya estuviera configurado así no deje de funcionar.
+ * Busca por `ig_user_id`, que es el identificador del camino elegido: Instagram
+ * API con **Login de Instagram**.
+ *
+ * ANTES había además un respaldo por `ig_page_id`, pensado para clientes
+ * configurados con el Login de Facebook. Se quitó porque esa columna nunca
+ * existió —la migración 271 no la crea, y el camino de Facebook se descartó a
+ * propósito (exige que la cuenta esté ligada a una página administrable, que en
+ * la pyme chilena suele estar abandonada o a nombre de un ex empleado)—. El
+ * respaldo no daba compatibilidad con nada: solo gastaba una consulta que
+ * siempre devolvía error, por cada mensaje que no calzara a la primera.
  */
 export async function cuentaPorIdIg(paginaId: string): Promise<CuentaIg | null> {
   const supa = db();
-  const cols = "id, ig_user_id, ig_token";
 
-  let { data } = await supa
+  const { data } = await supa
     .from("ed_clientes")
-    .select(cols)
+    .select("id, ig_user_id, ig_token")
     .eq("ig_user_id", paginaId)
     .eq("activo", true)
     .maybeSingle();
-
-  if (!data) {
-    const alt = await supa
-      .from("ed_clientes")
-      .select(cols)
-      .eq("ig_page_id", paginaId)
-      .eq("activo", true)
-      .maybeSingle();
-    data = alt.data;
-  }
   if (!data) return null;
 
   const fila = data as { id: string; ig_user_id: string | null; ig_token: string | null };
