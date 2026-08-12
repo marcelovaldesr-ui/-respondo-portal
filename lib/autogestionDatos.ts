@@ -84,7 +84,7 @@ async function buscar(
     .from("ed_citas")
     .select(
       "id, cliente_id, servicio_id, nombre_contacto, inicio, fin, estado, " +
-        "ed_servicios(nombre, duracion_min, precio_clp), ed_profesionales(nombre)",
+        "ed_servicios!servicio_id(nombre, duracion_min, precio_clp), ed_profesionales!profesional_id(nombre)",
     )
     .eq("gestion_token", token)
     .maybeSingle();

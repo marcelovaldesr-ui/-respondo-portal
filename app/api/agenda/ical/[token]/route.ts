@@ -50,7 +50,7 @@ export async function GET(
   const { data: citas } = await supa
     .from("ed_citas")
     .select(
-      "id, nombre_contacto, telefono, chat_id, inicio, fin, estado, origen, actualizado_en, ed_servicios(nombre), ed_profesionales(nombre)",
+      "id, nombre_contacto, telefono, chat_id, inicio, fin, estado, origen, actualizado_en, ed_servicios!servicio_id(nombre), ed_profesionales!profesional_id(nombre)",
     )
     .eq("cliente_id", cliente.id as string)
     .gte("inicio", desde)

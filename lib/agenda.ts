@@ -324,7 +324,7 @@ export async function reagendar(
 ): Promise<ResultadoCita> {
   const { data: cita } = await supa
     .from("ed_citas")
-    .select("*, ed_servicios(duracion_min)")
+    .select("*, ed_servicios!servicio_id(duracion_min)")
     .eq("id", citaId)
     .eq("cliente_id", clienteId)
     .maybeSingle();

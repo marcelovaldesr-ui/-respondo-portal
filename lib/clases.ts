@@ -119,7 +119,7 @@ export async function proximasClases(
     let q = supa
       .from("ed_clases")
       .select(
-        "id, servicio_id, profesional_id, inicio, fin, cupo_maximo, cupo_ocupado, estado, ed_servicios(nombre), ed_profesionales(nombre)",
+        "id, servicio_id, profesional_id, inicio, fin, cupo_maximo, cupo_ocupado, estado, ed_servicios!servicio_id(nombre), ed_profesionales!profesional_id(nombre)",
       )
       .eq("cliente_id", clienteId)
       .eq("estado", "activa")
@@ -151,7 +151,7 @@ export async function clasesEntre(
     const { data, error } = await (supaOpt ?? db())
       .from("ed_clases")
       .select(
-        "id, servicio_id, profesional_id, inicio, fin, cupo_maximo, cupo_ocupado, estado, ed_servicios(nombre), ed_profesionales(nombre)",
+        "id, servicio_id, profesional_id, inicio, fin, cupo_maximo, cupo_ocupado, estado, ed_servicios!servicio_id(nombre), ed_profesionales!profesional_id(nombre)",
       )
       .eq("cliente_id", clienteId)
       .gte("inicio", desde.toISOString())

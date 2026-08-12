@@ -116,7 +116,7 @@ export default async function Agenda() {
         const conFicha = await supa
           .from("ed_citas")
           .select(
-            "id, nombre_contacto, telefono, chat_id, inicio, fin, estado, origen, profesional_id, datos_extra, ed_servicios(nombre), ed_profesionales(nombre)",
+            "id, nombre_contacto, telefono, chat_id, inicio, fin, estado, origen, profesional_id, datos_extra, ed_servicios!servicio_id(nombre), ed_profesionales!profesional_id(nombre)",
           )
           .eq("cliente_id", usuario.clienteId)
           .gte("inicio", desdeIso)
@@ -126,7 +126,7 @@ export default async function Agenda() {
         return supa
           .from("ed_citas")
           .select(
-            "id, nombre_contacto, telefono, chat_id, inicio, fin, estado, origen, profesional_id, ed_servicios(nombre), ed_profesionales(nombre)",
+            "id, nombre_contacto, telefono, chat_id, inicio, fin, estado, origen, profesional_id, ed_servicios!servicio_id(nombre), ed_profesionales!profesional_id(nombre)",
           )
           .eq("cliente_id", usuario.clienteId)
           .gte("inicio", desdeIso)
