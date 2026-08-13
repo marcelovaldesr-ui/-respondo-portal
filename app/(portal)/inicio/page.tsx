@@ -12,6 +12,8 @@ import {
 } from "@/lib/resumen";
 import { ETIQUETA_TRIGGER } from "@/lib/conversaciones";
 import { contadoresMenu, oportunidadesAbiertas } from "@/lib/contadores";
+import { db } from "@/lib/db";
+import { estadoDeCupo, type EstadoCupo } from "@/lib/cupoConversaciones";
 import { metaEtapa } from "@/lib/embudo";
 import {
   resumenAhorro,
@@ -198,16 +200,106 @@ function Metrica({
   );
 }
 
+/**
+ * CUÁNTO LLEVA USADO DE SU PLAN.
+ *
+ * Respondo vende por conversaciones incluidas, así que el dueño tiene derecho a
+ * ver el contador sin pedírselo a nadie — igual que el saldo de datos del
+ * celular. Vender un cupo que el cliente no puede mirar es la receta para una
+ * discusión en el mes 3.
+ *
+ * El tono es deliberadamente tranquilo, incluso pasado el 100%: NUNCA cortamos
+ * el servicio. La tarjeta informa y ofrece ampliar; no amenaza.
+ *
+ * Si el cliente no tiene plan asignado (o la migración 278 no está aplicada),
+ * esto no se muestra: estadoDeCupo() devuelve null y aquí retornamos null.
+ */
+function ConsumoDelPlan({ estado }: { estado: EstadoCupo }) {
+  const { consumo, cupo, porcentaje, proyeccion, excedente, ciclo, etiquetaPlan } = estado;
+  if (cupo === null || porcentaje === null) return null;
+
+  const pasado = porcentaje >= 100;
+  const cerca = porcentaje >= 80;
+  const color = pasado ? "var(--peligro)" : cerca ? "var(--coral)" : "var(--indigo)";
+
+  return (
+    <div className="tarjeta mb-3 px-4 py-4">
+      <div className="flex items-baseline justify-between gap-3">
+        <span style={{ fontSize: "var(--t-menor)", color: "var(--muted)" }}>
+          Conversaciones del mes
+        </span>
+        {etiquetaPlan && (
+          <span className="pildora-indigo shrink-0" style={{ fontSize: "var(--t-micro)" }}>
+            {etiquetaPlan}
+          </span>
+        )}
+      </div>
+
+      <div className="mt-1.5 flex items-baseline gap-1.5">
+        <span className="h-cifra cifra" style={{ color }}>
+          {consumo.toLocaleString("es-CL")}
+        </span>
+        <span className="cifra" style={{ fontSize: "var(--t-menor)", color: "var(--muted-2)" }}>
+          de {cupo.toLocaleString("es-CL")}
+        </span>
+      </div>
+
+      <div
+        className="mt-3 h-1.5 w-full overflow-hidden rounded-full"
+        style={{ background: "var(--borde)" }}
+        role="progressbar"
+        aria-valuenow={Math.min(100, porcentaje)}
+        aria-valuemin={0}
+        aria-valuemax={100}
+      >
+        <div
+          className="h-full rounded-full"
+          style={{ width: `${Math.min(100, porcentaje)}%`, background: color }}
+        />
+      </div>
+
+      <div className="mt-2" style={{ fontSize: "var(--t-micro)", color: "var(--muted-2)" }}>
+        {pasado ? (
+          <>
+            Pasaste el cupo incluido. <strong>Tu asistente sigue atendiendo igual</strong>
+            {excedente && excedente.costo > 0 && (
+              <>
+                {" · "}
+                {excedente.conversaciones.toLocaleString("es-CL")} adicionales ={" "}
+                {formatearCLP(excedente.costo)}
+              </>
+            )}
+          </>
+        ) : (
+          <>
+            {ciclo.diasRestantes > 0
+              ? `Quedan ${ciclo.diasRestantes} días de ciclo`
+              : "El ciclo termina hoy"}
+            {/* La proyección solo se muestra si dice algo que el número de
+                arriba no dice ya: avisar que se va a pasar cuando todavía se
+                puede hacer algo. */}
+            {proyeccion > cupo && ciclo.diasRestantes > 2 && (
+              <> · al ritmo actual llegarías a ~{proyeccion.toLocaleString("es-CL")}</>
+            )}
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
 export default async function Inicio() {
   const usuario = await exigirUsuarioPortal();
-  const [empleados, metricas, esperando, ahorro, oportunidades, abiertas] = await Promise.all([
-    resumenEmpleados(usuario.clienteId),
-    metricasCliente(usuario.clienteId),
-    esperandoHumano(usuario.clienteId),
-    resumenAhorro(usuario.clienteId, 30),
-    contadoresMenu(usuario.clienteId),
-    oportunidadesAbiertas(usuario.clienteId),
-  ]);
+  const [empleados, metricas, esperando, ahorro, oportunidades, abiertas, cupo] =
+    await Promise.all([
+      resumenEmpleados(usuario.clienteId),
+      metricasCliente(usuario.clienteId),
+      esperandoHumano(usuario.clienteId),
+      resumenAhorro(usuario.clienteId, 30),
+      contadoresMenu(usuario.clienteId),
+      oportunidadesAbiertas(usuario.clienteId),
+      estadoDeCupo(usuario.clienteId, db()),
+    ]);
 
   const { actual, comparacion } = metricas;
   const pendientes = esperando.total;
@@ -501,6 +593,13 @@ export default async function Inicio() {
         {/* ── Columna derecha: estado del equipo ───────────────────────────
             Se consulta, no se acciona. Por eso va al costado y no arriba. */}
         <aside className="mt-8 lg:mt-8">
+      {cupo && cupo.cupo !== null && (
+        <>
+          <h2 className="h-seccion mb-2.5">Tu plan</h2>
+          <ConsumoDelPlan estado={cupo} />
+        </>
+      )}
+
       <h2 className="h-seccion">Tu equipo digital</h2>
       <div className="mt-2.5 grid gap-3 sm:grid-cols-2 lg:grid-cols-1">
         {empleados.map((r) => {

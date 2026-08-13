@@ -8,6 +8,7 @@ import { LATIDO_CRON_SEGUIMIENTOS, registrarLatido } from "@/lib/latidos";
 import { generarInformesPendientes } from "@/lib/insightsAuto";
 import { renovarTokensIg } from "@/lib/instagram";
 import { reprocesarWebhooksPendientes } from "@/lib/webhookInbox";
+import { revisarCuposYAvisar } from "@/lib/avisosCupo";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -110,6 +111,23 @@ export async function GET(request: NextRequest) {
     console.error("[cron] renovación de tokens de Instagram falló", e);
   }
 
+  /**
+   * AVISOS DE CUPO — "ya usaste 960 de 1.200 conversaciones este mes".
+   *
+   * Se engancha acá por lo mismo que el informe semanal: un solo disparador
+   * externo que mantener. Se auto-limita a una revisión por hora (ver
+   * esHoraDeRevisar) y no hace absolutamente nada mientras ningún cliente tenga
+   * plan asignado, así que correrlo cada 5 minutos sale gratis.
+   *
+   * NUNCA corta el servicio: solo avisa.
+   */
+  let cupos = { revisados: 0, avisados: 0, detalle: [] as string[] };
+  try {
+    cupos = await revisarCuposYAvisar();
+  } catch (e) {
+    console.error("[cron] revisión de cupos falló (no afecta los seguimientos)", e);
+  }
+
   let webhooks = { reintentados: 0, fallidos: 0, purgados: 0, borrados: 0 };
   try {
     // Acotado porque cada entrante puede invocar IA; el siguiente latido toma
@@ -129,5 +147,12 @@ export async function GET(request: NextRequest) {
     pasos: Array.isArray(r.detalle) ? r.detalle.length : 0,
   });
 
-  return NextResponse.json({ ...r, informes, instagram, webhooks });
+  // El detalle de cupos nombra clientes: va el conteo, no las líneas.
+  return NextResponse.json({
+    ...r,
+    informes,
+    instagram,
+    webhooks,
+    cupos: { revisados: cupos.revisados, avisados: cupos.avisados },
+  });
 }
