@@ -205,10 +205,11 @@ export default async function Analitica({
       <p className="mt-3 text-[12px] leading-relaxed" style={{ color: "var(--muted-2)" }}>
         El ahorro es una estimación conservadora:{" "}
         <strong>{SUPUESTOS.minutosPorMensaje} minutos por mensaje</strong> atendido ×{" "}
-        <strong>{formatearCLP(SUPUESTOS.valorHoraCLP)} la hora</strong>, que es el valor
-        hora del sueldo mínimo en Chile ({formatearCLP(SUPUESTOS.sueldoMinimoCLP)} al mes,
-        jornada de 42 horas). Usamos el mínimo legal a propósito: tu ahorro real es mayor.
-        Horario de referencia: {horas}.
+        <strong>{formatearCLP(SUPUESTOS.valorHoraCLP)} la hora</strong>, que es el costo
+        hora de quien contesta: un sueldo de referencia de{" "}
+        {formatearCLP(SUPUESTOS.sueldoReferenciaCLP)} al mes más las cotizaciones de cargo
+        del empleador, sobre una jornada de 42 horas. No incluimos la venta que se pierde
+        cuando nadie responde: tu ahorro real es mayor. Horario de referencia: {horas}.
       </p>
 
       <div className="mt-6 grid gap-5 lg:grid-cols-2">

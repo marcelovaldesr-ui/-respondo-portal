@@ -19,29 +19,42 @@ import { idsEmpleadosDeCliente } from "@/lib/empleadosCache";
  * horario de septiembre y abril solo).
  */
 
+/** Sueldo bruto mensual de referencia de quien contesta (vendedor/secretaria). */
+const SUELDO_REFERENCIA_CLP = 800_000;
+/** Cotizaciones de cargo del empleador (cesantía + SIS + mutual). */
+const FACTOR_COSTO_EMPLEADOR = 1.05;
+/** Jornada legal 42 h/semana × 4 semanas. */
+const HORAS_MES = 168;
+
 /**
  * Supuestos del cálculo de ahorro. Se muestran en pantalla, no se esconden.
  *
- * VALOR HORA — se usa el SUELDO MÍNIMO de Chile a propósito: es el piso legal,
- * público y verificable, así nadie puede acusarnos de inflar el beneficio. El
- * ahorro real es mayor (quien atiende suele ganar más que el mínimo, y el costo
- * para el empleador incluye cotizaciones), pero preferimos quedarnos cortos y
- * que el número aguante cualquier cuestionamiento.
+ * VALOR HORA — se usa como referencia un sueldo bruto de $800.000, que es lo que
+ * gana de verdad la persona que contesta estos mensajes: un vendedor o una
+ * secretaria comercial. Antes se usaba el sueldo mínimo ($539.000) buscando un
+ * piso inatacable, pero ese número subestimaba tanto el ahorro que dejaba de
+ * describir la realidad del cliente — nadie que atienda clientes B2B gana el
+ * mínimo.
+ *
+ * Al sueldo se le suma un 5% de COSTO EMPLEADOR (seguro de cesantía, SIS y
+ * mutual son de cargo de la empresa). No es un número inventado para inflar:
+ * es plata que el negocio efectivamente desembolsa por esa hora de trabajo.
  *
  * Cálculo (fórmula de la Dirección del Trabajo):
- *   (sueldo mensual / 30) × 28 / (horas semanales × 4)
- *   (539.000 / 30) × 28 / 168 = $2.994 por hora
+ *   (sueldo × factor / 30) × 28 / (horas semanales × 4)
+ *   (800.000 × 1,05 / 30) × 28 / 168 = $4.667 por hora
  *
- * Datos usados (verificados 31-jul-2026):
- *   · Ingreso Mínimo Mensual: $539.000
+ * Sigue siendo conservador por dos lados: no cuenta el costo de la interrupción
+ * ni el de la venta que se pierde cuando nadie contesta.
+ *
+ * Datos usados:
+ *   · Sueldo bruto de referencia: $800.000
+ *   · Costo empleador: +5%
  *   · Jornada: 42 h/semana (Ley 40 Horas, vigente desde el 26-abr-2026) → 168 h/mes
  *
- * ⚠ REVISAR cuando cambie el sueldo mínimo (se reajusta por ley) o cuando la
- * jornada baje a 40 h en 2028. Basta con actualizar las dos constantes.
+ * ⚠ REVISAR cuando cambie el sueldo de referencia del mercado o cuando la
+ * jornada baje a 40 h en 2028. Basta con actualizar las constantes.
  */
-const SUELDO_MINIMO_CLP = 539_000;
-const HORAS_MES = 168; // 42 h/semana × 4
-
 export const SUPUESTOS = {
   /**
    * Minutos que le toma a una persona atender un mensaje: leerlo, buscar el
@@ -50,9 +63,12 @@ export const SUPUESTOS = {
    * atendido con calma toma más).
    */
   minutosPorMensaje: 2,
-  /** Valor de la hora según el sueldo mínimo vigente (ver cálculo arriba). */
-  valorHoraCLP: Math.round((SUELDO_MINIMO_CLP / 30) * 28 / HORAS_MES),
-  sueldoMinimoCLP: SUELDO_MINIMO_CLP,
+  /** Valor de la hora del que contesta, con costo empleador (ver cálculo arriba). */
+  valorHoraCLP: Math.round(
+    ((SUELDO_REFERENCIA_CLP * FACTOR_COSTO_EMPLEADOR) / 30) * 28 / HORAS_MES,
+  ),
+  sueldoReferenciaCLP: SUELDO_REFERENCIA_CLP,
+  factorCostoEmpleador: FACTOR_COSTO_EMPLEADOR,
 } as const;
 
 /** Horario laboral de referencia para "carga fuera de horario". */
