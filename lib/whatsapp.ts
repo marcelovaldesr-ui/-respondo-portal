@@ -1,4 +1,5 @@
 import { db } from "@/lib/db";
+import { descifrar } from "@/lib/cifrado";
 
 /**
  * Integración con la WhatsApp Cloud API oficial (Opción B).
@@ -19,6 +20,65 @@ export type ConfigWhatsApp = {
   token: string;
 };
 
+type FilaToken = { waba_token_cifrado?: string | null; waba_token?: string | null };
+
+/**
+ * Lee una fila de ed_clientes pidiendo la columna cifrada, y si la migración
+ * 279 todavía no está aplicada, reintenta sin ella.
+ *
+ * POR QUÉ EXISTE ESTO: la convención de este repo es desplegar ANTES de migrar
+ * (runbook de coexistencia), porque normalmente el código viejo ignora las
+ * columnas nuevas. Acá es al revés — el código nuevo NECESITA la columna — y
+ * pedirla antes de tiempo hace que PostgREST devuelva error, `data` venga null
+ * y **el cliente deje de recibir y responder mensajes**.
+ *
+ * En vez de confiar en que el orden se respete, el código aguanta los dos
+ * órdenes. Cuando la 280 esté aplicada y estable, este respaldo se puede
+ * borrar.
+ */
+async function leerCliente(
+  campo: string,
+  valor: string,
+  columnas: string,
+): Promise<Record<string, unknown> | null> {
+  const consultar = (cols: string) =>
+    db().from("ed_clientes").select(cols).eq(campo, valor).maybeSingle();
+
+  const conCifrado = await consultar(`${columnas}, waba_token_cifrado`);
+  if (!conCifrado.error) return conCifrado.data as Record<string, unknown> | null;
+
+  console.warn(
+    "[whatsapp] waba_token_cifrado no existe todavía (falta la migración 279); leyendo solo el texto plano.",
+  );
+  const sinCifrado = await consultar(columnas);
+  return sinCifrado.error ? null : (sinCifrado.data as Record<string, unknown> | null);
+}
+
+/**
+ * Token de WhatsApp de un cliente, venga cifrado (migración 279) o todavía en
+ * texto plano (columna vieja, en retirada).
+ *
+ * Durante la transición conviven las dos columnas. Si el descifrado FALLA
+ * teniendo un valor cifrado, se cae al texto plano igual pero se grita en el
+ * log: preferimos un cliente atendido y un error visible antes que un cliente
+ * mudo y un log limpio. `/api/salud` reporta esta condición aparte.
+ *
+ * Cuando la migración 280 deje `waba_token` en null, el respaldo se vuelve
+ * inofensivo por sí solo y esta función queda leyendo solo lo cifrado.
+ */
+export function tokenDeFila(fila: FilaToken | null | undefined): string {
+  if (!fila) return "";
+  const cifrado = fila.waba_token_cifrado;
+  if (cifrado) {
+    const claro = descifrar(cifrado, "waba-token");
+    if (claro) return claro;
+    console.error(
+      "[whatsapp] waba_token_cifrado no se pudo descifrar (¿rotaron SUPABASE_SERVICE_ROLE_KEY?). Usando el texto plano si existe.",
+    );
+  }
+  return (fila.waba_token as string) || "";
+}
+
 /**
  * Resuelve la config de WhatsApp a partir del phone_number_id que manda Meta
  * en el webhook. Primero busca un cliente con ese waba_phone_id; si no lo
@@ -28,14 +88,10 @@ export type ConfigWhatsApp = {
 export async function configPorPhoneId(
   phoneNumberId: string,
 ): Promise<ConfigWhatsApp | null> {
-  const { data } = await db()
-    .from("ed_clientes")
-    .select("id, waba_token")
-    .eq("waba_phone_id", phoneNumberId)
-    .maybeSingle();
+  const data = await leerCliente("waba_phone_id", phoneNumberId, "id, waba_token");
 
   if (data) {
-    const token = (data.waba_token as string) || process.env.WHATSAPP_TOKEN || "";
+    const token = tokenDeFila(data as FilaToken) || process.env.WHATSAPP_TOKEN || "";
     if (!token) return null;
     return { clienteId: data.id as string, phoneNumberId, token };
   }
@@ -63,14 +119,10 @@ export async function configPorPhoneId(
 export async function configPorCliente(
   clienteId: string,
 ): Promise<ConfigWhatsApp | null> {
-  const { data } = await db()
-    .from("ed_clientes")
-    .select("waba_phone_id, waba_token")
-    .eq("id", clienteId)
-    .maybeSingle();
+  const data = await leerCliente("id", clienteId, "waba_phone_id, waba_token");
 
   const phoneId = (data?.waba_phone_id as string) || "";
-  const token = (data?.waba_token as string) || "";
+  const token = tokenDeFila(data as FilaToken);
   if (phoneId && token) return { clienteId, phoneNumberId: phoneId, token };
 
   // Modo desarrollo: número de prueba de Meta.

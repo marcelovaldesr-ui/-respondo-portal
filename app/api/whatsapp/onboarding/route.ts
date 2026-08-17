@@ -5,6 +5,7 @@ import { limitarDistribuido } from "@/lib/seguridad";
 import { parsearJsonAcotado } from "@/lib/reservasPublicas";
 import { auditarAccion } from "@/lib/auditoria";
 import { idSolicitud } from "@/lib/observabilidad";
+import { cifrar } from "@/lib/cifrado";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 30;
@@ -157,7 +158,12 @@ export async function POST(request: NextRequest) {
         // escribir acá ya no rompe el ruteo del canal no oficial — y volver
         // atrás es solo `transporte='waha'`.
         waba_phone_id: phoneNumberId,
-        waba_token: token,
+        // CIFRADO desde la migración 279. Con este token se pueden enviar
+        // mensajes haciéndose pasar por el negocio, así que no vuelve a
+        // guardarse en claro. La columna vieja queda explícitamente en null
+        // para que un cliente nuevo no la repueble mientras la 280 no corre.
+        waba_token_cifrado: cifrar(token, "waba-token"),
+        waba_token: null,
         // Sin esto, el cron y el inbox seguían mandando por WAHA aunque el
         // Embedded Signup hubiera terminado bien: leen la columna `transporte`,
         // no la presencia de `waba_id`. Faltaba este paso y había que

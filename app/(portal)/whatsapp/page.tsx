@@ -13,7 +13,7 @@ export default async function PaginaWhatsApp() {
 
   const { data } = await db()
     .from("ed_clientes")
-    .select("nombre, waba_id, waba_phone_id, waba_token")
+    .select("nombre, waba_id, waba_phone_id, waba_token, waba_token_cifrado")
     .eq("id", usuario.clienteId)
     .maybeSingle();
 
@@ -27,7 +27,11 @@ export default async function PaginaWhatsApp() {
     .maybeSingle();
   const coexistencia = (extra?.waba_coexistencia ?? null) as boolean | null;
 
-  const conectado = Boolean(data?.waba_id && data?.waba_phone_id && data?.waba_token);
+  // Sirve cualquiera de las dos columnas: la cifrada (279) o la vieja en claro,
+  // que sigue existiendo hasta que corra la 280.
+  const conectado = Boolean(
+    data?.waba_id && data?.waba_phone_id && (data?.waba_token_cifrado || data?.waba_token),
+  );
 
   return (
     <div className="mx-auto w-full max-w-[760px] px-4 py-6 lg:px-8 lg:py-9">

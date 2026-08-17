@@ -3,6 +3,7 @@ import { db } from "@/lib/db";
 import { limitarDistribuido, secretoValido } from "@/lib/seguridad";
 import { ipDeRequest } from "@/lib/reservasPublicas";
 import { LATIDO_CRON_SEGUIMIENTOS, estadoDelCron, leerLatido } from "@/lib/latidos";
+import { tokenDeFila } from "@/lib/whatsapp";
 
 /**
  * Extrae el parámetro ?k= de la URL de webhook que WAHA tiene configurada.
@@ -223,15 +224,23 @@ async function chequearMeta(): Promise<Chequeo> {
 async function chequearTokensClientes(): Promise<Chequeo> {
   const { data, error } = await db()
     .from("ed_clientes")
-    .select("nombre, waba_phone_id, waba_token")
+    .select("nombre, waba_phone_id, waba_token, waba_token_cifrado")
     .eq("transporte", "cloud")
     .eq("activo", true)
-    .not("waba_token", "is", null)
+    // Sirve cualquiera de las dos columnas mientras dure la transición de la
+    // migración 279. Filtrar solo por la vieja dejaría fuera del chequeo justo
+    // a los clientes ya migrados, que es al revés de lo que queremos.
+    .or("waba_token.not.is.null,waba_token_cifrado.not.is.null")
     .not("waba_phone_id", "is", null)
     .limit(10);
 
   if (error) return { ok: false, detalle: `no se pudo leer: ${error.message}` };
   if (!data?.length) return { ok: true, detalle: "sin clientes en vía oficial (omitido)" };
+
+  // Un token que quedó en claro no rompe nada hoy, pero es exactamente la deuda
+  // que la 279 vino a cerrar: que aparezca acá evita que se olvide a medio
+  // camino, con unos clientes migrados y otros no.
+  const enClaro = data.filter((c) => c.waba_token).map((c) => (c.nombre as string) ?? "sin nombre");
 
   const revisiones = await Promise.all(
     data.map(async (c) => {
@@ -240,7 +249,7 @@ async function chequearTokensClientes(): Promise<Chequeo> {
         const r = await fetch(
           `https://graph.facebook.com/v21.0/${encodeURIComponent(c.waba_phone_id as string)}?fields=quality_rating`,
           {
-            headers: { Authorization: `Bearer ${c.waba_token as string}` },
+            headers: { Authorization: `Bearer ${tokenDeFila(c)}` },
             cache: "no-store",
             signal: AbortSignal.timeout(8000),
           },
@@ -253,12 +262,16 @@ async function chequearTokensClientes(): Promise<Chequeo> {
   );
 
   const rotos = revisiones.filter((r) => !r.ok);
+  const aviso = enClaro.length
+    ? ` · ⚠ token en TEXTO PLANO: ${enClaro.join(", ")} (falta correr scripts/cifrar_tokens.ts y la migración 280)`
+    : "";
+
   if (rotos.length === 0) {
-    return { ok: true, detalle: `${revisiones.length} cliente(s) con token válido` };
+    return { ok: true, detalle: `${revisiones.length} cliente(s) con token válido${aviso}` };
   }
   return {
     ok: false,
-    detalle: `token inválido: ${rotos.map((r) => `${r.nombre} (${r.motivo})`).join(", ")}`,
+    detalle: `token inválido: ${rotos.map((r) => `${r.nombre} (${r.motivo})`).join(", ")}${aviso}`,
   };
 }
 
