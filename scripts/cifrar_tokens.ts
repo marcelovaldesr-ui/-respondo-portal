@@ -25,7 +25,21 @@ async function main() {
     .not("waba_token", "is", null);
 
   if (error) {
-    console.error("❌ No se pudo leer. ¿Está aplicada la migración 279?", error.message);
+    // Distinguir el fallo de RED del fallo de ESQUEMA. La primera versión decía
+    // "¿está aplicada la migración 279?" para cualquier error, y con un
+    // `fetch failed` (la máquina no alcanzó a Supabase) mandó a Marcelo a
+    // revisar una migración que ya estaba aplicada.
+    const msg = error.message ?? String(error);
+    if (/fetch failed|ENOTFOUND|ECONNREFUSED|ETIMEDOUT|network/i.test(msg)) {
+      console.error("❌ No se pudo conectar con Supabase. Es un problema de RED, no de la migración.");
+      console.error("   Revisa la conexión, el proxy o el firewall, y SUPABASE_URL en .env.local.");
+      console.error(`   Detalle: ${msg}`);
+    } else if (/column .* does not exist|waba_token_cifrado/i.test(msg)) {
+      console.error("❌ Falta la columna. Aplica sql/279_waba_token_cifrado.sql antes de correr esto.");
+      console.error(`   Detalle: ${msg}`);
+    } else {
+      console.error("❌ No se pudo leer:", msg);
+    }
     process.exit(1);
   }
   if (!data?.length) {
