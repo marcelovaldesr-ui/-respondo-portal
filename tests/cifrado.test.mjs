@@ -4,7 +4,13 @@ import test from "node:test";
 // La clave se deriva de este secreto: sin él, cifrar() lanza.
 process.env.SUPABASE_SERVICE_ROLE_KEY = "clave-de-prueba-no-es-la-real";
 
-import { cifrar, descifrar, pareceCifrado } from "../lib/cifrado.ts";
+import {
+  cifrar,
+  descifrar,
+  firmarEstado,
+  pareceCifrado,
+  verificarEstado,
+} from "../lib/cifrado.ts";
 
 const TOKEN = "EAAG1234567890abcdefGHIJKLMNOPqrstuvwxyz";
 
@@ -54,4 +60,41 @@ test("reconoce un token de Meta en claro como NO cifrado", () => {
 test("soporta textos largos y con acentos", () => {
   const largo = "ñÁÉÍÓÚ ".repeat(500);
   assert.equal(descifrar(cifrar(largo, "gcal-refresh"), "gcal-refresh"), largo);
+});
+
+// ── Estado firmado de OAuth ────────────────────────────────────────────────
+// Es la ÚNICA barrera del callback de Instagram: esa ruta es pública porque
+// Instagram redirige ahí el navegador y no reenvía la sesión del portal.
+
+test("el estado firmado devuelve los mismos datos", () => {
+  const e = firmarEstado({ clienteId: "abc-123" }, "ig-estado");
+  assert.equal(verificarEstado(e, "ig-estado")?.clienteId, "abc-123");
+});
+
+test("un estado con la firma cambiada se rechaza", () => {
+  // El ataque que importa: cambiar el clienteId para colgar MI Instagram de la
+  // cuenta de OTRO negocio.
+  const e = firmarEstado({ clienteId: "cliente-legitimo" }, "ig-estado");
+  const [payload, firma] = e.split(".");
+  const otro = Buffer.from(JSON.stringify({ clienteId: "victima", emitidoEn: Date.now() })).toString(
+    "base64url",
+  );
+  assert.equal(verificarEstado(`${otro}.${firma}`, "ig-estado"), null);
+  assert.equal(verificarEstado(`${payload}.${firma.slice(0, -2)}XY`, "ig-estado"), null);
+});
+
+test("un estado de otro propósito no sirve", () => {
+  const e = firmarEstado({ clienteId: "abc" }, "ig-estado");
+  assert.equal(verificarEstado(e, "waba-token"), null);
+});
+
+test("un estado vencido se rechaza", () => {
+  const e = firmarEstado({ clienteId: "abc" }, "ig-estado");
+  assert.equal(verificarEstado(e, "ig-estado", -1), null); // ventana ya pasada
+});
+
+test("un estado con basura no revienta", () => {
+  for (const malo of ["", "sinpunto", "a.b.c", "!!!.???"]) {
+    assert.equal(verificarEstado(malo, "ig-estado"), null);
+  }
 });

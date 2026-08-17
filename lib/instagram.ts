@@ -1,4 +1,5 @@
 import { db } from "@/lib/db";
+import { cifrar, descifrar } from "@/lib/cifrado";
 
 /**
  * INSTAGRAM DIRECT — transporte.
@@ -158,16 +159,32 @@ export async function cuentaPorIdIg(paginaId: string): Promise<CuentaIg | null> 
 
   const { data } = await supa
     .from("ed_clientes")
-    .select("id, ig_user_id, ig_token")
+    .select("id, ig_user_id, ig_token, ig_token_cifrado")
     .eq("ig_user_id", paginaId)
     .eq("activo", true)
     .maybeSingle();
   if (!data) return null;
 
-  const fila = data as { id: string; ig_user_id: string | null; ig_token: string | null };
+  const fila = data as {
+    id: string;
+    ig_user_id: string | null;
+    ig_token: string | null;
+    ig_token_cifrado: string | null;
+  };
+  // El token vive CIFRADO desde la migración 281. Si el descifrado falla hay
+  // que gritarlo: silenciarlo dejaría el canal muerto sin ningún síntoma.
+  let token = "";
+  if (fila.ig_token_cifrado) {
+    token = descifrar(fila.ig_token_cifrado, "ig-token") ?? "";
+    if (!token) {
+      console.error(
+        "[instagram] ig_token_cifrado no se pudo descifrar (¿rotaron SUPABASE_SERVICE_ROLE_KEY?). El canal queda mudo para este cliente.",
+      );
+    }
+  }
   // IG_TOKEN de entorno es solo para la cuenta de pruebas: permite probar antes
-  // de construir la pantalla de conexión, sin que eso se vuelva la arquitectura.
-  const token = fila.ig_token || process.env.IG_TOKEN || "";
+  // de conectar una cuenta real, sin que eso se vuelva la arquitectura.
+  token = token || fila.ig_token || process.env.IG_TOKEN || "";
   if (!token) return null;
 
   return { clienteId: fila.id, igUserId: fila.ig_user_id || paginaId, token };
@@ -273,15 +290,16 @@ export async function renovarTokensIg(): Promise<{ renovados: number; fallas: st
 
   const { data } = await supa
     .from("ed_clientes")
-    .select("id, nombre, ig_token, ig_token_vence")
-    .not("ig_token", "is", null)
+    .select("id, nombre, ig_token, ig_token_cifrado, ig_token_vence")
+    .or("ig_token.not.is.null,ig_token_cifrado.not.is.null")
     .lt("ig_token_vence", limite)
     .eq("activo", true);
 
   const filas = (data ?? []) as {
     id: string;
     nombre: string;
-    ig_token: string;
+    ig_token: string | null;
+    ig_token_cifrado: string | null;
     ig_token_vence: string | null;
   }[];
   if (!filas.length) return { renovados: 0, fallas: [] };
@@ -291,7 +309,14 @@ export async function renovarTokensIg(): Promise<{ renovados: number; fallas: st
 
   for (const c of filas) {
     try {
-      const url = `${GRAPH_IG}/refresh_access_token?grant_type=ig_refresh_token&access_token=${encodeURIComponent(c.ig_token)}`;
+      const actual = c.ig_token_cifrado
+        ? descifrar(c.ig_token_cifrado, "ig-token")
+        : c.ig_token;
+      if (!actual) {
+        fallas.push(`${c.nombre}: no se pudo descifrar el token`);
+        continue;
+      }
+      const url = `${GRAPH_IG}/refresh_access_token?grant_type=ig_refresh_token&access_token=${encodeURIComponent(actual)}`;
       const r = await fetch(url);
       if (!r.ok) {
         fallas.push(`${c.nombre}: ${r.status}`);
@@ -305,7 +330,8 @@ export async function renovarTokensIg(): Promise<{ renovados: number; fallas: st
       await supa
         .from("ed_clientes")
         .update({
-          ig_token: j.access_token,
+          ig_token_cifrado: cifrar(j.access_token, "ig-token"),
+          ig_token: null, // el renovado nunca vuelve a texto plano
           ig_token_vence: new Date(Date.now() + (j.expires_in ?? 5_184_000) * 1000).toISOString(),
         })
         .eq("id", c.id);

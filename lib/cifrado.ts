@@ -1,4 +1,11 @@
-import { createCipheriv, createDecipheriv, createHash, randomBytes } from "crypto";
+import {
+  createCipheriv,
+  createDecipheriv,
+  createHash,
+  createHmac,
+  randomBytes,
+  timingSafeEqual,
+} from "crypto";
 
 /**
  * CIFRADO DE SECRETOS EN REPOSO (AES-256-GCM).
@@ -29,7 +36,7 @@ import { createCipheriv, createDecipheriv, createHash, randomBytes } from "crypt
  * se reporta en /api/salud en vez de tratarse como "no configurado".
  */
 
-export type Proposito = "gcal-refresh" | "waba-token";
+export type Proposito = "gcal-refresh" | "waba-token" | "ig-token" | "ig-estado";
 
 function clave(proposito: Proposito): Buffer {
   const base = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -77,4 +84,56 @@ export function pareceCifrado(valor: string | null | undefined): boolean {
   if (!valor) return false;
   const partes = valor.split(".");
   return partes.length === 3 && partes.every((p) => /^[A-Za-z0-9_-]+$/.test(p) && p.length > 0);
+}
+
+// ---------------------------------------------------------------------------
+// Estado firmado para vueltas de OAuth
+// ---------------------------------------------------------------------------
+
+/**
+ * El `state` de OAuth viaja por el navegador del dueño —que no es de fiar— y
+ * vuelve en el callback. Va FIRMADO porque es la única barrera real: el
+ * callback no trae sesión del portal (el proveedor no la reenvía), así que sin
+ * firma cualquiera podría fabricar un state y colgar SU Instagram de la cuenta
+ * de OTRO cliente.
+ *
+ * lib/googleOAuth.ts tiene su propia copia de esto. No se unificó a propósito:
+ * esa integración acaba de ser aprobada por Google y no vale la pena tocarla
+ * hoy por ahorrar quince líneas. Cuando haya que modificarla por otra razón,
+ * ahí se migra a estas funciones.
+ */
+export function firmarEstado(datos: Record<string, string>, proposito: Proposito): string {
+  const payload = Buffer.from(JSON.stringify({ ...datos, emitidoEn: Date.now() })).toString("base64url");
+  const firma = createHmac("sha256", clave(proposito)).update(payload).digest("base64url");
+  return `${payload}.${firma}`;
+}
+
+/** Devuelve los datos firmados, o null si la firma no cuadra o el estado venció. */
+export function verificarEstado(
+  valor: string,
+  proposito: Proposito,
+  maxMs = 15 * 60_000,
+): Record<string, string> | null {
+  const [payload, firma] = valor.split(".");
+  if (!payload || !firma) return null;
+
+  const esperada = createHmac("sha256", clave(proposito)).update(payload).digest("base64url");
+  const a = Buffer.from(firma);
+  const b = Buffer.from(esperada);
+  // Comparación en tiempo constante: comparar con === filtra por el primer byte
+  // distinto y deja medir la firma correcta a punta de intentos.
+  if (a.length !== b.length || !timingSafeEqual(a, b)) return null;
+
+  try {
+    const obj = JSON.parse(Buffer.from(payload, "base64url").toString("utf8")) as Record<string, unknown>;
+    const emitidoEn = obj.emitidoEn;
+    if (typeof emitidoEn !== "number") return null;
+    // Un estado del futuro es tan sospechoso como uno vencido.
+    if (emitidoEn > Date.now() + 60_000 || Date.now() - emitidoEn > maxMs) return null;
+    const salida: Record<string, string> = {};
+    for (const [k, v] of Object.entries(obj)) if (typeof v === "string") salida[k] = v;
+    return salida;
+  } catch {
+    return null;
+  }
 }
