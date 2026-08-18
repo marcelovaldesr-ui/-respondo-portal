@@ -45,10 +45,13 @@ escriben primero: ese es exactamente el caso gratuito.
   riesgo de ser marcado. Con la API oficial ese riesgo desaparece.
 - **Infraestructura propia.** Hoy el envío depende de un servidor WAHA propio
   (`WAHA_API_URL`). Con Cloud API lo hospeda Meta.
-- **Multi-cliente.** `WAHA_SESSION` / `WAHA_INSTANCIA` son variables de entorno
-  **globales**: hoy el sistema solo soporta un negocio en WAHA. Cloud API resuelve
-  el cliente por `phone_number_id` desde la base — multi-tenant desde el día uno.
-  Esto ya estaba anotado como decisión pendiente en la auditoría de agosto.
+- **Multi-cliente.** La *entrada* ya resuelve el cliente por la columna
+  `ed_clientes.waha_instancia` (migración 275), pero la *salida* sigue atada a
+  `WAHA_SESSION` / `WAHA_INSTANCIA`, que son variables de entorno **globales**
+  (`lib/waha.ts:30-31`): en la práctica solo se puede enviar desde un negocio.
+  Cloud API resuelve el cliente por `phone_number_id` desde la base en ambos
+  sentidos — multi-tenant de verdad. Esto ya estaba anotado como decisión
+  pendiente en la auditoría de agosto.
 
 ### En contra de apurarse
 - El camino de Meta **no tiene** los arreglos de calidad de conversación (ver §3).
@@ -70,6 +73,11 @@ que harían que Tino **empeore** si se migra sin arreglarlas primero.
 | **G4** | Los adjuntos no se guardan con metadatos de media | `lib/inboundMeta.ts` (nunca pasa `media` a `guardarMensaje`) | El visor de adjuntos del inbox queda vacío: Cecilia no puede ver las imágenes que manda el cliente. Los arreglos B5/N2 son solo de WAHA | **Media** |
 | **G5** | `/api/whatsapp/media` resuelve solo vía WAHA (`mediaDeMensajeWaha`) | `app/api/whatsapp/media/route.ts` | Los adjuntos recibidos por Meta no se pueden descargar (Meta usa `GET /<media-id>` + URL firmada temporal, flujo distinto) | **Media** |
 | **G6** | Sin freno de ritmo (≥8 envíos/min) | `lib/inboundMeta.ts` | Menor: la API oficial no penaliza como WAHA, pero conviene mantener el comportamiento humano | **Baja** |
+
+> **Verificado contra el código actual.** Estas seis brechas se re-comprobaron
+> el 18-ago-2026 contra el HEAD del repositorio (`a85faa5`, ya con "Hardening
+> seguridad" y "Auditoría de escala" aplicados): **las seis siguen abiertas**.
+> No están cubiertas por el trabajo de endurecimiento reciente.
 
 > **Nota importante:** G1, G2 y G3 son los tres arreglos que más costó encontrar
 > en las auditorías de agosto (uno requirió un servidor WAHA falso para
