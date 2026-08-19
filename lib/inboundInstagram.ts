@@ -3,6 +3,7 @@ import {
   parsearInstagram,
   cuentaPorIdIg,
   enviarTextoInstagram,
+  nombreDelRemitente,
   type CuentaIg,
 } from "@/lib/instagram";
 import { tinoDe } from "@/lib/whatsapp";
@@ -138,17 +139,38 @@ export async function manejarEntranteInstagram(
     const { data: contactoGuardado } = await supa
       .from("ed_contactos")
       .upsert(
-        {
-          cliente_id: ctx.clienteId,
-          chat_id: chatId,
-          // No se inventa un nombre: en Instagram el perfil requiere otro permiso
-          // y hasta tenerlo es preferible mostrar el usuario que un dato falso.
-          etiqueta: "lead",
-        },
+        { cliente_id: ctx.clienteId, chat_id: chatId, etiqueta: "lead" },
         { onConflict: "cliente_id,chat_id" },
       )
       .select("nombre, telefono, etiquetas, etapa, etapa_manual, ultimo_mensaje_en, ultimo_mensaje_rol")
       .maybeSingle();
+
+    /**
+     * El nombre de quien escribe, la PRIMERA vez que escribe.
+     *
+     * Sin esto el contacto aparece como `+ig:1436053351910293` y el dueño no
+     * puede reconocer a nadie en su bandeja. Se pide una sola vez —solo si el
+     * contacto todavía no tiene nombre— para no gastar una llamada a Meta por
+     * cada mensaje de una conversación larga.
+     *
+     * Va sin `await` bloqueante sobre la respuesta al cliente: es un dato
+     * cosmético y no puede retrasar ni impedir que Tino conteste.
+     */
+    if (!contactoGuardado?.nombre) {
+      try {
+        const nombre = await nombreDelRemitente(ev.igsid, cta.cuenta);
+        if (nombre) {
+          await supa
+            .from("ed_contactos")
+            .update({ nombre })
+            .eq("cliente_id", ctx.clienteId)
+            .eq("chat_id", chatId);
+          if (contactoGuardado) contactoGuardado.nombre = nombre;
+        }
+      } catch {
+        /* un contacto sin nombre es un detalle; perder el mensaje no lo es */
+      }
+    }
 
     await tocarVentanaEntrante(empleadoId, chatId, supa);
 

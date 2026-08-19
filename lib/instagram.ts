@@ -190,6 +190,46 @@ export async function cuentaPorIdIg(paginaId: string): Promise<CuentaIg | null> 
   return { clienteId: fila.id, igUserId: fila.ig_user_id || paginaId, token };
 }
 
+/**
+ * El nombre de quien escribe, para no mostrar un IGSID en la bandeja.
+ *
+ * Antes el contacto aparecía como `+ig:1436053351910293`. Funcionaba, pero el
+ * dueño del negocio no puede reconocer a nadie en una lista de números de 17
+ * dígitos, que es justo lo que una bandeja de atención tiene que resolver.
+ *
+ * Se piden `name` y `username`. Se prefiere el nombre real —"Marcelo Valdés" se
+ * reconoce mejor que "@valdesmarceloo" en una lista— y el arroba queda de
+ * respaldo para las cuentas que no tienen nombre puesto, que son muchas.
+ *
+ * ⚠️ Un hilo del foro de desarrolladores afirma que `username` no se puede
+ * pedir sobre un IGSID. **Es falso**: probado el 17-ago-2026 contra la cuenta
+ * real, devuelve los dos campos sin problema. Verificado, no asumido.
+ *
+ * Se llama UNA vez, al crear el contacto, no en cada mensaje. Y si falla se
+ * devuelve null sin ruido: quedarse sin nombre es un detalle estético, perder
+ * el mensaje no.
+ */
+export async function nombreDelRemitente(
+  igsid: string,
+  cuenta: CuentaIg,
+): Promise<string | null> {
+  try {
+    const r = await fetch(`${GRAPH_IG}/${encodeURIComponent(igsid)}?fields=name,username`, {
+      headers: { Authorization: `Bearer ${cuenta.token}` },
+      cache: "no-store",
+      signal: AbortSignal.timeout(6000),
+    });
+    if (!r.ok) return null;
+    const j = (await r.json()) as { name?: string; username?: string };
+    const nombre = j.name?.trim();
+    if (nombre) return nombre;
+    const usuario = j.username?.trim();
+    return usuario ? `@${usuario}` : null;
+  } catch {
+    return null;
+  }
+}
+
 /** Espera humana proporcional al texto, igual que en WhatsApp. */
 function delayHumano(texto: string): number {
   const base = 1200 + texto.length * 30;
