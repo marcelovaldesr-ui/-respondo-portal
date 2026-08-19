@@ -230,6 +230,30 @@ export async function nombreDelRemitente(
   }
 }
 
+/**
+ * La cuenta de Instagram de un cliente, para responder DESDE la bandeja.
+ *
+ * `cuentaPorIdIg` busca por el id de Instagram, que es lo que trae un webhook
+ * entrante. Cuando quien escribe es una persona del negocio desde el portal, lo
+ * que tenemos es el id del cliente, no el de la cuenta.
+ */
+export async function cuentaIgDeCliente(clienteId: string): Promise<CuentaIg | null> {
+  const { data } = await db()
+    .from("ed_clientes")
+    .select("id, ig_user_id, ig_token, ig_token_cifrado")
+    .eq("id", clienteId)
+    .maybeSingle();
+  if (!data?.ig_user_id) return null;
+
+  const fila = data as { ig_user_id: string; ig_token: string | null; ig_token_cifrado: string | null };
+  const token = fila.ig_token_cifrado
+    ? (descifrar(fila.ig_token_cifrado, "ig-token") ?? "")
+    : (fila.ig_token ?? "");
+  if (!token) return null;
+
+  return { clienteId, igUserId: fila.ig_user_id, token };
+}
+
 /** Espera humana proporcional al texto, igual que en WhatsApp. */
 function delayHumano(texto: string): number {
   const base = 1200 + texto.length * 30;
@@ -270,12 +294,16 @@ export async function enviarTextoInstagram(
   cuenta: CuentaIg,
   igsid: string,
   texto: string,
-  opts?: { vigente?: () => Promise<boolean> },
+  opts?: { vigente?: () => Promise<boolean>; sinEspera?: boolean },
 ): Promise<{ ok: boolean; waId?: string; error?: string }> {
   if (!cuenta.token) return { ok: false, error: "Instagram sin token para este cliente" };
 
   try {
-    await new Promise((r) => setTimeout(r, delayHumano(texto)));
+    // La espera simulada tiene sentido cuando responde el asistente: escribir al
+    // instante delata a un bot. Cuando escribe una PERSONA desde la bandeja no
+    // corresponde — ya se demoró tecleando, y sumarle segundos solo hace que el
+    // portal se sienta lento.
+    if (!opts?.sinEspera) await new Promise((r) => setTimeout(r, delayHumano(texto)));
 
     if (opts?.vigente && !(await opts.vigente())) {
       return { ok: false, error: "obsoleto:llego_mensaje_nuevo" };

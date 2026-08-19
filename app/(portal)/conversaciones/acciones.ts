@@ -5,6 +5,7 @@ import { db } from "@/lib/db";
 import { obtenerUsuarioConPermiso } from "@/lib/auth";
 import { configPorCliente, enviarTexto } from "@/lib/whatsapp";
 import { enviarTextoWaha, enviarMediaWaha } from "@/lib/waha";
+import { cuentaIgDeCliente, enviarTextoInstagram } from "@/lib/instagram";
 import { guardarMensaje } from "@/lib/mensajes";
 import { limitarDistribuido } from "@/lib/seguridad";
 import type { SupabaseClient } from "@supabase/supabase-js";
@@ -240,18 +241,43 @@ export async function responderComoHumano(
   const control = await tomarControlTemporal(supa, empleadoId, chatId);
   if (!control) return { ok: false, error: "No se pudo tomar el control del chat" };
 
-  // Enviar por WhatsApp, eligiendo el transporte SEGÚN EL CLIENTE:
-  //  - Cliente marcado como 'cloud' → Meta oficial.
-  //  - Resto (por defecto) → WAHA, que es el caso de Impresora Color.
-  // (Antes SIEMPRE usaba Cloud API → el texto de la persona no llegaba cuando el
-  // cliente está en WAHA.)
-  const envio =
-    transporte.tipo === "cloud"
-      ? await enviarTexto(transporte.config, chatId, texto)
-      : await enviarTextoWaha(chatId, texto);
+  /**
+   * ELEGIR EL CANAL ANTES QUE EL TRANSPORTE.
+   *
+   * `transporteSalida` solo distingue WAHA de Cloud API, y las dos son de
+   * WhatsApp. Un chat de Instagram tiene `chat_id = ig:<IGSID>`, que no es un
+   * teléfono: mandarlo por cualquiera de esas dos vías es mandarlo a la nada.
+   *
+   * BUG REAL (17-ago-2026): al tomar el control de una conversación de
+   * Instagram, el mensaje escrito por la persona salía hacia WAHA con destino
+   * "ig:1436053351910293" y no llegaba nunca. El portal lo daba por enviado y
+   * lo mostraba en la bandeja, así que desde adentro parecía haber funcionado.
+   * Lo destapó grabar el video de la revisión de Meta.
+   */
+  const esInstagram = chatId.startsWith("ig:");
+
+  let envio: { ok: boolean; waId?: string; error?: string };
+  if (esInstagram) {
+    const cuenta = await cuentaIgDeCliente(usuario.clienteId);
+    if (!cuenta) {
+      await restaurarControl(supa, empleadoId, chatId, control);
+      return { ok: false, error: "Este negocio no tiene Instagram conectado" };
+    }
+    envio = await enviarTextoInstagram(cuenta, chatId.slice(3), texto, { sinEspera: true });
+  } else {
+    // Cliente marcado como 'cloud' → Meta oficial. Resto → WAHA.
+    envio =
+      transporte.tipo === "cloud"
+        ? await enviarTexto(transporte.config, chatId, texto)
+        : await enviarTextoWaha(chatId, texto);
+  }
+
   if (!envio.ok) {
     await restaurarControl(supa, empleadoId, chatId, control);
-    return { ok: false, error: envio.error || "WhatsApp rechazó el envío" };
+    return {
+      ok: false,
+      error: envio.error || `${esInstagram ? "Instagram" : "WhatsApp"} rechazó el envío`,
+    };
   }
 
   // Guardar el mensaje del humano CON el id del envío. Esto es clave: WhatsApp
@@ -267,7 +293,10 @@ export async function responderComoHumano(
     rol: "humano",
     texto,
     waId: envio.ok ? envio.waId : undefined,
-    canal: "whatsapp",
+    // Estaba fijo en "whatsapp". Sin esto, las respuestas humanas de Instagram
+    // quedaban contadas como WhatsApp y la analítica atribuía al canal
+    // equivocado, sin ningún síntoma visible.
+    canal: esInstagram ? "instagram" : "whatsapp",
   });
   if (!guardado.ok) {
     // El mensaje sí salió, pero sin historial el próximo turno tendría contexto
@@ -356,6 +385,16 @@ export async function enviarArchivoComoHumano(
   // Transporte por cliente (mismo criterio que el texto). El envío de media por
   // Cloud API todavía no está implementado; los clientes marcados como 'cloud'
   // reciben un aviso claro en vez de un envío silencioso por el canal equivocado.
+  // Instagram: mismo hueco que tenía el texto. Se avisa en vez de mandarlo por
+  // WAHA, que lo daría por enviado y no llegaría nunca.
+  if (chatId.startsWith("ig:")) {
+    return {
+      ok: false,
+      error:
+        "Por ahora los archivos solo se pueden enviar por WhatsApp. En Instagram puedes responder con texto.",
+    };
+  }
+
   const transporte = await transporteSalida(usuario.clienteId);
   if (transporte.tipo === "error") return { ok: false, error: transporte.error };
   if (transporte.tipo === "cloud") {
