@@ -1,4 +1,5 @@
 import Sidebar from "@/components/Sidebar";
+import AvisoVersion from "@/components/AvisoVersion";
 import { exigirUsuarioPortal } from "@/lib/auth";
 import { contadoresMenu } from "@/lib/contadores";
 
@@ -31,6 +32,9 @@ export default async function PortalLayout({
         porCerrar={contadores.porCerrar}
       />
       <div className="min-w-0 flex-1">{children}</div>
+      {/* Avisa cuando la pestaña quedó con una versión vieja, antes de que el
+          dueño apriete un botón que ya no existe y se le caiga la pantalla. */}
+      <AvisoVersion />
     </div>
   );
 }

@@ -18,6 +18,23 @@ const csp = [
 
 const nextConfig = {
   poweredByHeader: false, // no revelar el stack (cabecera X-Powered-By)
+
+  /**
+   * VERSIÓN DEL DESPLIEGUE, HORNEADA EN EL PAQUETE DEL NAVEGADOR.
+   *
+   * Sirve para detectar que una pestaña quedó vieja. Tras un despliegue, el
+   * navegador conserva el JavaScript anterior; si el cliente aprieta un botón
+   * que llama a una acción del servidor, esa acción ya no existe con el mismo
+   * identificador y revienta con "i is not a function" — el portal se cae
+   * entero y el dueño ve un cartel de error mientras atendía a alguien.
+   *
+   * Comparando esto contra /api/version (que devuelve el valor VIVO) se detecta
+   * la diferencia ANTES de que el usuario apriete nada.
+   */
+  env: {
+    NEXT_PUBLIC_VERSION_DESPLIEGUE:
+      process.env.VERCEL_GIT_COMMIT_SHA?.slice(0, 12) ?? "local",
+  },
   experimental: {
     // Los server actions permiten 1MB por defecto; una foto lo supera. Subimos el
     // tope para poder enviar imágenes/PDF (base64) desde el inbox.
