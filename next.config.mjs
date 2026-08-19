@@ -20,6 +20,19 @@ const nextConfig = {
   poweredByHeader: false, // no revelar el stack (cabecera X-Powered-By)
 
   /**
+   * MAPAS DE ORIGEN, TEMPORALES (19-ago-2026).
+   *
+   * El portal se cae con "i is not a function" y la pila viene minificada:
+   * `iS`, `uE`, `uk` no dicen nada. Con esto, el error llega con el nombre del
+   * archivo y la línea de NUESTRO código.
+   *
+   * ⚠️ QUITAR cuando el fallo esté resuelto. Publica el código fuente del
+   * cliente, y aunque en el navegador ya está todo (minificado), no hay razón
+   * para dejarlo legible más tiempo del necesario.
+   */
+  productionBrowserSourceMaps: true,
+
+  /**
    * VERSIÓN DEL DESPLIEGUE, HORNEADA EN EL PAQUETE DEL NAVEGADOR.
    *
    * Sirve para detectar que una pestaña quedó vieja. Tras un despliegue, el

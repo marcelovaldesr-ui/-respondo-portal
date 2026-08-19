@@ -127,7 +127,16 @@ export default function InboxConversacion({
   const finRef = useRef<HTMLDivElement>(null);
 
   const bajar = () => finRef.current?.scrollIntoView({ behavior: "smooth" });
-  useEffect(bajar, [mensajes.length]);
+  // Las llaves NO son decorativas. `useEffect(bajar, ...)` le entrega a React lo
+  // que devuelva `bajar`, y React usa ese valor como función de limpieza sin
+  // comprobar que lo sea: le basta con que no sea `undefined`. Hoy devuelve
+  // undefined y funciona, pero cualquier cambio futuro en `bajar` —devolver el
+  // elemento, un booleano, lo que sea— rompería el portal entero al desmontar,
+  // con un error minificado imposible de rastrear. Así el retorno queda
+  // controlado acá.
+  useEffect(() => {
+    bajar();
+  }, [mensajes.length]);
 
   // Poll en vivo cada 4s: mensajes nuevos + modo actual, sin recargar la página.
   const refrescar = useCallback(async () => {
