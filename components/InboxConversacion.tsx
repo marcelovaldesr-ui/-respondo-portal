@@ -49,9 +49,29 @@ function Adjunto({ media }: { media: Media }) {
   );
 }
 
+/**
+ * La hora de un mensaje, SIEMPRE en hora de Chile.
+ *
+ * BUG REAL (17-ago-2026): esto no fijaba `timeZone`, así que usaba la del
+ * entorno. El servidor de Vercel corre en UTC y dibujaba "15:55"; el navegador
+ * del cliente, en Chile, dibujaba "11:55". React compara lo que recibió con lo
+ * que produce y, al no coincidir el texto, falla la hidratación (error #418).
+ * A partir de ahí React queda en mal estado y lo que revienta después son
+ * esquirlas: "i is not a function", la pantalla de error, todo.
+ *
+ * Se veía como un problema de despliegues porque el cartel de error decía eso,
+ * pero pasaba en CADA carga de una conversación desde siempre.
+ *
+ * Fijar la zona es lo que garantiza que servidor y navegador escriban lo mismo.
+ * Es el mismo criterio que ya usa el resto del portal (lib/fechas.ts).
+ */
 const hora = (iso: string) => {
   try {
-    return new Date(iso).toLocaleTimeString("es-CL", { hour: "2-digit", minute: "2-digit" });
+    return new Date(iso).toLocaleTimeString("es-CL", {
+      hour: "2-digit",
+      minute: "2-digit",
+      timeZone: "America/Santiago",
+    });
   } catch {
     return "";
   }
