@@ -165,10 +165,18 @@ export async function tokenLargoIg(
  * `messages` trae los mensajes entrantes; `messaging_postbacks`, las respuestas
  * a botones.
  */
-export async function suscribirWebhooksIg(igUserId: string, token: string): Promise<ResultadoIg<true>> {
+export async function suscribirWebhooksIg(token: string): Promise<ResultadoIg<true>> {
   try {
+    // `/me`, NO el id explícito.
+    //
+    // BUG REAL (17-ago-2026): con el id devuelto por el intercambio del código,
+    // Meta responde «Object with ID '...' does not exist, cannot be loaded due
+    // to missing permissions, or does not support this operation». Ese id tiene
+    // alcance de APP y no sirve como objeto en las rutas de la API. El ejemplo
+    // de la propia documentación de Meta usa /me, que resuelve la cuenta desde
+    // el token y siempre apunta a la correcta.
     const r = await fetch(
-      `${GRAPH_IG}/${encodeURIComponent(igUserId)}/subscribed_apps?subscribed_fields=messages,messaging_postbacks`,
+      `${GRAPH_IG}/me/subscribed_apps?subscribed_fields=messages,messaging_postbacks`,
       { method: "POST", headers: { Authorization: `Bearer ${token}` }, cache: "no-store" },
     );
     const j = (await r.json()) as { success?: boolean; error?: { message?: string } };
@@ -179,18 +187,37 @@ export async function suscribirWebhooksIg(igUserId: string, token: string): Prom
   }
 }
 
-/** Nombre de usuario de la cuenta, solo para mostrarlo en el portal. */
-export async function perfilIg(igUserId: string, token: string): Promise<string | null> {
+/**
+ * La identidad REAL de la cuenta conectada, preguntándosela a Meta.
+ *
+ * No basta con el `user_id` que devuelve el intercambio del código: ese tiene
+ * alcance de app. El que hay que guardar es el que devuelve `/me?fields=user_id`,
+ * porque **es el mismo que Meta manda como destinatario en cada webhook**, y es
+ * con ese campo que `cuentaPorIdIg` decide de qué negocio es un mensaje que
+ * entra. Guardar el otro habría hecho que los DMs llegaran sin poder atribuirse
+ * a ningún cliente — un fallo que no se habría visto hasta tener tráfico real.
+ */
+export async function cuentaDesdeToken(
+  token: string,
+): Promise<ResultadoIg<{ igUserId: string; usuario: string | null }>> {
   try {
-    const r = await fetch(`${GRAPH_IG}/${encodeURIComponent(igUserId)}?fields=username`, {
+    const r = await fetch(`${GRAPH_IG}/me?fields=user_id,username`, {
       headers: { Authorization: `Bearer ${token}` },
       cache: "no-store",
     });
-    if (!r.ok) return null;
-    const j = (await r.json()) as { username?: string };
-    return j.username ?? null;
-  } catch {
-    return null;
+    const j = (await r.json()) as {
+      user_id?: string | number;
+      id?: string | number;
+      username?: string;
+      error?: { message?: string };
+    };
+    // Meta devuelve `user_id` en esta API; `id` queda como respaldo por si
+    // cambiara la forma de la respuesta.
+    const id = j.user_id ?? j.id;
+    if (!r.ok || !id) return { ok: false, motivo: j.error?.message ?? `HTTP ${r.status}` };
+    return { ok: true, datos: { igUserId: String(id), usuario: j.username ?? null } };
+  } catch (e) {
+    return { ok: false, motivo: (e as Error).message };
   }
 }
 

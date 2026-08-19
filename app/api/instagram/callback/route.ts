@@ -3,8 +3,8 @@ import { db } from "@/lib/db";
 import {
   cifrarTokenIg,
   clienteDelEstadoIg,
+  cuentaDesdeToken,
   intercambiarCodigoIg,
-  perfilIg,
   suscribirWebhooksIg,
   tokenLargoIg,
 } from "@/lib/instagramOAuth";
@@ -57,21 +57,29 @@ export async function GET(req: NextRequest) {
     return NextResponse.redirect(destino("token"));
   }
 
+  // La identidad real de la cuenta, preguntada a Meta. El id del intercambio
+  // del código tiene alcance de app y NO es el que llega en los webhooks.
+  const cuenta = await cuentaDesdeToken(largo.datos.token);
+  if (!cuenta.ok) {
+    console.error("[instagram] no se pudo leer la cuenta:", cuenta.motivo);
+    return NextResponse.redirect(destino("token"));
+  }
+
   // Suscribir ANTES de guardar: si esto falla, el canal no funcionaría y es
   // preferible que el dueño lo vea ahora y reintente, a que se entere dentro de
   // una semana porque un cliente reclamó que nadie le contestó por Instagram.
-  const sub = await suscribirWebhooksIg(corto.datos.igUserId, largo.datos.token);
+  const sub = await suscribirWebhooksIg(largo.datos.token);
   if (!sub.ok) {
     console.error("[instagram] subscribed_apps falló:", sub.motivo);
     return NextResponse.redirect(destino("sin_webhook"));
   }
 
-  const usuario = await perfilIg(corto.datos.igUserId, largo.datos.token);
+  const usuario = cuenta.datos.usuario;
 
   const { error } = await db()
     .from("ed_clientes")
     .update({
-      ig_user_id: corto.datos.igUserId,
+      ig_user_id: cuenta.datos.igUserId,
       ig_token_cifrado: cifrarTokenIg(largo.datos.token),
       // La columna vieja en claro queda explícitamente vacía: que una conexión
       // nueva no repueble lo que la migración 281 vino a limpiar.
