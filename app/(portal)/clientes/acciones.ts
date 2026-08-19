@@ -6,6 +6,7 @@ import { db } from "@/lib/db";
 import { guardarDatosCliente } from "@/lib/clientes";
 import { programarSeguimiento } from "@/lib/seguimientos";
 import { limitarDistribuido } from "@/lib/seguridad";
+import { ventanaAbierta } from "@/lib/ventana24";
 
 /** Guarda nombre, teléfono, correo y notas internas de la ficha. */
 export async function guardarFicha(formData: FormData): Promise<{ ok: boolean; error?: string }> {
@@ -40,7 +41,7 @@ export async function guardarFicha(formData: FormData): Promise<{ ok: boolean; e
  */
 export async function reactivarCliente(
   formData: FormData,
-): Promise<{ ok: boolean; error?: string }> {
+): Promise<{ ok: boolean; error?: string; aviso?: string }> {
   const usuario = await obtenerUsuarioConPermiso("editar_clientes");
   if (!usuario) return { ok: false, error: "Sesión no válida" };
 
@@ -101,5 +102,29 @@ export async function reactivarCliente(
   if (!r.ok) return { ok: false, error: r.error };
 
   revalidatePath(`/clientes/${chatId}`);
+
+  /**
+   * AVISO DE LA VENTANA DE 24 HORAS.
+   *
+   * Este mensaje lo escribe una persona a mano, así que no puede salir por una
+   * plantilla aprobada. Meta solo acepta texto libre si el cliente escribió en
+   * las últimas 24 h; si no, el mensaje queda esperando en la cola hasta que
+   * vuelva a escribir.
+   *
+   * Eso pasaba igual antes, pero en silencio: la persona apretaba "enviar",
+   * veía "listo" y se quedaba tranquila mientras el mensaje no salía nunca. Se
+   * programa igual —si el cliente responde algo esa tarde, sale solo— pero se
+   * dice lo que va a ocurrir.
+   */
+  const abierta = await ventanaAbierta({ clienteId: usuario.clienteId, chatId, supa });
+  if (!abierta) {
+    return {
+      ok: true,
+      aviso:
+        "Guardado, pero este cliente no escribe hace más de 24 horas y WhatsApp no " +
+        "permite mensajes escritos a mano fuera de ese plazo. El mensaje queda en cola " +
+        "y sale solo apenas él escriba.",
+    };
+  }
   return { ok: true };
 }

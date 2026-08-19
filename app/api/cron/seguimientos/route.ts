@@ -1,8 +1,11 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { db } from "@/lib/db";
 import { procesarSeguimientos } from "@/lib/seguimientos";
+import { generarParaTodos } from "@/lib/generadorSeguimientos";
 import { enviarTextoWaha } from "@/lib/waha";
-import { configPorCliente, enviarTexto } from "@/lib/whatsapp";
+import { configPorCliente, enviarTexto, enviarPlantilla } from "@/lib/whatsapp";
+import { ventanaAbierta } from "@/lib/ventana24";
+import { plantillaPara } from "@/lib/plantillas";
 import { secretoValido } from "@/lib/seguridad";
 import { LATIDO_CRON_SEGUIMIENTOS, registrarLatido } from "@/lib/latidos";
 import { generarInformesPendientes } from "@/lib/insightsAuto";
@@ -43,8 +46,25 @@ export async function GET(request: NextRequest) {
 
   const supa = db();
 
+  /**
+   * GENERAR ANTES DE ENVIAR.
+   *
+   * El generador crea los avisos de mantención con programado_para = ahora, así
+   * que lo que aparezca acá sale en esta misma pasada en vez de esperar cinco
+   * minutos. Va en su propio try: si el generador falla —por una migración sin
+   * aplicar, por ejemplo— los seguimientos YA programados tienen que salir
+   * igual. Es la parte que el negocio está viendo funcionar.
+   */
+  let generados = 0;
+  try {
+    const g = await generarParaTodos({ supa });
+    generados = g.total;
+  } catch (e) {
+    console.error("[cron] generador de seguimientos falló (no afecta los envíos)", e);
+  }
+
   const r = await procesarSeguimientos({
-    enviar: async (empleadoId, chatId, texto) => {
+    enviar: async (empleadoId, chatId, texto, extra) => {
       // Resolver el cliente del empleado para elegir transporte.
       const { data: emp } = await supa
         .from("ed_empleados")
@@ -64,7 +84,33 @@ export async function GET(request: NextRequest) {
       if (transporte === "cloud") {
         const cfg = await configPorCliente(clienteId);
         if (!cfg) return { ok: false, error: "cliente cloud sin credenciales" };
-        return enviarTexto(cfg, chatId, texto);
+
+        /**
+         * TEXTO LIBRE vs PLANTILLA (la regla de Meta, ver lib/ventana24.ts).
+         *
+         * Dentro de la ventana de 24 h el texto libre es gratis y se ve más
+         * natural, así que se prefiere. Fuera de la ventana Meta lo rechaza y
+         * la única vía es la plantilla aprobada — que dice exactamente lo
+         * mismo, porque el texto se renderizó desde su cuerpo.
+         */
+        const abierta = await ventanaAbierta({ clienteId, chatId, supa });
+        if (abierta) return enviarTexto(cfg, chatId, texto);
+
+        const pl = plantillaPara(extra.plantilla);
+        if (!pl || !extra.params.length) {
+          // Texto libre con la ventana cerrada: no se envía y no se quema el
+          // intento. Si el cliente escribe en las próximas horas, sale solo.
+          return {
+            ok: false,
+            omitido: true,
+            error: "ventana de 24h cerrada y el mensaje no tiene plantilla",
+          };
+        }
+        return enviarPlantilla(cfg, chatId, {
+          nombre: pl.nombre,
+          idioma: pl.idioma,
+          params: extra.params,
+        });
       }
       // BARRERA MULTI-CLIENTE (auditoría 11-ago-2026): WAHA tiene UNA sola
       // sesión. Sin pasar el clienteId acá, los recordatorios de cualquier otro
@@ -150,6 +196,7 @@ export async function GET(request: NextRequest) {
   // El detalle de cupos nombra clientes: va el conteo, no las líneas.
   return NextResponse.json({
     ...r,
+    generados,
     informes,
     instagram,
     webhooks,

@@ -1,5 +1,6 @@
 import { db } from "@/lib/db";
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { plantillaPara, render, limpiarParam } from "@/lib/plantillas";
 
 /**
  * MOTOR DE SEGUIMIENTOS PROGRAMADOS (tabla ed_seguimientos).
@@ -53,26 +54,68 @@ export function enHorarioHabil(d = new Date()): boolean {
   return h >= 10 && h < 19;
 }
 
-/** Programa un seguimiento. `texto` es el mensaje saliente (vía no oficial). */
+/**
+ * Programa un seguimiento.
+ *
+ * Hay dos formas de llamarlo, y la diferencia decide si el mensaje puede salir
+ * fuera de la ventana de 24 h:
+ *
+ *  A) Con `paramsPlantilla`: el texto se RENDERIZA desde el cuerpo aprobado en
+ *     Meta (lib/plantillas.ts). Sirve dentro y fuera de la ventana. Es la forma
+ *     que usan Beto y Vera, y la que hay que usar siempre que se pueda.
+ *
+ *  B) Solo con `texto`: texto libre. Sale únicamente si el cliente escribió en
+ *     las últimas 24 h; si no, el cron lo deja pendiente y lo dice en el
+ *     detalle. Queda para el botón manual de reactivación del portal, donde la
+ *     persona escribe el mensaje a mano.
+ *
+ * En el caso A el `texto` guardado y el cuerpo enviado son literalmente lo
+ * mismo, así que el portal muestra lo que le llegó al cliente.
+ */
 export async function programarSeguimiento(params: {
   empleadoId: string;
   chatId: string;
   tipo: string; // ej: 'recordatorio_cita' | 'cotizacion_sin_respuesta'
-  texto: string;
+  texto?: string;
+  paramsPlantilla?: string[];
   programadoPara: Date;
-  plantillaMeta?: string; // nombre de plantilla Meta (vía oficial, futuro)
+  plantillaMeta?: string; // fuerza una plantilla distinta a la del tipo
   maxIntentos?: number;
   supa?: SupabaseClient;
 }): Promise<{ ok: boolean; error?: string }> {
   const supa = params.supa ?? db();
+
+  let plantillaNombre = "texto_libre";
+  let texto = params.texto ?? "";
+  let paramsLimpios: string[] | null = null;
+
+  if (params.paramsPlantilla) {
+    const pl = plantillaPara(params.plantillaMeta ?? params.tipo);
+    if (!pl) {
+      return { ok: false, error: `no hay plantilla para el tipo "${params.tipo}"` };
+    }
+    paramsLimpios = params.paramsPlantilla.map(limpiarParam);
+    const renderizado = render(pl.cuerpo, paramsLimpios);
+    if (!renderizado) {
+      // Un parámetro vacío o de menos. Mejor no programar nada que dejar una
+      // fila que va a fallar recién dentro de tres días, cuando venza.
+      return { ok: false, error: `parámetros inválidos para la plantilla ${pl.nombre}` };
+    }
+    plantillaNombre = pl.nombre;
+    texto = renderizado;
+  } else if (params.plantillaMeta) {
+    plantillaNombre = params.plantillaMeta;
+  }
+
+  if (!texto.trim()) return { ok: false, error: "seguimiento sin texto" };
+
   const { error } = await supa.from("ed_seguimientos").insert({
     empleado_id: params.empleadoId,
     chat_id: params.chatId,
     tipo: params.tipo,
-    // NOT NULL en el esquema; 'texto_libre' marca envío por vía no oficial
-    // (con variables.texto). Con la vía oficial irá el nombre de la plantilla.
-    plantilla_meta: params.plantillaMeta ?? "texto_libre",
-    variables: { texto: params.texto },
+    // NOT NULL en el esquema. 'texto_libre' = solo dentro de la ventana de 24h.
+    plantilla_meta: plantillaNombre,
+    variables: { texto, ...(paramsLimpios ? { params: paramsLimpios } : {}) },
     programado_para: params.programadoPara.toISOString(),
     max_intentos: params.maxIntentos ?? 1,
     intento: 0,
@@ -93,11 +136,19 @@ export async function programarSeguimiento(params: {
  * transporte real; en tests, un mock. Devuelve el resumen de lo hecho.
  */
 export async function procesarSeguimientos(opts: {
+  /**
+   * El transporte. Recibe además la plantilla y sus parámetros para poder
+   * elegir entre texto libre y plantilla según la ventana de 24 h. Puede
+   * devolver `omitido: true` cuando decide no enviar todavía (por ejemplo, un
+   * texto libre con la ventana cerrada): en ese caso la fila NO se marca como
+   * enviada y se reintenta en la próxima pasada.
+   */
   enviar: (
     empleadoId: string,
     chatId: string,
     texto: string,
-  ) => Promise<{ ok: boolean; waId?: string; error?: string }>;
+    extra: { tipo: string; plantilla: string; params: string[] },
+  ) => Promise<{ ok: boolean; waId?: string; error?: string; omitido?: boolean }>;
   ahora?: Date;
   limite?: number;
   supa?: SupabaseClient;
@@ -209,7 +260,23 @@ export async function procesarSeguimientos(opts: {
       continue;
     }
 
-    const r = await opts.enviar(s.empleado_id, s.chat_id, texto);
+    const vars = (s.variables as { params?: unknown } | null) ?? {};
+    const params = Array.isArray(vars.params) ? (vars.params as string[]).map(String) : [];
+    const plantilla = s.plantilla_meta ?? "texto_libre";
+
+    const r = await opts.enviar(s.empleado_id, s.chat_id, texto, {
+      tipo: s.tipo,
+      plantilla,
+      params,
+    });
+    if (r.omitido) {
+      // No es un fallo: el transporte decidió esperar. El intento NO se
+      // consume, porque si se consumiera un seguimiento con max_intentos = 1
+      // moriría por el solo hecho de haber pasado por acá con la ventana
+      // cerrada, sin haberle escrito nunca a nadie.
+      detalle.push(`${s.id.slice(0, 8)}: pospuesto (${r.error ?? "sin ventana"})`);
+      continue;
+    }
     if (!r.ok) {
       detalle.push(`${s.id.slice(0, 8)}: envío falló (${r.error ?? "?"})`);
       continue;

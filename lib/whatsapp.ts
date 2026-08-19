@@ -178,6 +178,63 @@ export async function enviarTexto(
   }
 }
 
+/**
+ * Envía una PLANTILLA aprobada. Es la única forma de escribirle a alguien fuera
+ * de la ventana de 24 h (ver lib/ventana24.ts y lib/plantillas.ts).
+ *
+ * El cuerpo NO va acá: Meta ya lo tiene guardado desde el alta de la plantilla.
+ * Nosotros solo mandamos el nombre, el idioma y los valores de las variables, y
+ * el orden del array ES el orden de {{1}}, {{2}}…
+ *
+ * Errores frecuentes que devuelve Meta y que conviene reconocer en el log:
+ *  - 132001: la plantilla no existe con ese nombre/idioma en este WABA.
+ *  - 132000: la cantidad de parámetros no calza con el cuerpo aprobado.
+ *  - 132012: un parámetro trae saltos de línea o espacios de más.
+ *  - 131047: se intentó texto libre fuera de la ventana (no debería llegar acá).
+ */
+export async function enviarPlantilla(
+  cfg: ConfigWhatsApp,
+  para: string,
+  plantilla: { nombre: string; idioma: string; params: string[] },
+): Promise<{ ok: boolean; waId?: string; error?: string }> {
+  try {
+    const componentes = plantilla.params.length
+      ? [
+          {
+            type: "body",
+            parameters: plantilla.params.map((p) => ({ type: "text", text: p })),
+          },
+        ]
+      : [];
+    const r = await fetch(`${GRAPH}/${cfg.phoneNumberId}/messages`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${cfg.token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        messaging_product: "whatsapp",
+        to: para,
+        type: "template",
+        template: {
+          name: plantilla.nombre,
+          language: { code: plantilla.idioma },
+          ...(componentes.length ? { components: componentes } : {}),
+        },
+      }),
+      signal: AbortSignal.timeout(15_000),
+    });
+    if (!r.ok) {
+      const t = await r.text();
+      return { ok: false, error: `HTTP ${r.status}: ${t.slice(0, 300)}` };
+    }
+    const j = (await r.json().catch(() => ({}))) as { messages?: { id?: string }[] };
+    return { ok: true, waId: j?.messages?.[0]?.id };
+  } catch (e) {
+    return { ok: false, error: (e as Error).message };
+  }
+}
+
 /** Forma mínima de un mensaje entrante ya normalizado desde el webhook de Meta. */
 export type EntranteNormalizado = {
   phoneNumberId: string; // número del negocio (mapea a cliente)

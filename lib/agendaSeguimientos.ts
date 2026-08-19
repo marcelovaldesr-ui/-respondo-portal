@@ -1,4 +1,5 @@
 import { db } from "@/lib/db";
+import { plantillaPara, render, limpiarParam } from "@/lib/plantillas";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { formatearSlot, fechaChileDe, ZONA_AGENDA } from "@/lib/agendaCore";
 import type { Cita } from "@/lib/agenda";
@@ -63,6 +64,19 @@ async function empleadoPorRol(
   return (data?.id as string) ?? null;
 }
 
+/**
+ * Inserta la fila de seguimiento.
+ *
+ * Si el tipo tiene plantilla en lib/plantillas.ts (los tres de acá la tienen),
+ * el texto se RENDERIZA desde el cuerpo aprobado en Meta, de modo que el
+ * mensaje sirve también fuera de la ventana de 24 h. Una cita agendada con una
+ * semana de anticipación cae siempre fuera de la ventana, así que sin esto los
+ * recordatorios sencillamente no salían.
+ *
+ * Si por lo que sea no hay plantilla o falta un parámetro, cae a texto libre:
+ * el mensaje sigue saliendo cuando el cliente escribió hace poco, que es el
+ * caso de la cita pedida para el mismo día.
+ */
 async function insertarSeguimiento(
   supa: SupabaseClient,
   fila: {
@@ -72,14 +86,35 @@ async function insertarSeguimiento(
     texto: string;
     citaId: string;
     programadoPara: Date;
+    paramsPlantilla?: string[];
   },
 ): Promise<boolean> {
+  let plantilla = "texto_libre";
+  let texto = fila.texto;
+  let params: string[] | null = null;
+
+  if (fila.paramsPlantilla) {
+    const pl = plantillaPara(fila.tipo);
+    const limpios = fila.paramsPlantilla.map(limpiarParam);
+    const renderizado = pl ? render(pl.cuerpo, limpios) : null;
+    if (pl && renderizado) {
+      plantilla = pl.nombre;
+      texto = renderizado;
+      params = limpios;
+    } else {
+      console.warn(
+        `[agendaSeguimientos] ${fila.tipo} sale como texto libre: ` +
+          (pl ? "parámetros incompletos" : "sin plantilla en el catálogo"),
+      );
+    }
+  }
+
   const { error } = await supa.from("ed_seguimientos").insert({
     empleado_id: fila.empleadoId,
     chat_id: fila.chatId,
     tipo: fila.tipo,
-    plantilla_meta: "texto_libre",
-    variables: { texto: fila.texto, cita_id: fila.citaId },
+    plantilla_meta: plantilla,
+    variables: { texto, cita_id: fila.citaId, ...(params ? { params } : {}) },
     programado_para: fila.programadoPara.toISOString(),
     max_intentos: 1,
     intento: 0,
@@ -127,6 +162,22 @@ export async function programarSeguimientosCita(params: {
     (await empleadoPorRol(params.clienteId, "tino", supa));
   const vera = await empleadoPorRol(params.clienteId, "vera", supa);
 
+  /**
+   * El nombre del negocio es un parámetro de la plantilla de la encuesta, y
+   * ninguno de los cuatro lugares que programan citas lo pasa. Se resuelve acá
+   * una sola vez en vez de tocar los cuatro: si mañana aparece un quinto punto
+   * de entrada, la encuesta de Vera sigue funcionando sin que nadie se acuerde.
+   */
+  let negocio = params.nombreNegocio ?? "";
+  if (!negocio) {
+    const { data } = await supa
+      .from("ed_clientes")
+      .select("nombre")
+      .eq("id", params.clienteId)
+      .maybeSingle();
+    negocio = (data?.nombre as string) ?? "";
+  }
+
   let programados = 0;
 
   // Confirmación T−24h
@@ -141,6 +192,11 @@ export async function programarSeguimientosCita(params: {
         `${saludo} Te esperamos mañana para tu ${params.servicioNombre} (${cuando}). ` +
         `¿Me confirmas que vienes? Responde SÍ para confirmar 🙌` +
         lineaGestion,
+      // La plantilla necesita el enlace sí o sí: sin él no hay cuarto
+      // parámetro y el mensaje cae a texto libre (ver insertarSeguimiento).
+      paramsPlantilla: enlace
+        ? [nombre || "👋", params.servicioNombre, cuando, enlace]
+        : undefined,
     });
     if (ok) programados++;
   }
@@ -157,6 +213,9 @@ export async function programarSeguimientosCita(params: {
         `${saludo} Te esperamos hoy a las ${horaChile(cita.inicio)} para tu ` +
         `${params.servicioNombre} 🙌 ¡Nos vemos!` +
         lineaGestion,
+      paramsPlantilla: enlace
+        ? [nombre || "👋", params.servicioNombre, String(horaChile(cita.inicio)), enlace]
+        : undefined,
     });
     if (ok) programados++;
   }
@@ -170,6 +229,7 @@ export async function programarSeguimientosCita(params: {
       citaId: cita.id,
       programadoPara: new Date(finMs + 2 * 3600_000),
       texto: `${saludo} ¿Qué tal resultó tu ${params.servicioNombre} de hoy? De 1 a 5, ¿cómo lo evaluarías? 🌟`,
+      paramsPlantilla: negocio ? [nombre || "👋", negocio] : undefined,
     });
     if (ok) programados++;
   }

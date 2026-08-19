@@ -151,7 +151,12 @@ export default function FichaClienteEditor({
                     fd.set("texto", mensaje.trim());
                     const r = await reactivarCliente(fd);
                     if (r.ok) {
-                      setResultado("Listo: queda en cola y sale en el próximo horario hábil.");
+                      // El aviso llega cuando la ventana de 24 h de WhatsApp
+                      // está cerrada: el mensaje queda en cola, pero no sale
+                      // hasta que el cliente escriba. Antes esto no se decía.
+                      setResultado(
+                        r.aviso ?? "Listo: queda en cola y sale en el próximo horario hábil.",
+                      );
                       setMensaje("");
                       setAbrirReactivar(false);
                     } else {
