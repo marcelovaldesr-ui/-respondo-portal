@@ -20,6 +20,7 @@ import { responderSiBot } from "@/lib/responderBot";
 import { empleadoParaEntrante } from "@/lib/seguimientos";
 import { notificarSistemaDelCliente } from "@/lib/puenteSalida";
 import { fechaLimiteModelo } from "@/lib/presupuesto";
+import { transporteDe } from "@/lib/transporte";
 
 export type ResultadoEntrante = { accion: string; detalle?: string };
 
@@ -131,12 +132,21 @@ export async function manejarEntranteWaha(
   const m = parsearWaha(payload);
   if (!m) return { accion: "ignorado" };
 
+  const supa = db();
+
   const clienteId = await clientePorInstanciaWaha(m.instancia);
   if (!clienteId) return { accion: "sin_cliente", detalle: m.instancia };
+
+  // ¿Este cliente todavía manda por WAHA? Si ya migró a la Cloud API, la sesión
+  // de WAHA sigue vinculada y su webhook sigue llegando: sin esta guardia el
+  // cliente recibiría DOS respuestas y cada canal creería que una persona tomó
+  // el control. Ver lib/transporte.ts para el detalle del fallo.
+  if ((await transporteDe(clienteId, supa)) !== "waha") {
+    return { accion: "otro_transporte", detalle: "cliente en cloud" };
+  }
+
   const tinoId = await tinoDe(clienteId);
   if (!tinoId) return { accion: "sin_tino" };
-
-  const supa = db();
 
   // 2b) Identidad estable: la clave del chat es el NÚMERO REAL (resuelto del LID).
   const contacto = await resolverContacto(m.jid);

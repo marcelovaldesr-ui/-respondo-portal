@@ -18,6 +18,7 @@ import { modoDe, setModo, tocarVentanaEntrante } from "@/lib/estadoChat";
 import { responderSiBot } from "@/lib/responderBot";
 import { empleadoParaEntrante } from "@/lib/seguimientos";
 import { fechaLimiteModelo } from "@/lib/presupuesto";
+import { transporteDe } from "@/lib/transporte";
 
 export type ResultadoMeta = { accion: string; detalle?: string };
 
@@ -57,6 +58,13 @@ export async function manejarEntranteMeta(
     if (cacheCfg.has(phoneNumberId)) return cacheCfg.get(phoneNumberId)!;
     const cfg = await configPorPhoneId(phoneNumberId);
     if (!cfg) {
+      cacheCfg.set(phoneNumberId, null);
+      return null;
+    }
+    // Simétrico a la guardia de inboundWaha: mientras el cliente siga en WAHA
+    // (recién conectado a Meta, o revertido por un rollback), este canal NO debe
+    // responder ni guardar — duplicaría la conversación.
+    if ((await transporteDe(cfg.clienteId, supa)) !== "cloud") {
       cacheCfg.set(phoneNumberId, null);
       return null;
     }
