@@ -69,6 +69,14 @@ export function urlAutorizacionIg(clienteId: string): string {
   const cred = credenciales();
   if (!cred) throw new Error("IG_APP_ID / IG_APP_SECRET no configurados");
   const params = new URLSearchParams({
+    // Lo agrega la propia URL que genera el panel de Meta (verificado el
+    // 17-ago-2026 en "Configura un inicio de sesión empresarial"). Obliga a
+    // escribir la contraseña aunque el navegador ya tenga sesión de Instagram.
+    // Nos conviene por dos razones: el dueño de la pyme suele tener abierta SU
+    // cuenta personal y así no conecta la equivocada sin darse cuenta, y en el
+    // video de revisión se ve la pantalla de login completa, que es lo que Meta
+    // quiere ver.
+    force_reauth: "true",
     client_id: cred.id,
     redirect_uri: REDIRECT_URI_IG,
     response_type: "code",
