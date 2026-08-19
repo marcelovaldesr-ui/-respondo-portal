@@ -24,17 +24,6 @@ export default function ErrorPortal({
   // Decidir en el primer render si vamos a auto-recargar (para no parpadear el cartel).
   const [autorecarga] = useState(() => intentarRecargarPorVersion(error));
 
-  /**
-   * ¿Es de verdad una versión vieja, o estamos adivinando?
-   *
-   * El cartel afirmaba «suele pasar tras una actualización» para CUALQUIER
-   * error. A un cliente con un problema real le decía que recargara, y el
-   * problema seguía ahí. Ahora se pregunta: si la versión del servidor difiere
-   * de la horneada en este paquete, la explicación es cierta; si coinciden,
-   * falló otra cosa y hay que decirlo.
-   */
-  const [esVersionVieja, setEsVersionVieja] = useState<boolean | null>(null);
-
   useEffect(() => {
     console.error("[portal error boundary]", error);
     // Que quede también en los registros del servidor: en la consola del
@@ -54,18 +43,7 @@ export default function ErrorPortal({
     if (autorecarga) {
       // Recarga completa: trae la última versión y resuelve el desajuste de chunks.
       window.location.reload();
-      return;
     }
-    const mia = process.env.NEXT_PUBLIC_VERSION_DESPLIEGUE ?? "local";
-    if (mia === "local") return;
-    fetch("/api/version", { cache: "no-store" })
-      .then((r) => (r.ok ? r.json() : null))
-      .then((j: { version?: string } | null) => {
-        if (j?.version) setEsVersionVieja(j.version !== mia);
-      })
-      .catch(() => {
-        /* sin red no se puede saber; se queda en null y el texto es neutro */
-      });
   }, [error, autorecarga]);
 
   if (autorecarga) {
@@ -89,15 +67,24 @@ export default function ErrorPortal({
       <div className="tarjeta w-full max-w-[440px] p-7 text-center">
         {/* eslint-disable-next-line @next/next/no-img-element */}
         <img src="/brand/isotipo.svg" alt="Respondo" width={34} height={34} className="mx-auto" />
-        <h1 className="titular mt-4 text-[21px] font-bold">
-          {esVersionVieja === false ? "Algo falló acá" : "Se cortó algo por un momento"}
-        </h1>
+        {/*
+          TEXTO NEUTRO A PROPÓSITO (19-ago-2026).
+
+          Antes afirmaba "suele pasar tras una actualización", que es falso en la
+          mayoría de los casos. Lo cambié por uno honesto que decía que el
+          problema era nuestro, y eso tampoco sirve: esta pantalla la puede ver
+          un prospecto en medio de una demostración en vivo.
+
+          La salida no es mentir ni confesar, es no diagnosticar. Se dice lo
+          único que el usuario necesita —que reintente— y el detalle real viaja
+          a /api/error-cliente, que es donde tiene que estar.
+
+          Cuando el fallo de fondo esté resuelto, vale la pena volver a
+          distinguir el caso de versión vieja, que sí es cierto y sí es útil.
+        */}
+        <h1 className="titular mt-4 text-[21px] font-bold">Se cortó algo por un momento</h1>
         <p className="mt-2 text-[14.5px]" style={{ color: "var(--muted)" }}>
-          {esVersionVieja === true
-            ? "Tu navegador tenía abierta una versión anterior de Respondo. Recarga y queda listo."
-            : esVersionVieja === false
-              ? "No fue tu navegador: hay un problema de nuestro lado y ya quedó registrado. Puedes reintentar; si vuelve a pasar, escríbenos."
-              : "Recarga la página. Si vuelve a pasar, escríbenos y lo revisamos."}
+          Vuelve a intentarlo o recarga la página.
         </p>
         <div className="mt-5 flex flex-wrap justify-center gap-2">
           <button onClick={() => reset()} className="btn-suave px-4 py-2 text-[14px]">
