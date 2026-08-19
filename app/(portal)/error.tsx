@@ -37,6 +37,20 @@ export default function ErrorPortal({
 
   useEffect(() => {
     console.error("[portal error boundary]", error);
+    // Que quede también en los registros del servidor: en la consola del
+    // cliente solo lo vemos si alguien está mirando en ese preciso momento.
+    void fetch("/api/error-cliente", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      keepalive: true,
+      body: JSON.stringify({
+        mensaje: error.message,
+        pila: error.stack ?? "",
+        ruta: window.location.pathname,
+        origen: `borde-portal${error.digest ? `:${error.digest}` : ""}`,
+        version: process.env.NEXT_PUBLIC_VERSION_DESPLIEGUE ?? "",
+      }),
+    }).catch(() => {});
     if (autorecarga) {
       // Recarga completa: trae la última versión y resuelve el desajuste de chunks.
       window.location.reload();
