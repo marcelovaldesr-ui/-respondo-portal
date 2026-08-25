@@ -1,4 +1,5 @@
 import { NextResponse, type NextRequest } from "next/server";
+import { limitarDistribuido } from "@/lib/seguridad";
 
 export const dynamic = "force-dynamic";
 
@@ -39,6 +40,26 @@ function demasiados(clave: string): boolean {
 }
 
 export async function POST(req: NextRequest) {
+  /**
+   * FRENO DE ABUSO (auditoría 24-ago-2026).
+   *
+   * Este endpoint es PÚBLICO por necesidad: si el portal se rompe antes de
+   * cargar la sesión, igual queremos enterarnos. Pero público + escribe en los
+   * registros = alguien puede inflar la factura de Vercel con un bucle.
+   *
+   * El freno va por IP y es holgado: 30 por minuto. Un navegador con un fallo
+   * real manda dos o tres; treinta ya es alguien jugando.
+   */
+  const ip =
+    req.headers.get("x-forwarded-for")?.split(",")[0].trim() ||
+    req.headers.get("x-real-ip") ||
+    "desconocida";
+  if (!(await limitarDistribuido(`err:${ip}`, 30, 60)).ok) {
+    // 200 y no 429 a propósito: es telemetría. Un 429 haría que el reportador
+    // del navegador reintente y genere MÁS tráfico del que estamos frenando.
+    return NextResponse.json({ ok: true, omitido: "limite" });
+  }
+
   let c: Cuerpo;
   try {
     c = (await req.json()) as Cuerpo;

@@ -20,17 +20,17 @@ const nextConfig = {
   poweredByHeader: false, // no revelar el stack (cabecera X-Powered-By)
 
   /**
-   * MAPAS DE ORIGEN, TEMPORALES (19-ago-2026).
+   * MAPAS DE ORIGEN: QUITADOS el 24-ago-2026.
    *
-   * El portal se cae con "i is not a function" y la pila viene minificada:
-   * `iS`, `uE`, `uk` no dicen nada. Con esto, el error llega con el nombre del
-   * archivo y la línea de NUESTRO código.
+   * Se habían activado el 19-ago para cazar el fallo «i is not a function», que
+   * llegaba minificado. Ese fallo dejó de reproducirse (el candidato es el
+   * desajuste de zona horaria que se corrigió el mismo día) y los mapas publican
+   * el código fuente del cliente, así que no hay razón para dejarlos.
    *
-   * ⚠️ QUITAR cuando el fallo esté resuelto. Publica el código fuente del
-   * cliente, y aunque en el navegador ya está todo (minificado), no hay razón
-   * para dejarlo legible más tiempo del necesario.
+   * Si vuelve a aparecer, se reactivan con una línea:
+   *   productionBrowserSourceMaps: true,
    */
-  productionBrowserSourceMaps: true,
+
 
   /**
    * VERSIÓN DEL DESPLIEGUE, HORNEADA EN EL PAQUETE DEL NAVEGADOR.
@@ -68,6 +68,21 @@ const nextConfig = {
    */
   async headers() {
     return [
+      {
+        /**
+         * EL SERVICE WORKER NO SE CACHEA. NUNCA.
+         *
+         * Es el error clásico de las PWA: el navegador guarda /sw.js, y como ese
+         * archivo controla lo que se sirve, una versión vieja puede quedar
+         * mandando durante días — con la persona recargando sin entender por qué
+         * nada cambia. `no-cache` obliga a revalidarlo en cada carga.
+         */
+        source: "/sw.js",
+        headers: [
+          { key: "Cache-Control", value: "no-cache, no-store, must-revalidate" },
+          { key: "Service-Worker-Allowed", value: "/" },
+        ],
+      },
       {
         source: "/:path*",
         headers: [

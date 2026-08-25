@@ -179,8 +179,19 @@ export async function cargarEmbudo(
     .eq("cliente_id", clienteId);
   if (corteActividad) consultaContactos = consultaContactos.gte("ultimo_mensaje_en", corteActividad);
 
+  /**
+   * LÍMITE EXPLÍCITO (auditoría 24-ago-2026).
+   *
+   * PostgREST corta en 1.000 filas pase lo que pase. Sin decirlo acá, un cliente
+   * con más contactos vería un tablero incompleto **sin ningún aviso**: tarjetas
+   * que simplemente no están. Peor que un error, porque parece correcto.
+   *
+   * 500 es lo que un tablero de embudo puede mostrar sin volverse inútil, y el
+   * corte por actividad ya deja fuera lo que no se está trabajando.
+   */
   const contactosR = await consultaContactos
-    .order("ultimo_mensaje_en", { ascending: false, nullsFirst: false });
+    .order("ultimo_mensaje_en", { ascending: false, nullsFirst: false })
+    .limit(500);
 
   const contactos = contactosR.data ?? [];
   if (!contactos.length) return [];

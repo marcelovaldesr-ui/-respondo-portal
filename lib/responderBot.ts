@@ -4,6 +4,7 @@ import { generarJSON } from "@/lib/gemini";
 import { enviarTexto, type ConfigWhatsApp } from "@/lib/whatsapp";
 import { etiquetasDesdeMotor } from "@/lib/etiquetas";
 import { guardarMensaje } from "@/lib/mensajes";
+import { avisarACliente, resumirParaAviso } from "@/lib/push";
 import { modoDe, setModo } from "@/lib/estadoChat";
 import { notificarHQ } from "@/lib/hqBridge";
 import type { SupabaseClient } from "@supabase/supabase-js";
@@ -406,8 +407,42 @@ export async function responderSiBot(params: {
       resumen: datos.resumen_para_humano ?? "El asistente derivó la conversación.",
       notificado_a: [],
     });
-    // TODO Fase 4: avisar a la persona (Telegram/plantilla). En Opción A ella lo
-    // ve en su WhatsApp; en Opción B se le avisa por el inbox / notificación.
+    /**
+     * AVISAR AL TELÉFONO DE LA PERSONA (24-ago-2026).
+     *
+     * Acá había un TODO desde la Fase 4. Este es EL momento que importa: el
+     * asistente acaba de decir "esto lo tiene que ver alguien", y hasta hoy esa
+     * señal moría en una tabla que nadie mira si no tiene el portal abierto.
+     *
+     * Se avisa solo cuando se ESCALA, no en cada mensaje. Tino atiende la
+     * mayoría; notificar todo convertiría el aviso en ruido y la persona lo
+     * apagaría a la semana — y ahí perderíamos también los que sí importan.
+     *
+     * Best-effort: si el aviso falla, la escalación ya quedó registrada y la
+     * conversación se atiende igual.
+     */
+    void (async () => {
+      // El nombre hace la diferencia entre "alguien te necesita" y "Cristian te
+      // necesita". Si no está, el número igual dice más que nada.
+      const { data: c } = await supa
+        .from("ed_contactos")
+        .select("nombre")
+        .eq("cliente_id", clienteId)
+        .eq("chat_id", chatId)
+        .maybeSingle();
+      const quien = (c?.nombre as string | null) || `+${chatId}`;
+      await avisarACliente(clienteId, {
+        titulo: `${quien} necesita ayuda`,
+        cuerpo: resumirParaAviso(
+          datos.resumen_para_humano || "El asistente derivó la conversación.",
+        ),
+        url: `/conversaciones?emp=${encodeURIComponent(empleadoId)}&chat=${encodeURIComponent(chatId)}`,
+        // Un aviso por conversación: si el mismo chat escala dos veces, se
+        // reemplaza en vez de apilarse.
+        tag: `chat:${chatId}`,
+      });
+    })().catch(() => undefined);
+
     notificarHQ({
       tipo: "human_handoff",
       clientePortalId: clienteId,

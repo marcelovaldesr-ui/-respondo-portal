@@ -194,20 +194,46 @@ export async function procesarSeguimientos(opts: {
       .in("id", empleadosDeLaTanda);
     for (const e of emps ?? []) clientePorEmpleado.set(e.id as string, e.cliente_id as string);
 
+    /**
+     * CUÁNTO SE ENVIÓ HOY, POR CLIENTE — EN DOS CONSULTAS, NO EN 2×N.
+     *
+     * Antes esto era un bucle: por CADA cliente de la tanda se pedían sus
+     * empleados y después su conteo del día. Con 3 clientes eran 6 consultas y
+     * no se notaba; con 30 son 60, en serie, dentro de un cron que además tiene
+     * un techo de tiempo. Es de los errores que no duelen hasta que el negocio
+     * funciona — y ahí duelen justo cuando menos conviene.
+     *
+     * Ahora: una consulta trae TODOS los empleados de TODOS los clientes de la
+     * tanda, y otra trae los envíos de hoy de todos esos empleados. El conteo
+     * por cliente se arma en memoria, que es gratis.
+     */
     const clientes = [...new Set(clientePorEmpleado.values())];
-    for (const cid of clientes) {
-      const { data: susEmpleados } = await supa
+    if (clientes.length) {
+      const { data: todosLosEmpleados } = await supa
         .from("ed_empleados")
-        .select("id")
-        .eq("cliente_id", cid);
-      const ids = (susEmpleados ?? []).map((x) => x.id as string);
-      if (!ids.length) continue;
-      const { count } = await supa
-        .from("ed_seguimientos")
-        .select("id", { count: "exact", head: true })
-        .in("empleado_id", ids)
-        .gte("enviado_en", hoy.toISOString());
-      enviadosHoyPorCliente.set(cid, count ?? 0);
+        .select("id, cliente_id")
+        .in("cliente_id", clientes);
+
+      // empleado → cliente, para poder atribuir cada envío sin volver a consultar.
+      const duenoDe = new Map<string, string>();
+      for (const e of todosLosEmpleados ?? []) {
+        duenoDe.set(e.id as string, e.cliente_id as string);
+      }
+      for (const cid of clientes) enviadosHoyPorCliente.set(cid, 0);
+
+      const idsTodos = [...duenoDe.keys()];
+      if (idsTodos.length) {
+        const { data: enviadosHoy } = await supa
+          .from("ed_seguimientos")
+          .select("empleado_id")
+          .in("empleado_id", idsTodos)
+          .gte("enviado_en", hoy.toISOString());
+
+        for (const fila of enviadosHoy ?? []) {
+          const cid = duenoDe.get(fila.empleado_id as string);
+          if (cid) enviadosHoyPorCliente.set(cid, (enviadosHoyPorCliente.get(cid) ?? 0) + 1);
+        }
+      }
     }
   }
 

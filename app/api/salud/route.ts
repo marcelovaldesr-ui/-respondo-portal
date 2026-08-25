@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { db } from "@/lib/db";
 import { limitarDistribuido, secretoValido } from "@/lib/seguridad";
+import { pushConfigurado } from "@/lib/push";
 import { ipDeRequest } from "@/lib/reservasPublicas";
 import { LATIDO_CRON_SEGUIMIENTOS, estadoDelCron, leerLatido } from "@/lib/latidos";
 import { tokenDeFila } from "@/lib/whatsapp";
@@ -52,6 +53,35 @@ async function medir(fn: () => Promise<Chequeo>): Promise<Chequeo> {
 }
 
 /** 1) Base de datos: ¿responde y trae datos? */
+/**
+ * NOTIFICACIONES PUSH — el fallo que nadie nota hasta que duele.
+ *
+ * Si las llaves VAPID se borran de Vercel o la tabla desaparece, los avisos
+ * dejan de salir **en silencio**: el portal sigue funcionando, las
+ * conversaciones siguen llegando, y lo único que pasa es que el teléfono no
+ * suena. Nadie reclama por algo que no ocurre; se descubre cuando un cliente
+ * dice "les escribí ayer y no me contestaron".
+ *
+ * Por eso se vigila acá, junto al resto.
+ */
+async function chequearPush(): Promise<Chequeo> {
+  if (!pushConfigurado()) {
+    return { ok: false, detalle: "faltan las llaves VAPID: no salen avisos" };
+  }
+  const { count, error } = await db()
+    .from("ed_push_suscripciones")
+    .select("id", { count: "exact", head: true });
+  if (error) {
+    return { ok: false, detalle: "falta la migración 283 (ed_push_suscripciones)" };
+  }
+  const n = count ?? 0;
+  return {
+    // Cero dispositivos no es un fallo: puede que nadie los haya activado aún.
+    ok: true,
+    detalle: n === 0 ? "configurado, sin dispositivos suscritos" : `${n} dispositivo(s) suscrito(s)`,
+  };
+}
+
 async function chequearBase(): Promise<Chequeo> {
   const { error, count } = await db()
     .from("ed_clientes")
@@ -392,6 +422,7 @@ export async function GET(request: NextRequest) {
     whatsapp_waha: await medir(chequearWaha),
     actividad: await medir(chequearActividad),
     cron_seguimientos: await medir(chequearCron),
+    notificaciones: await medir(chequearPush),
   };
   // Los tokens de los clientes reales se vigilan con el secreto pero SIN exigir
   // `full=1`: es la falla que deja mudo a un cliente entero, así que tiene que

@@ -71,7 +71,7 @@ export default function PanelChat({
   /** `emp|chat` de lo que vino del servidor, para sembrar la caché. */
   claveInicial: string;
 }) {
-  const { empleadoId, chatId } = useSeleccionChat();
+  const { empleadoId, chatId, limpiar } = useSeleccionChat();
   const [d, setD] = useState<DetalleConversacion | null>(inicial);
   const [cargando, setCargando] = useState(false);
   /** Evita que una respuesta lenta pise a un chat que ya se cambió. */
@@ -153,8 +153,17 @@ export default function PanelChat({
       }}
     >
       {d && (
-        <Link
-          href="/conversaciones"
+        /*
+          VOLVER A LA LISTA, en móvil.
+
+          Era un <Link> a /conversaciones, o sea una navegación completa al
+          servidor solo para cerrar el chat abierto. Ahora limpia la selección
+          en el cliente: instantáneo, y la lista sigue montada tal como estaba,
+          con el mismo scroll y los mismos filtros.
+        */
+        <button
+          type="button"
+          onClick={limpiar}
           className="mb-3 inline-flex items-center gap-1.5 text-[14px] font-semibold lg:hidden"
           style={{ color: "var(--indigo)" }}
         >
@@ -162,7 +171,7 @@ export default function PanelChat({
             <path d="M15 18l-6-6 6-6" />
           </svg>
           Volver a la lista
-        </Link>
+        </button>
       )}
       {!d ? (
         <div

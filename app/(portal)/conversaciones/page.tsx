@@ -8,6 +8,7 @@ import {
 } from "@/lib/conversaciones";
 import PanelChat from "@/components/inbox/PanelChat";
 import { SeleccionChatProvider, FilaChat } from "@/components/inbox/SeleccionChat";
+import { ColumnaLista } from "@/components/inbox/ColumnaLista";
 import RefrescarLista from "@/components/RefrescarLista";
 import { metaEtiqueta } from "@/lib/etiquetas";
 
@@ -279,12 +280,7 @@ export default async function Conversaciones({
       <div className="mt-3 grid gap-3 lg:h-[calc(100vh-150px)] lg:grid-cols-[330px_minmax(0,1fr)] xl:grid-cols-[330px_minmax(0,1fr)_290px]">
         {/* Lista — en móvil se oculta cuando hay una conversación abierta,
             porque los dos paneles lado a lado no caben en un teléfono. */}
-        <div
-          className={
-            "tarjeta overflow-y-auto p-0 max-lg:max-h-[70vh] lg:h-full " +
-            (seleccion ? "hidden lg:block" : "block")
-          }
-        >
+        <ColumnaLista>
           {lista.length === 0 && (
             <div className="p-10 text-center" style={{ color: "var(--muted)" }}>
               {q || estado || filtro
@@ -428,7 +424,7 @@ export default async function Conversaciones({
               </div>
             </nav>
           )}
-        </div>
+        </ColumnaLista>
 
         {/*
           EL CHAT Y SU CONTEXTO, DEL LADO DEL CLIENTE.

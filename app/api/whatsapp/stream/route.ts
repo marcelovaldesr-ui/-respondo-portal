@@ -1,6 +1,7 @@
 import { type NextRequest } from "next/server";
 import { obtenerUsuarioConPermiso } from "@/lib/auth";
 import { db } from "@/lib/db";
+import { limitarDistribuido } from "@/lib/seguridad";
 import { estadosDe, mensajesNuevos } from "@/lib/inboxConsulta";
 
 export const dynamic = "force-dynamic";
@@ -68,6 +69,23 @@ export async function GET(request: NextRequest) {
     .slice(0, 60);
 
   if (!empleadoId || !chatId) return new Response("Faltan datos", { status: 400 });
+
+  /**
+   * TECHO DE CONEXIONES SIMULTÁNEAS (auditoría 24-ago-2026).
+   *
+   * Cada stream mantiene una función viva hasta 50 segundos. Con una o dos
+   * personas mirando la bandeja es despreciable —lo dice el comentario de más
+   * arriba— pero nada impedía abrir veinte pestañas y tener veinte funciones
+   * corriendo a la vez por el mismo usuario.
+   *
+   * Seis por minuto deja trabajar con varias pestañas y con reconexiones (el
+   * stream se reabre cada 50 s), y corta el caso raro. Al superarlo se devuelve
+   * 429 y el navegador cae solo al sondeo, que sigue funcionando: nadie se queda
+   * sin mensajes, solo con un segundo más de latencia.
+   */
+  if (!(await limitarDistribuido(`sse:${usuario.email}`, 6, 60)).ok) {
+    return new Response("Demasiadas conexiones", { status: 429 });
+  }
 
   const supa = db();
   const { data: emp } = await supa

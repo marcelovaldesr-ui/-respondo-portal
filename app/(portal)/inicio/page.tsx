@@ -1,4 +1,5 @@
 import Link from "next/link";
+import Notificaciones from "@/components/pwa/Notificaciones";
 import { exigirUsuarioPortal } from "@/lib/auth";
 import { metaEmpleado } from "@/lib/empleados";
 import {
@@ -327,6 +328,15 @@ export default async function Inicio() {
 
   return (
     <main className="mx-auto max-w-[1400px] px-5 py-6 sm:px-7 lg:px-8">
+      {/*
+        Registro del service worker y alta de notificaciones. Va en Inicio
+        porque es la primera pantalla y porque el permiso hay que pedirlo tras
+        un clic — nunca solo, o el navegador se gana un "Bloquear" reflejo que
+        es permanente.
+      */}
+      <div className="mb-4">
+        <Notificaciones />
+      </div>
       {/* Título y contexto en la MISMA línea. "Inicio" dice dónde estás; la
           fecha es contexto, no un subtítulo que merezca su propio renglón. */}
       <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">

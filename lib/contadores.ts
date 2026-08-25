@@ -124,6 +124,13 @@ export async function oportunidadesAbiertas(
       // que está más cerca de cerrarse.
       .order("etapa", { ascending: true })
       .order("ultimo_mensaje_en", { ascending: false, nullsFirst: false })
+      /**
+       * Límite EXPLÍCITO. Sin él, PostgREST igual corta en 1.000 pero sin que
+       * nadie lo sepa. Acá son las oportunidades que se muestran en pantalla:
+       * nadie revisa doscientas de una sentada, y el número real vive en el
+       * contador de arriba, que sí cuenta en la base.
+       */
+      .limit(200)
       .limit(limite);
 
     // La forma de la fila se declara acá para no perder el tipo hacia afuera.
@@ -188,31 +195,48 @@ export async function contadoresMenu(
       Date.now() - DIAS_ACTIVIDAD * 86400_000,
     ).toISOString();
 
-    const [escalaciones, abiertas] = await Promise.all([
-      supa
-        .from("ed_escalaciones")
-        .select("chat_id")
-        .in("empleado_id", ids)
-        .is("atendida_en", null),
+    /**
+     * ⚠️ SE CUENTA EN POSTGRES, NO LEYENDO FILAS (auditoría 24-ago-2026).
+     *
+     * Antes esto traía las filas y las contaba en JavaScript. El problema es que
+     * **PostgREST corta toda respuesta en 1.000 filas** por configuración del
+     * servidor, y `.limit(n)` mayor NO la sube. O sea que un cliente con más de
+     * mil oportunidades abiertas vería un número tope de 1.000 en el menú, sin
+     * ningún error: un dato creíble y falso.
+     *
+     * Es EXACTAMENTE el bug que ya se pagó en la analítica el 31-jul, donde se
+     * reportaba 0% de cobertura de IA con el bot funcionando a todo dar. Un
+     * panel que el cliente usa para decidir si sigue pagando no se puede
+     * equivocar en silencio.
+     *
+     * `count: "exact", head: true` cuenta en la base y no transfiere ni una
+     * fila: es más correcto Y más barato que lo anterior.
+     */
+    const porEtapa = (etapa: string) =>
       soloVivas(
         supa
           .from("ed_contactos")
-          .select("etapa")
+          .select("chat_id", { count: "exact", head: true })
           .eq("cliente_id", clienteId)
-          .in("etapa", ["interesado", "cotizado"])
+          .eq("etapa", etapa)
           .gte("ultimo_mensaje_en", corte),
-      ),
+      );
+
+    const [escalaciones, nInteresados, nCotizados] = await Promise.all([
+      supa
+        .from("ed_escalaciones")
+        .select("chat_id", { count: "exact", head: true })
+        .in("empleado_id", ids)
+        .is("atendida_en", null),
+      porEtapa("interesado"),
+      porEtapa("cotizado"),
     ]);
 
-    let interesados = 0;
-    let cotizados = 0;
-    for (const f of (abiertas.data ?? []) as { etapa: string }[]) {
-      if (f.etapa === "cotizado") cotizados++;
-      else interesados++;
-    }
+    const interesados = nInteresados.count ?? 0;
+    const cotizados = nCotizados.count ?? 0;
 
     return {
-      esperando: (escalaciones.data ?? []).length,
+      esperando: escalaciones.count ?? 0,
       porCerrar: interesados + cotizados,
       interesados,
       cotizados,

@@ -1,11 +1,41 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import "./globals.css";
 import VigilanteDeVersion from "@/components/VigilanteDeVersion";
 
 export const metadata: Metadata = {
   title: "Portal Respondo",
   description: "Tus empleados IA, trabajando. Portal del cliente de Respondo.",
-  icons: { icon: "/brand/isotipo.svg" },
+  icons: {
+    icon: "/brand/isotipo.svg",
+    /**
+     * iOS ignora el manifest para el ícono de la pantalla de inicio: usa
+     * `apple-touch-icon` y punto. Sin esto, al agregar el portal al iPhone
+     * aparece una captura de la página en vez del logo.
+     *
+     * Además iOS NO respeta la transparencia —la rellena de negro—, así que ese
+     * archivo va aplanado sobre el navy de marca.
+     */
+    apple: "/icono/apple-touch-icon.png",
+  },
+  appleWebApp: {
+    capable: true,
+    title: "Respondo",
+    // La barra de estado se funde con el navy del encabezado.
+    statusBarStyle: "black-translucent",
+  },
+};
+
+/**
+ * `viewport` va aparte del metadata (Next lo exige desde la 14).
+ *
+ * `viewportFit: "cover"` + `themeColor` hacen que en un iPhone con notch la app
+ * pinte hasta los bordes en vez de dejar dos franjas blancas arriba y abajo.
+ */
+export const viewport: Viewport = {
+  themeColor: "#0A0E20",
+  width: "device-width",
+  initialScale: 1,
+  viewportFit: "cover",
 };
 
 export default function RootLayout({
