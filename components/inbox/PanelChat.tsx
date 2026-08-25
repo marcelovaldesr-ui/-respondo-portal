@@ -74,6 +74,9 @@ export default function PanelChat({
   const { empleadoId, chatId, limpiar } = useSeleccionChat();
   const [d, setD] = useState<DetalleConversacion | null>(inicial);
   const [cargando, setCargando] = useState(false);
+  const [fallo, setFallo] = useState(false);
+  /** Cambiarlo vuelve a disparar el efecto de carga sin tocar la selección. */
+  const [reintento, setReintento] = useState(0);
   /** Evita que una respuesta lenta pise a un chat que ya se cambió. */
   const pedido = useRef(0);
 
@@ -99,6 +102,7 @@ export default function PanelChat({
     }
     const mio = ++pedido.current;
     setCargando(true);
+    setFallo(false);
     fetch(`/api/conversaciones/detalle?emp=${encodeURIComponent(empleadoId)}&chat=${encodeURIComponent(chatId)}`)
       .then((r) => (r.ok ? r.json() : null))
       .then((json: DetalleConversacion | null) => {
@@ -107,13 +111,54 @@ export default function PanelChat({
         if (json) {
           cache.set(clave, json);
           setD(json);
+        } else {
+          /**
+           * ⚠️ SI NO SE PUDO CARGAR, SE BORRA LO ANTERIOR.
+           *
+           * Antes acá no se hacía nada, y el efecto era el peor posible:
+           * quedaba en pantalla la conversación ANTERIOR mientras la URL decía
+           * otra. Alguien podía responderle a un cliente creyendo que le
+           * escribía a otro.
+           *
+           * Mostrar un error es incómodo; mostrar la conversación equivocada es
+           * inaceptable.
+           */
+          setD(null);
+          setFallo(true);
         }
       })
-      .catch(() => {})
+      .catch(() => {
+        if (mio !== pedido.current) return;
+        setD(null);
+        setFallo(true);
+      })
       .finally(() => {
         if (mio === pedido.current) setCargando(false);
       });
-  }, [empleadoId, chatId]);
+    // `reintento` está en las dependencias a propósito: es lo que
+    // permite volver a pedir sin cambiar de conversación.
+  }, [empleadoId, chatId, reintento]);
+
+  /** Reintento manual tras un fallo de carga. */
+  const reintentar = () => {
+    cache.delete(`${empleadoId}|${chatId}`);
+    setFallo(false);
+    setReintento((n) => n + 1);
+  };
+
+  if (fallo) {
+    return (
+      <div className="tarjeta-plana flex min-h-[320px] flex-col items-center justify-center gap-3 p-6 text-center">
+        <div className="text-[15px] font-bold">No se pudo abrir la conversación</div>
+        <p className="text-[13.5px]" style={{ color: "var(--muted)" }}>
+          Puede haber sido un corte de conexión. Nada se perdió.
+        </p>
+        <button onClick={reintentar} className="btn-primario px-4 py-2 text-[13.5px]">
+          Reintentar
+        </button>
+      </div>
+    );
+  }
 
   const meta = d ? metaEmpleado(d.empleadoRol) : null;
   const color = meta?.color ?? "var(--indigo)";
@@ -250,7 +295,29 @@ export default function PanelChat({
           )}
 
           {/* Inbox en vivo: control (tomar/devolver) + mensajes + responder manual */}
+          {/*
+            ⚠️ LA `key` NO ES DECORATIVA: SIN ELLA EL CHAT NO CAMBIA.
+            
+            `InboxConversacion` guarda los mensajes en `useState`, y **useState
+            solo lee su valor inicial en el PRIMER render**. Al cambiar de
+            conversación, React ve el mismo componente en la misma posición del
+            árbol y REUSA la instancia: las props nuevas llegan, pero el estado
+            —los mensajes, el cursor de "hasta dónde leí", el modo— sigue siendo
+            el del chat anterior.
+            
+            En pantalla eso era exactamente lo que se veía: tocabas otro chat y
+            seguían los mensajes del primero hasta recargar la página.
+            
+            Con una `key` distinta por conversación, React DESMONTA y vuelve a
+            montar: estado limpio, cursor nuevo y el stream reabierto donde
+            corresponde.
+            
+            Es un bug que introduje al pasar el cambio de chat al lado del
+            cliente. Antes cada clic recargaba la página entera, así que el
+            remontaje ocurría solo y esto nunca se notó.
+          */}
           <InboxConversacion
+            key={`${empleadoId}|${d.chatId}`}
             empleadoId={empleadoId!}
             chatId={d.chatId}
             empleadoNombre={d.empleadoNombre}

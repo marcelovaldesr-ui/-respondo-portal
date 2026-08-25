@@ -59,6 +59,26 @@ export function useMensajesEnVivo(params: {
   const fallosSse = useRef(0);
 
   /**
+   * ⚠️ ESTE HOOK DEPENDE DE QUE LO REMONTEN AL CAMBIAR DE CONVERSACIÓN.
+   *
+   * Los mensajes, el cursor y el modo viven en `useState`/`useRef`, y **useState
+   * solo lee su valor inicial en el primer render**. Si se reusa la misma
+   * instancia para otro chat, el estado del anterior se queda pegado y en
+   * pantalla aparece la conversación equivocada hasta recargar la página.
+   *
+   * Pasó de verdad el 24-ago-2026 y lo vio Marcelo antes que yo.
+   *
+   * Por eso `PanelChat` monta `<InboxConversacion key={emp|chat}>`. **Si alguien
+   * quita esa `key`, este hook se rompe en silencio.**
+   *
+   * Se intentó blindarlo acá reseteando el estado durante el render, y no se
+   * puede: React prohíbe tocar refs mientras se renderiza, y el linter lo
+   * rechaza con razón —bajo render concurrente ese patrón produce fallos peores
+   * y más raros que el que intenta evitar—. La `key` es la forma correcta y la
+   * que la propia documentación de React recomienda para reiniciar estado.
+   */
+
+  /**
    * Fusiona por id, conservando el orden cronológico.
    *
    * Devuelve la MISMA referencia si no hubo cambios. Eso importa: un `setState`
