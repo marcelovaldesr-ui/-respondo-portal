@@ -1,3 +1,4 @@
+import { delayHumano } from "@/lib/ritmoHumano";
 import { db } from "@/lib/db";
 
 /**
@@ -123,12 +124,6 @@ function aDestino(x: string): string {
   return `${x.replace(/\D/g, "")}@c.us`;
 }
 
-/** Delay humano proporcional al texto (1.5–6s con jitter). */
-function delayHumano(texto: string): number {
-  const base = 1500 + texto.length * 35;
-  const jitter = Math.floor(Math.random() * 1200);
-  return Math.min(6000, Math.max(1500, base + jitter));
-}
 
 /** Cache LID→número real (por invocación; evita repetir la consulta). */
 const _lidCache = new Map<string, string>();

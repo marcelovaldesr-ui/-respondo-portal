@@ -1,4 +1,5 @@
 import { db } from "@/lib/db";
+import { ultimosMensajes, type MensajeInbox } from "@/lib/inboxConsulta";
 import { empleadosDeCliente } from "@/lib/empleadosCache";
 
 /**
@@ -34,7 +35,14 @@ export type DetalleConversacion = {
   empleadoNombre: string;
   empleadoRol: string;
   modo: string;
-  mensajes: { rol: string; texto: string; creadoEn: string }[];
+  /**
+   * Tramo reciente de la conversación, ya listo para el inbox.
+   *
+   * ⚠️ Antes esto traía solo `{rol, texto, creadoEn}`: sin `id` React no tenía
+   * clave estable, y sin `media` las fotos NO se veían hasta que el primer
+   * refresco reemplazaba la lista entera — un parpadeo en cada apertura.
+   */
+  mensajes: MensajeInbox[];
   escalacion: { trigger: string; resumen: string; atendida: boolean } | null;
   resultados: string[];
   etiquetas: string[];
@@ -317,16 +325,15 @@ export async function obtenerConversacion(
   if (!emp) return null;
 
   const [mensajes, contacto, estado, escalacion, resultados, ventana] = await Promise.all([
-    supa
-      .from("ed_mensajes")
-      .select("rol, texto, creado_en")
-      .eq("empleado_id", empleadoId)
-      .eq("chat_id", chatId)
-      // El detalle necesita el tramo más reciente, no cargar indefinidamente
-      // toda la vida del chat en memoria. Se revierte luego para mostrarlo en
-      // orden cronológico.
-      .order("creado_en", { ascending: false })
-      .limit(500),
+    /**
+     * Tramo reciente, con id, adjunto y estado de entrega.
+     *
+     * BAJÓ DE 500 A 60 MENSAJES (21-ago-2026). Quinientos era cargar la vida
+     * entera del chat en el HTML de la página: pesado de servir, lento de
+     * hidratar y casi todo invisible. Sesenta llena la pantalla con margen, y
+     * lo anterior se pide con "ver mensajes anteriores" cuando hace falta.
+     */
+    ultimosMensajes(supa, { empleadoId, chatId, limite: 60 }),
     supa
       .from("ed_contactos")
       .select("nombre, telefono, etiqueta, etiquetas, etapa, total_mensajes, primer_mensaje_en, notas")
@@ -357,7 +364,7 @@ export async function obtenerConversacion(
     estadoVentana(empleadoId, chatId),
   ]);
 
-  if (!mensajes.data?.length) return null;
+  if (!mensajes.length) return null;
 
   return {
     chatId,
@@ -367,11 +374,7 @@ export async function obtenerConversacion(
     empleadoNombre: (emp.nombre_publico as string) ?? "",
     empleadoRol: emp.rol as string,
     modo: (estado.data?.modo as string) ?? "bot",
-    mensajes: [...mensajes.data].reverse().map((m) => ({
-      rol: m.rol as string,
-      texto: m.texto as string,
-      creadoEn: m.creado_en as string,
-    })),
+    mensajes,
     escalacion: escalacion.data
       ? {
           trigger: escalacion.data.trigger as string,
@@ -385,7 +388,7 @@ export async function obtenerConversacion(
     etapa: (contacto.data?.etapa as string) ?? "nuevo",
     // Si el resumen todavía no existe (contacto anterior al trigger), se cae al
     // largo del hilo que ya se trajo: nunca un 0 que parezca un dato real.
-    mensajesTotal: (contacto.data?.total_mensajes as number) || mensajes.data.length,
+    mensajesTotal: (contacto.data?.total_mensajes as number) || mensajes.length,
     clienteDesde: (contacto.data?.primer_mensaje_en as string) ?? null,
     notas: (contacto.data?.notas as string) ?? null,
   };

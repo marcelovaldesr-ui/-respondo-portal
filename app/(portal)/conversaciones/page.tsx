@@ -560,11 +560,13 @@ export default async function Conversaciones({
                 chatId={seleccion.chatId}
                 empleadoNombre={seleccion.empleadoNombre}
                 ventana={seleccion.ventana}
-                mensajesIniciales={seleccion.mensajes.map((m) => ({
-                  rol: m.rol,
-                  texto: m.texto,
-                  creadoEn: m.creadoEn,
-                }))}
+                /*
+                  Se pasa el mensaje COMPLETO (id, adjunto y estado de entrega).
+                  Antes se recortaba a rol/texto/fecha, así que la primera
+                  pintada no tenía ni claves estables ni imágenes: las fotos
+                  aparecían recién cuando el refresco reemplazaba la lista.
+                */
+                mensajesIniciales={seleccion.mensajes}
                 modoInicial={seleccion.modo}
               />
             </>

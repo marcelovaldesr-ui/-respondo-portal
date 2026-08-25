@@ -19,6 +19,7 @@ import { responderSiBot } from "@/lib/responderBot";
 import { empleadoParaEntrante } from "@/lib/seguimientos";
 import { fechaLimiteModelo } from "@/lib/presupuesto";
 import { transporteDe } from "@/lib/transporte";
+import { ventanaDeEspera } from "@/lib/ritmoHumano";
 
 export type ResultadoMeta = { accion: string; detalle?: string };
 
@@ -168,6 +169,27 @@ export async function manejarEntranteMeta(
       rol: "cliente",
       texto: m.texto,
       waId: m.waId,
+      /**
+       * ADJUNTO (arreglado el 21-ago-2026 — brecha G4).
+       *
+       * Este camino NUNCA guardaba los metadatos del adjunto, así que
+       * `media_tipo` quedaba en NULL y el inbox no dibujaba nada: la persona
+       * veía «[el cliente envió una imagen]» y no podía abrirla. Y como todo
+       * cliente nuevo entra por Cloud API, era el comportamiento por defecto.
+       *
+       * El `id` de Meta se guarda con prefijo `meta:` en `media_url`. No es una
+       * URL y a propósito: las URL de Meta **expiran en minutos**, así que
+       * guardar una sería guardar basura. El prefijo le dice al proxy por dónde
+       * resolver, sin necesidad de una columna nueva ni de otra migración.
+       */
+      media: m.adjunto
+        ? {
+            url: `meta:${m.adjunto.id}`,
+            tipo: m.adjunto.tipo,
+            mime: m.adjunto.mime ?? null,
+            nombre: m.adjunto.nombre ?? null,
+          }
+        : null,
       canal: "whatsapp",
     });
     // ANTI-DOBLE-RESPUESTA: si el índice único rechazó el insert, es una entrega
@@ -191,12 +213,61 @@ export async function manejarEntranteMeta(
       );
     }
 
+    /**
+     * ATRIBUCIÓN DE CAMPAÑA. Meta manda el anuncio de origen SOLO en el primer
+     * mensaje de la conversación; si no se guarda ahora, se pierde para siempre.
+     *
+     * Se escribe en `ed_contactos.datos` (jsonb, migración 282) leyendo antes lo
+     * que hubiera para no pisarlo, y **nunca sobre una referencia ya guardada**:
+     * la primera es la que trajo al cliente.
+     *
+     * Si la 282 no está aplicada, avisa una vez y sigue. Un mensaje real vale
+     * más que su atribución.
+     */
+    if (m.referencia) {
+      try {
+        const { data: previo } = await supa
+          .from("ed_contactos")
+          .select("datos")
+          .eq("cliente_id", cfg.clienteId)
+          .eq("chat_id", chatId)
+          .maybeSingle();
+
+        const datos = (previo?.datos ?? {}) as Record<string, unknown>;
+        if (!datos.campana) {
+          const { error } = await supa
+            .from("ed_contactos")
+            .update({
+              datos: { ...datos, campana: { ...m.referencia, visto: new Date().toISOString() } },
+            })
+            .eq("cliente_id", cfg.clienteId)
+            .eq("chat_id", chatId);
+          if (error) throw new Error(error.message);
+        }
+      } catch (e) {
+        console.warn(
+          "[meta] no se pudo guardar la atribución de campaña (¿falta la migración 282?):",
+          (e as Error).message,
+        );
+      }
+    }
+
     await tocarVentanaEntrante(empleadoId, chatId, supa);
 
-    // DEBOUNCE (mismo fix que WAHA): si el cliente manda varios mensajes
-    // seguidos, responde solo la invocación del ÚLTIMO (su historial ya los
-    // incluye todos). Evita respuestas solapadas y desordenadas.
-    const DEBOUNCE_MS = 6000;
+    /**
+     * DEBOUNCE: si el cliente manda varios mensajes seguidos, responde solo la
+     * invocación del ÚLTIMO (su historial ya los incluye todos). Evita
+     * respuestas solapadas y desordenadas.
+     *
+     * ANTES ERAN 6 s FIJOS (G1, arreglado el 21-ago-2026). El camino de WAHA ya
+     * usaba una ventana ADAPTATIVA desde el 3-ago porque 6 s no alcanzan: la
+     * gente escribe a pedazos con 15-17 s entre fragmento y fragmento, así que
+     * cada pedazo caía fuera de la ventana y disparaba su propia respuesta —
+     * Tino preguntando lo mismo 2-4 veces seguidas. El arreglo se aplicó solo a
+     * WAHA, o sea al número de Impresora Color, y Cloud API —por donde entra
+     * TODO cliente nuevo— se quedó con el bug.
+     */
+    const DEBOUNCE_MS = ventanaDeEspera(m.texto ?? "");
     if (m.waId) {
       await new Promise((r) => setTimeout(r, DEBOUNCE_MS));
       const { data: ultimo } = await supa
@@ -214,9 +285,8 @@ export async function manejarEntranteMeta(
       }
     }
 
-    const enviar =
-      opts?.enviar ??
-      (async (para: string, texto: string) => enviarTexto(cfg, para, texto));
+    // ⚠️ ORDEN: `sigueVigente` se define ANTES que `enviar` porque ahora el
+    // sender la lleva dentro (G2). Si se vuelve a invertir, TypeScript avisa.
 
     /**
      * PARIDAD CON WAHA (fix auditoría 1-ago-2026): la vía oficial no tenía esta
@@ -242,6 +312,22 @@ export async function manejarEntranteMeta(
         .maybeSingle();
       return !data?.wa_message_id || data.wa_message_id === m.waId;
     };
+
+    /**
+     * El sender que usa el cerebro. Ahora lleva DENTRO la guardia y el ritmo
+     * humano (G2 y G3, 21-ago-2026), igual que `enviarTextoWaha`.
+     *
+     * Va acá y no en `responderBot` a propósito: así el cerebro sigue sin saber
+     * de transportes, y cualquier camino nuevo que quiera las dos protecciones
+     * solo tiene que armar su sender igual que éste.
+     */
+    const enviar =
+      opts?.enviar ??
+      (async (para: string, texto: string) =>
+        enviarTexto(cfg, para, texto, {
+          vigente: sigueVigente,
+          mensajeIdCliente: m.waId,
+        }));
 
     const r = await responderSiBot({
       clienteId: cfg.clienteId,

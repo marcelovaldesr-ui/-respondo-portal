@@ -94,7 +94,9 @@ export async function GET(request: NextRequest) {
          * mismo, porque el texto se renderizó desde su cuerpo.
          */
         const abierta = await ventanaAbierta({ clienteId, chatId, supa });
-        if (abierta) return enviarTexto(cfg, chatId, texto);
+        // `sinEspera`: un seguimiento no es una respuesta en vivo. Nadie está
+        // esperando del otro lado, y la pausa solo gastaría tiempo del cron.
+        if (abierta) return enviarTexto(cfg, chatId, texto, { sinEspera: true });
 
         const pl = plantillaPara(extra.plantilla);
         if (!pl || !extra.params.length) {

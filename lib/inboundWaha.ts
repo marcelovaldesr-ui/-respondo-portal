@@ -21,66 +21,19 @@ import { empleadoParaEntrante } from "@/lib/seguimientos";
 import { notificarSistemaDelCliente } from "@/lib/puenteSalida";
 import { fechaLimiteModelo } from "@/lib/presupuesto";
 import { transporteDe } from "@/lib/transporte";
+import { ventanaDeEspera } from "@/lib/ritmoHumano";
 
 export type ResultadoEntrante = { accion: string; detalle?: string };
 
-/** Espera corta: el mensaje se entiende solo, conviene responder rápido. */
-const ESPERA_CORTA = 6000;
 /**
- * Espera larga: parece que el cliente sigue escribiendo.
+ * El ritmo de la conversación (cuánto esperar antes de responder, cuánto
+ * "escribir") vive en lib/ritmoHumano.ts, compartido con el camino de Meta.
  *
- * Subida de 15s a 20s (auditoría Monday-readiness, 3-ago-2026, Impresora
- * Color): dos incidentes reales de la misma semana mostraban a Tino
- * preguntando lo mismo 2-4 veces seguidas porque los fragmentos del cliente
- * llegaban a 15-17s uno del otro — justo en el borde de la ventana anterior,
- * donde la comprobación de "¿llegó algo más nuevo?" corre casi al mismo
- * tiempo que se guarda el fragmento siguiente (carrera). Con más margen sobre
- * los huecos reales observados, la comprobación tiene tiempo de ver el
- * fragmento nuevo antes de decidir responder. No elimina la carrera de raíz
- * (seguiría siendo posible con huecos de exactamente 20s), pero la ventana
- * anterior fallaba con huecos típicos observados en producción, así que era
- * la prioridad inmediata. Trade-off consciente: un mensaje corto/ambiguo
- * tarda hasta 20s en responderse en vez de 15s.
+ * Estaba solo acá y por eso Cloud API —el transporte de TODO cliente nuevo—
+ * respondía al instante y con un debounce fijo. Se re-exporta para no romper a
+ * quien ya lo importaba desde este módulo.
  */
-const ESPERA_LARGA = 20000;
-
-/**
- * CUÁNTO ESPERAR ANTES DE RESPONDER.
- *
- * Antes eran 6 s para todo. Mucha gente escribe en WhatsApp a pedazos —"Ese" …
- * "Mismo" … "Es ese mismo"— con 15 s entre uno y otro, así que cada fragmento
- * caía fuera de la ventana y disparaba su propia respuesta. El asistente
- * terminaba preguntando tres veces lo mismo porque nunca vio la frase completa.
- *
- * La regla es simple: si el mensaje se entiende solo, contestar rápido; si
- * parece que viene más, esperar.
- *
- * EL SALUDO ES LA EXCEPCIÓN IMPORTANTE. "Hola" es corto y sin puntuación, o sea
- * que la regla general lo mandaría a esperar 15 s. Pero es el PRIMER contacto:
- * ahí la velocidad es justamente lo que impresiona, y nadie manda "Hola" en
- * pedazos. Se responde rápido.
- *
- * Al revés, un mensaje de uno o dos caracteres ("?", "y") es siempre un
- * pedazo, aunque termine en signo de pregunta.
- */
-export function ventanaDeEspera(texto: string): number {
-  const s = texto.trim();
-  if (!s) return ESPERA_CORTA;
-
-  // Puro signo o una letra: continuación de lo anterior, seguro.
-  if (s.length <= 2) return ESPERA_LARGA;
-
-  // Saludos y aperturas: se entienden solos y abren la conversación.
-  if (/^(hola|holaa+|buenas|buen[oa]s?\s+(d[ií]as?|tardes|noches)|hey|ola|alo|aló)\b/i.test(s)) {
-    return ESPERA_CORTA;
-  }
-
-  // Frase corta sin cierre: probablemente sigue escribiendo.
-  const palabras = s.split(/\s+/).length;
-  if (palabras <= 4 && !/[.?!…]$/.test(s)) return ESPERA_LARGA;
-
-  return ESPERA_CORTA;
-}
+export { ventanaDeEspera };
 
 /**
  * Orquesta un evento entrante de WAHA (WhatsApp Opción A — motor GOWS).

@@ -1,13 +1,30 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { obtenerUsuarioConPermiso } from "@/lib/auth";
 import { db } from "@/lib/db";
+import {
+  estadosDe,
+  mensajesAnteriores,
+  mensajesNuevos,
+  ultimosMensajes,
+} from "@/lib/inboxConsulta";
 
 export const dynamic = "force-dynamic";
 
 /**
- * Mensajes de un chat en JSON, para el refresco en vivo del inbox (polling
- * liviano, sin recargar toda la página). Devuelve también el modo actual para
- * reflejar en vivo si el bot o un humano tiene el control.
+ * Mensajes de un chat en JSON, para el inbox en vivo.
+ *
+ * TRES MODOS, según los parámetros:
+ *
+ *  - `?desde=<iso>&estados=<id,id,…>` → **INCREMENTAL**. Devuelve solo lo que
+ *    llegó después de ese instante, más los estados de entrega que cambiaron.
+ *    Es el modo normal: la respuesta típica es `{mensajes:[],estados:{}}`, unos
+ *    pocos bytes.
+ *  - `?antesDe=<iso>` → **HISTORIAL** hacia atrás, para "ver mensajes anteriores".
+ *  - sin nada → el tramo reciente completo (primera carga o recuperación).
+ *
+ * ⚠️ ANTES ESTE ENDPOINT DEVOLVÍA SIEMPRE 200 MENSAJES COMPLETOS, y el navegador
+ * lo llamaba cada 4 segundos. El costo no era solo de red: reemplazar el arreglo
+ * entero obligaba a React a volver a dibujar toda la conversación.
  *
  * Seguridad: sesión de portal + el empleado debe ser del cliente logueado.
  */
@@ -33,61 +50,41 @@ export async function GET(request: NextRequest) {
     .maybeSingle();
   if (!emp) return NextResponse.json({ error: "No encontrado" }, { status: 404 });
 
-  // Se intenta traer los metadatos de adjunto (migración 270). Si esas columnas
-  // aún no existen, PostgREST devuelve error y se cae a la consulta clásica —
-  // así el inbox funciona igual aunque el deploy vaya por delante de la migración.
-  const COLS_MEDIA = "id, rol, texto, creado_en, media_tipo, media_mime, media_nombre";
-  const consultaMensajes = async () => {
-    const rica = await supa
-      .from("ed_mensajes")
-      .select(COLS_MEDIA)
-      .eq("empleado_id", empleadoId)
-      .eq("chat_id", chatId)
-      .order("creado_en", { ascending: false })
-      .limit(200);
-    if (!rica.error) return { data: rica.data, conMedia: true };
-    const simple = await supa
-      .from("ed_mensajes")
-      .select("id, rol, texto, creado_en")
-      .eq("empleado_id", empleadoId)
-      .eq("chat_id", chatId)
-      .order("creado_en", { ascending: false })
-      .limit(200);
-    return { data: simple.data, conMedia: false };
-  };
+  const antesDe = searchParams.get("antesDe");
+  if (antesDe) {
+    const r = await mensajesAnteriores(supa, { empleadoId, chatId, antesDe });
+    return NextResponse.json(r, { headers: { "Cache-Control": "no-store" } });
+  }
 
-  const [mensajes, estado] = await Promise.all([
-    consultaMensajes(),
+  const desde = searchParams.get("desde");
+  const idsEstado = (searchParams.get("estados") ?? "")
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+
+  const [mensajes, estado, estados] = await Promise.all([
+    desde
+      ? mensajesNuevos(supa, { empleadoId, chatId, desde })
+      : ultimosMensajes(supa, { empleadoId, chatId }),
     supa
       .from("ed_chat_estado")
       .select("modo")
       .eq("empleado_id", empleadoId)
       .eq("chat_id", chatId)
       .maybeSingle(),
+    idsEstado.length ? estadosDe(supa, { empleadoId, ids: idsEstado }) : Promise.resolve({}),
   ]);
 
-  return NextResponse.json({
-    modo: (estado.data?.modo as string) ?? "bot",
-    // Las consultas limitadas leen primero los más recientes; el cliente los
-    // recibe otra vez en orden cronológico para renderizar la conversación.
-    mensajes: [...(mensajes.data ?? [])].reverse().map((m) => {
-      const mm = m as Record<string, unknown>;
-      const tipo = (mm.media_tipo as string | null) ?? null;
-      return {
-        id: mm.id as string,
-        rol: mm.rol as string,
-        texto: mm.texto as string,
-        creadoEn: mm.creado_en as string,
-        // Adjunto visible: el navegador lo pide por el proxy autenticado.
-        media: tipo
-          ? {
-              tipo,
-              mime: (mm.media_mime as string | null) ?? null,
-              nombre: (mm.media_nombre as string | null) ?? null,
-              url: `/api/whatsapp/media?id=${encodeURIComponent(String(mm.id))}`,
-            }
-          : null,
-      };
-    }),
-  });
+  return NextResponse.json(
+    {
+      modo: (estado.data?.modo as string) ?? "bot",
+      mensajes,
+      estados,
+      // Marca de "hasta acá leí": el navegador la usa como cursor siguiente.
+      // Va explícita para no depender de que el cliente sepa deducirla.
+      hasta: mensajes.length ? mensajes[mensajes.length - 1].creadoEn : (desde ?? null),
+      completo: !desde,
+    },
+    { headers: { "Cache-Control": "no-store" } },
+  );
 }

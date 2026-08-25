@@ -2,6 +2,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import { obtenerUsuarioConPermiso } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { mediaDeMensajeWaha, reanclarUrlWaha } from "@/lib/waha";
+import { configPorCliente, resolverMediaMeta, hostDeMediaPermitido } from "@/lib/whatsapp";
 
 export const dynamic = "force-dynamic";
 // La resolución bajo demanda puede requerir que WAHA descargue el archivo
@@ -11,22 +12,29 @@ export const maxDuration = 30;
 /**
  * Proxy autenticado para VER un adjunto que mandó el cliente (imagen, PDF, audio).
  *
- * Por qué existe: el archivo vive en el servidor de WAHA y su descarga requiere
- * la clave X-Api-Key, que jamás debe llegar al navegador. Este endpoint:
+ * Por qué existe: el archivo vive en el servidor del proveedor y su descarga
+ * requiere una credencial que jamás debe llegar al navegador. Este endpoint:
  *   1) exige sesión de portal,
  *   2) valida que el mensaje sea de un empleado del cliente logueado (aislamiento
  *      entre negocios — sin esto, cambiar el id dejaría ver adjuntos ajenos),
  *   3) resuelve la URL del archivo y lo reenvía al navegador.
  *
- * CÓMO SE RESUELVE LA URL (verificado en vivo, 1-ago-2026, WAHA Core/GOWS):
- *  - El webhook de Core llega con hasMedia=true pero media=null → media_url en
- *    la base queda NULL. Por eso, si hay adjunto (media_tipo) y tenemos el
- *    wa_message_id, se le PIDE a WAHA bajo demanda (downloadMedia=true) y la
- *    URL resuelta se cachea en media_url para las próximas veces.
- *  - WAHA devuelve URLs con host `localhost:8080` (no conoce su URL pública):
- *    SIEMPRE se re-ancla el path sobre WAHA_API_URL (reanclarUrlWaha). Ese
- *    re-anclado, además, elimina el riesgo SSRF: nunca se descarga de un host
- *    distinto del WAHA propio, sin importar qué haya guardado en la base.
+ * DOS TRANSPORTES, DOS FORMAS DE RESOLVER
+ *
+ * **WAHA** (verificado en vivo, 1-ago-2026, Core/GOWS): el webhook llega con
+ * `hasMedia=true` pero `media=null`, así que `media_url` queda NULL y hay que
+ * pedirle el archivo a WAHA bajo demanda. La URL resuelta SÍ se cachea, porque
+ * no caduca. WAHA devuelve URLs con host `localhost:8080`, así que siempre se
+ * re-ancla sobre `WAHA_API_URL` — eso además elimina el riesgo de SSRF.
+ *
+ * **Meta / Cloud API** (agregado el 21-ago-2026, brecha G5): se guarda
+ * `meta:<media_id>` en `media_url` y se canjea contra Graph en CADA visita,
+ * porque la URL que devuelve Meta **caduca en minutos**. Cachear esa URL sería
+ * cachear basura.
+ *
+ * ⚠️ Hasta hoy este endpoint solo sabía resolver por WAHA. Como todo cliente
+ * nuevo entra por Cloud API, en la práctica **las fotos de los clientes no se
+ * podían ver** salvo en el único negocio que quedó en WAHA.
  */
 export async function GET(request: NextRequest) {
   const usuario = await obtenerUsuarioConPermiso("operar_conversaciones");
@@ -52,39 +60,63 @@ export async function GET(request: NextRequest) {
     return new NextResponse("No encontrado", { status: 404 });
   }
 
-  let url = (msg.media_url as string | null) ?? "";
+  const guardado = (msg.media_url as string | null) ?? "";
   let mime = (msg.media_mime as string | null) ?? "";
 
-  // Sin URL guardada (el caso normal en WAHA Core): resolver bajo demanda.
-  if (!url && msg.media_tipo && msg.wa_message_id) {
-    const res = await mediaDeMensajeWaha(
-      msg.chat_id as string,
-      msg.wa_message_id as string,
-    );
-    if (res) {
-      url = res.url;
-      mime = mime || res.mimetype || "";
-      // Cachear para la próxima (best-effort; si falla, se vuelve a resolver).
-      await supa
-        .from("ed_mensajes")
-        .update({ media_url: url, media_mime: mime || null })
-        .eq("id", msg.id)
-        .then(
-          () => undefined,
-          () => undefined,
-        );
+  /** Lo que hay que descargar y con qué cabeceras. Se arma según el transporte. */
+  let urlFinal = "";
+  let cabeceras: Record<string, string> | undefined;
+
+  if (guardado.startsWith("meta:")) {
+    // ── Cloud API ────────────────────────────────────────────────────────────
+    const mediaId = guardado.slice("meta:".length);
+    const cfg = await configPorCliente(usuario.clienteId);
+    if (!cfg) return new NextResponse("Sin WhatsApp configurado", { status: 409 });
+
+    const res = await resolverMediaMeta(cfg, mediaId);
+    if (!res) return new NextResponse("Sin archivo", { status: 404 });
+    if (!hostDeMediaPermitido(res.url)) {
+      // Nunca mandar el token del negocio a un host que no sea de Meta.
+      console.error("[media] host no permitido en la URL de Meta");
+      return new NextResponse("Origen no permitido", { status: 400 });
     }
+    urlFinal = res.url;
+    mime = mime || res.mime || "";
+    cabeceras = { Authorization: `Bearer ${cfg.token}` };
+  } else {
+    // ── WAHA ─────────────────────────────────────────────────────────────────
+    let url = guardado;
+    if (!url && msg.media_tipo && msg.wa_message_id) {
+      const res = await mediaDeMensajeWaha(
+        msg.chat_id as string,
+        msg.wa_message_id as string,
+      );
+      if (res) {
+        url = res.url;
+        mime = mime || res.mimetype || "";
+        // Cachear para la próxima (best-effort; si falla, se vuelve a resolver).
+        await supa
+          .from("ed_mensajes")
+          .update({ media_url: url, media_mime: mime || null })
+          .eq("id", msg.id)
+          .then(
+            () => undefined,
+            () => undefined,
+          );
+      }
+    }
+    if (!url) return new NextResponse("Sin archivo", { status: 404 });
+
+    const anclada = reanclarUrlWaha(url);
+    if (!anclada) return new NextResponse("Origen no permitido", { status: 400 });
+    urlFinal = anclada;
+    const key = process.env.WAHA_API_KEY;
+    cabeceras = key ? { "X-Api-Key": key } : undefined;
   }
-  if (!url) return new NextResponse("Sin archivo", { status: 404 });
 
-  // Re-anclar SIEMPRE al host de WAHA configurado (anti-SSRF por construcción).
-  const urlFinal = reanclarUrlWaha(url);
-  if (!urlFinal) return new NextResponse("Origen no permitido", { status: 400 });
-
-  const key = process.env.WAHA_API_KEY;
   try {
     const r = await fetch(urlFinal, {
-      headers: key ? { "X-Api-Key": key } : undefined,
+      headers: cabeceras,
       signal: AbortSignal.timeout(25_000),
     });
     if (!r.ok) return new NextResponse("No disponible", { status: 502 });
@@ -102,6 +134,9 @@ export async function GET(request: NextRequest) {
       "audio/ogg",
       "audio/mp4",
       "audio/wav",
+      "audio/aac",
+      "audio/amr",
+      "video/mp4",
       "application/pdf",
     ]);
     const seguroInline = tiposInline.has(tipoDeclarado);
@@ -119,7 +154,17 @@ export async function GET(request: NextRequest) {
         "Content-Type": tipo,
         // Se muestra inline (imágenes/PDF) pero con nombre por si se descarga.
         "Content-Disposition": `${seguroInline ? "inline" : "attachment"}; filename="${nombre.replace(/[^\w.\- ]/g, "_")}"`,
-        "Cache-Control": "private, max-age=300",
+        /**
+         * CACHÉ LARGA, A PROPÓSITO (21-ago-2026). Antes eran 5 minutos, así que
+         * volver a abrir una conversación volvía a descargar cada foto — y en
+         * Cloud API cada descarga son DOS viajes a Meta, no uno.
+         *
+         * El contenido de un mensaje es inmutable: la foto que mandó alguien el
+         * martes es la misma para siempre. `private` mantiene la caché en el
+         * navegador de esa persona y fuera de cualquier CDN compartida, que es
+         * lo correcto para material de un cliente.
+         */
+        "Cache-Control": "private, max-age=31536000, immutable",
       },
     });
   } catch {

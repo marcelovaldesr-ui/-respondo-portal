@@ -105,7 +105,9 @@ export async function revisarCuposYAvisar(ahora: Date = new Date()): Promise<Res
           ? await (async () => {
               const cfg = await configPorCliente(clienteId);
               return cfg
-                ? enviarTexto(cfg, destino, texto)
+                ? // `sinEspera`: es un aviso operativo al propio negocio, no
+                  // una conversación con un cliente.
+                  enviarTexto(cfg, destino, texto, { sinEspera: true })
                 : { ok: false as const, error: "cliente cloud sin credenciales" };
             })()
           : // Misma barrera multi-cliente que los seguimientos: WAHA tiene UNA

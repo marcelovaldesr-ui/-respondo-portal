@@ -113,10 +113,32 @@ export const PLANTILLAS: Record<string, Plantilla> = {
     ejemplos: ["Cristian", "RS-Shop", "KTM 390 Duke 2023", "su próxima mantención"],
   },
 
+  /**
+   * ESTA ES MARKETING Y NO SE PUEDE EVITAR. NO PERDER TIEMPO INTENTÁNDOLO.
+   *
+   * Se probaron dos textos (19-ago-2026). Meta aceptó los dos como UTILITY al
+   * crearlos y después, DURANTE LA REVISIÓN, movió los dos a MARKETING
+   * (`previous_category: UTILITY` en la API). O sea que no es cosa del texto:
+   *
+   *   1. "¿Sigue en pie? Si nos dices que sí, la retomamos hoy mismo."  → MARKETING
+   *   2. "Tu cotización sigue abierta… ¿te la reenviamos o la cerramos?" → MARKETING
+   *
+   * La explicación está en la regla de Meta: utilidad exige que el mensaje sea
+   * sobre "su pedido o su cuenta". Una COTIZACIÓN todavía no es un pedido —es
+   * previa a la compra— así que cualquier seguimiento sobre ella es, para Meta,
+   * reactivación comercial. Da lo mismo cuán neutro sea el texto.
+   *
+   * Consecuencia práctica: cuesta ≈$85 y no ≈$18. Y como el precio es el mismo
+   * en los dos casos, se queda el texto que de verdad consigue respuesta.
+   *
+   * ⚠ Si alguien vuelve a intentar bajarla a utilidad, que lea esto primero.
+   * Hay 60 días para apelar por Business Support, pero con este argumento la
+   * apelación tiene poco futuro.
+   */
   cotizacion_pendiente: {
     nombre: "cotizacion_pendiente",
     idioma: "es",
-    categoria: "utility",
+    categoria: "marketing",
     cuerpo:
       "Hola {{1}}, te escribimos de {{2}} por la cotización de {{3}} que nos pediste.\n\n" +
       "¿Sigue en pie? Si nos dices que sí, la retomamos hoy mismo.",

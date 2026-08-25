@@ -3,13 +3,18 @@
 import { revalidatePath } from "next/cache";
 import { db } from "@/lib/db";
 import { obtenerUsuarioConPermiso } from "@/lib/auth";
-import { configPorCliente, enviarTexto } from "@/lib/whatsapp";
-import { enviarTextoWaha, enviarMediaWaha } from "@/lib/waha";
+import { enviarTexto } from "@/lib/whatsapp";
+import { enviarTextoWaha } from "@/lib/waha";
 import { cuentaIgDeCliente, enviarTextoInstagram } from "@/lib/instagram";
 import { guardarMensaje } from "@/lib/mensajes";
 import { limitarDistribuido } from "@/lib/seguridad";
-import type { SupabaseClient } from "@supabase/supabase-js";
-import { validarArchivoBase64 } from "@/lib/archivos";
+import {
+  MODOS,
+  restaurarControl,
+  tomarControlTemporal,
+  transporteSalida,
+  type Modo,
+} from "@/lib/controlChat";
 
 /**
  * Control del cliente sobre una conversación: pausar al asistente, tomar el
@@ -24,126 +29,6 @@ import { validarArchivoBase64 } from "@/lib/archivos";
  * un empleado del cliente logueado antes de escribir. Sin esa validación,
  * cambiar un id en la petición dejaría pausar el bot de otro negocio.
  */
-
-const MODOS = ["bot", "humano", "pausado"] as const;
-type Modo = (typeof MODOS)[number];
-
-/**
- * TIPOS DE ARCHIVO PERMITIDOS (lista blanca).
- *
- * El navegador ya filtra con accept="image/*,application/pdf", pero eso es solo
- * una sugerencia de la UI: una petición manipulada (o una sesión robada) puede
- * mandar cualquier cosa. Si dejáramos pasar ejecutables o HTML, el número de
- * WhatsApp del NEGOCIO podría usarse para distribuir malware — y WhatsApp
- * suspende números por eso. La lista blanca se valida en el servidor.
- */
-const MIME_PERMITIDOS = new Set([
-  "image/jpeg",
-  "image/png",
-  "image/webp",
-  "image/gif",
-  "application/pdf",
-]);
-
-/** Nombre de archivo seguro: sin rutas, sin caracteres raros, con largo acotado. */
-function nombreSeguro(nombre: string): string {
-  const base = nombre.split(/[/\\]/).pop() ?? "archivo"; // corta cualquier ruta
-  const limpio = base.replace(/[^\w.\- ]/g, "_").slice(0, 120);
-  return limpio || "archivo";
-}
-
-/**
- * Decide el transporte de SALIDA de un cliente para las respuestas del inbox.
- *
- * Regla: un cliente sale por Meta (Cloud API) SOLO si está marcado explícitamente
- * como transporte 'cloud'. Por defecto — y mientras dure la migración — todo sale
- * por WAHA. Tener credenciales de Meta cargadas NO alcanza: durante la migración
- * un cliente puede tener Meta ya preparado pero seguir ATENDIENDO por WAHA (es el
- * caso de Impresora Color). Basarse solo en "¿tiene token de Meta?" mandaba las
- * respuestas por el canal equivocado.
- *
- * Devuelve la config de Cloud API si corresponde usar Meta; null → usar WAHA.
- *
- * Defensivo: si la columna ed_clientes.transporte todavía no existe, la consulta
- * falla y se asume 'waha' (el comportamiento correcto hoy), así que esto funciona
- * aunque no se haya aplicado la migración.
- */
-type TransporteSalida =
-  | { tipo: "waha" }
-  | { tipo: "cloud"; config: import("@/lib/whatsapp").ConfigWhatsApp }
-  | { tipo: "error"; error: string };
-
-async function transporteSalida(clienteId: string): Promise<TransporteSalida> {
-  const { data, error } = await db()
-    .from("ed_clientes")
-    .select("transporte")
-    .eq("id", clienteId)
-    .maybeSingle();
-  if (error) {
-    return { tipo: "error", error: "No se pudo determinar el canal de salida." };
-  }
-  const transporte = (data?.transporte as string | null) ?? "waha";
-  if (transporte !== "cloud") return { tipo: "waha" };
-  const config = await configPorCliente(clienteId);
-  // Nunca caer a la sesión WAHA global si un cliente Cloud quedó sin token.
-  // Son transportes distintos y usar el fallback equivocado puede enviar desde
-  // el número de otro negocio.
-  if (!config) return { tipo: "error", error: "El número de Meta no tiene credenciales válidas." };
-  return { tipo: "cloud", config };
-}
-
-type ControlTemporal = { marca: string; modoAnterior: Modo; existia: boolean };
-
-/** Silencia al bot durante el envío y permite revertir sin pisar cambios concurrentes. */
-async function tomarControlTemporal(
-  supa: SupabaseClient,
-  empleadoId: string,
-  chatId: string,
-): Promise<ControlTemporal | null> {
-  const { data: anterior, error: lecturaError } = await supa
-    .from("ed_chat_estado")
-    .select("modo")
-    .eq("empleado_id", empleadoId)
-    .eq("chat_id", chatId)
-    .maybeSingle();
-  if (lecturaError) return null;
-
-  const marca = new Date().toISOString();
-  const { error } = await supa.from("ed_chat_estado").upsert(
-    { empleado_id: empleadoId, chat_id: chatId, modo: "humano", actualizado_en: marca },
-    { onConflict: "empleado_id,chat_id" },
-  );
-  if (error) return null;
-  return {
-    marca,
-    modoAnterior: MODOS.includes(anterior?.modo as Modo) ? (anterior?.modo as Modo) : "bot",
-    existia: Boolean(anterior),
-  };
-}
-
-/** Revierte solo si nadie cambió el modo después de nuestra toma temporal. */
-async function restaurarControl(
-  supa: SupabaseClient,
-  empleadoId: string,
-  chatId: string,
-  control: ControlTemporal,
-): Promise<void> {
-  if (control.existia) {
-    await supa
-      .from("ed_chat_estado")
-      .update({ modo: control.modoAnterior, actualizado_en: new Date().toISOString() })
-      .eq("empleado_id", empleadoId)
-      .eq("chat_id", chatId)
-      .eq("actualizado_en", control.marca);
-  } else {
-    await supa
-      .from("ed_chat_estado")
-      .delete()
-      .eq("empleado_id", empleadoId)
-      .eq("chat_id", chatId)
-      .eq("actualizado_en", control.marca);
-  }
-}
 
 export async function cambiarModo(formData: FormData) {
   const usuario = await obtenerUsuarioConPermiso("operar_conversaciones");
@@ -268,7 +153,10 @@ export async function responderComoHumano(
     // Cliente marcado como 'cloud' → Meta oficial. Resto → WAHA.
     envio =
       transporte.tipo === "cloud"
-        ? await enviarTexto(transporte.config, chatId, texto)
+        ? // `sinEspera`: lo escribió una PERSONA. La pausa de "escribiendo…"
+          // existe para que el bot no parezca bot; acá solo agregaría hasta 6 s
+          // de espera a alguien que ya está mirando la pantalla.
+          await enviarTexto(transporte.config, chatId, texto, { sinEspera: true })
         : await enviarTextoWaha(chatId, texto);
   }
 
@@ -320,138 +208,21 @@ export async function responderComoHumano(
   return { ok: true };
 }
 
-/**
- * La persona del negocio envía una IMAGEN o un PDF al cliente desde el inbox.
- * Igual que responderComoHumano: toma el control (el bot calla), manda por WAHA y
- * deja registro en el historial. `data` llega en base64 (sin prefijo) desde el
- * navegador. Devuelve {ok} para que el compositor muestre el error si lo hay.
+/*
+ * ENVÍO DE ADJUNTOS: se mudó a app/api/whatsapp/adjunto/route.ts (21-ago-2026).
  *
- * Límite: 8MB de archivo antes de codificar. El tope real lo fija también
- * `serverActions.bodySizeLimit` en next.config.mjs; si falta, un archivo grande
- * falla con "Body exceeded limit" antes de llegar acá.
+ * Acá vivía `enviarArchivoComoHumano`, una server action que recibía el archivo
+ * EN BASE64. Se eliminó, no se dejó "por si acaso", por tres razones:
+ *
+ *  1. Base64 inflaba el archivo un 33% y el tope real para la persona quedaba en
+ *     8 MB sin que el mensaje de error pudiera explicar por qué.
+ *  2. No permitía mostrar progreso: una foto grande parecía colgada.
+ *  3. **Solo sabía enviar por WAHA.** A los clientes en Cloud API —o sea a todo
+ *     cliente nuevo— les respondía "llega en una próxima etapa".
+ *
+ * Dejar las dos convivendo era garantizar que una se quedara atrás, que es
+ * exactamente lo que pasó con la lógica de versiones duplicada.
  */
-export async function enviarArchivoComoHumano(
-  formData: FormData,
-): Promise<{ ok: boolean; error?: string; enviado?: boolean }> {
-  const usuario = await obtenerUsuarioConPermiso("operar_conversaciones");
-  if (!usuario) return { ok: false, error: "Sesión no válida" };
-
-  const empleadoId = String(formData.get("empleadoId") ?? "");
-  const chatId = String(formData.get("chatId") ?? "");
-  const filename = nombreSeguro(String(formData.get("filename") ?? "archivo"));
-  const mimetype = String(formData.get("mimetype") ?? "application/octet-stream");
-  const data = String(formData.get("data") ?? "");
-  const caption = String(formData.get("caption") ?? "").trim();
-  if (!empleadoId || !chatId || !data) {
-    return { ok: false, error: "Faltan datos del archivo" };
-  }
-
-  // ── VALIDACIÓN DEL ARCHIVO EN EL SERVIDOR (no confiar en el navegador) ──────
-  if (!MIME_PERMITIDOS.has(mimetype)) {
-    return {
-      ok: false,
-      error: "Solo se pueden enviar imágenes (JPG, PNG, WEBP, GIF) o archivos PDF.",
-    };
-  }
-  const archivo = validarArchivoBase64(data, mimetype);
-  if (!archivo.ok) {
-    return {
-      ok: false,
-      error:
-        archivo.error === "Archivo demasiado grande"
-          ? "El archivo supera los 8 MB. Prueba con uno más liviano."
-          : "El contenido del archivo no coincide con un formato permitido.",
-    };
-  }
-
-  const supa = db();
-
-  const [{ data: empleado }, { data: contacto }] = await Promise.all([
-    supa
-      .from("ed_empleados")
-      .select("id")
-      .eq("id", empleadoId)
-      .eq("cliente_id", usuario.clienteId)
-      .maybeSingle(),
-    supa
-      .from("ed_contactos")
-      .select("chat_id")
-      .eq("cliente_id", usuario.clienteId)
-      .eq("chat_id", chatId)
-      .maybeSingle(),
-  ]);
-  if (!empleado || !contacto) return { ok: false, error: "Sin acceso a este chat" };
-
-  // Transporte por cliente (mismo criterio que el texto). El envío de media por
-  // Cloud API todavía no está implementado; los clientes marcados como 'cloud'
-  // reciben un aviso claro en vez de un envío silencioso por el canal equivocado.
-  // Instagram: mismo hueco que tenía el texto. Se avisa en vez de mandarlo por
-  // WAHA, que lo daría por enviado y no llegaría nunca.
-  if (chatId.startsWith("ig:")) {
-    return {
-      ok: false,
-      error:
-        "Por ahora los archivos solo se pueden enviar por WhatsApp. En Instagram puedes responder con texto.",
-    };
-  }
-
-  const transporte = await transporteSalida(usuario.clienteId);
-  if (transporte.tipo === "error") return { ok: false, error: transporte.error };
-  if (transporte.tipo === "cloud") {
-    return {
-      ok: false,
-      error:
-        "Por ahora los archivos solo se pueden enviar en los números conectados por WAHA. En Meta (Cloud API) llega en una próxima etapa.",
-    };
-  }
-
-  const control = await tomarControlTemporal(supa, empleadoId, chatId);
-  if (!control) return { ok: false, error: "No se pudo tomar el control del chat" };
-
-  // Enviar por WAHA (imagen inline o documento según el mimetype).
-  const r = await enviarMediaWaha(chatId, {
-    data,
-    mimetype,
-    filename,
-    caption: caption || undefined,
-  });
-  if (!r.ok) {
-    await restaurarControl(supa, empleadoId, chatId, control);
-    return { ok: false, error: r.error || "No se pudo enviar el archivo" };
-  }
-
-  // Registro en el historial CON el id del envío (ver responderComoHumano): sin
-  // el id, el eco de este archivo se guardaría de nuevo como mensaje humano
-  // duplicado. El portal todavía no renderiza media saliente en la línea de
-  // tiempo, así que el texto es descriptivo (y el caption si lo hubo).
-  const etiqueta = mimetype.startsWith("image/")
-    ? "📷 Imagen enviada"
-    : `📎 Archivo enviado: ${filename}`;
-  const guardado = await guardarMensaje(supa, {
-    empleadoId,
-    chatId,
-    rol: "humano",
-    texto: caption ? `${etiqueta} — ${caption}` : etiqueta,
-    waId: r.waId,
-    canal: "whatsapp",
-  });
-  if (!guardado.ok) {
-    return {
-      ok: false,
-      enviado: true,
-      error: "El archivo salió, pero no se pudo registrar. Revisa el chat antes de continuar.",
-    };
-  }
-  await supa
-    .from("ed_escalaciones")
-    .update({ atendida_en: new Date().toISOString() })
-    .eq("empleado_id", empleadoId)
-    .eq("chat_id", chatId)
-    .is("atendida_en", null);
-
-  revalidatePath("/conversaciones");
-  return { ok: true };
-}
 
 /**
  * Agrega o quita una etiqueta de una conversación (manual, por el humano).

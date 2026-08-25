@@ -1,101 +1,35 @@
 "use client";
 
-import { useEffect, useRef, useState, useTransition, useCallback } from "react";
-import {
-  responderComoHumano,
-  cambiarModo,
-  enviarArchivoComoHumano,
-} from "@/app/(portal)/conversaciones/acciones";
-
-type Media = { tipo: string; mime: string | null; nombre: string | null; url: string };
-type Msg = { rol: string; texto: string; creadoEn: string; media?: Media | null };
+import { useCallback, useEffect, useRef, useState, useTransition } from "react";
+import { responderComoHumano, cambiarModo } from "@/app/(portal)/conversaciones/acciones";
+import { Burbuja } from "@/components/inbox/Burbuja";
+import { Compositor } from "@/components/inbox/Compositor";
+import { useMensajesEnVivo } from "@/components/inbox/useMensajesEnVivo";
+import type { MensajeUI } from "@/components/inbox/tipos";
 
 /**
- * Muestra el adjunto que mandó el cliente. Se pide por el proxy autenticado
- * (/api/whatsapp/media): la cookie de sesión viaja sola por ser mismo origen.
- * Antes la persona solo veía el marcador "[el cliente envió una imagen]" y no
- * podía abrir el archivo.
- */
-function Adjunto({ media }: { media: Media }) {
-  if (media.tipo === "imagen" || media.mime?.startsWith("image/")) {
-    return (
-      <a href={media.url} target="_blank" rel="noreferrer" className="mt-1 block">
-        {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img
-          src={media.url}
-          alt={media.nombre || "imagen del cliente"}
-          className="max-h-52 rounded-lg border"
-          style={{ borderColor: "var(--borde)" }}
-        />
-      </a>
-    );
-  }
-  if (media.tipo === "audio" || media.mime?.startsWith("audio/")) {
-    return <audio controls preload="none" src={media.url} className="mt-1 w-full max-w-[240px]" />;
-  }
-  // Documento / video / otro → enlace para abrir o descargar.
-  const etiqueta =
-    media.tipo === "video" ? "Ver video" : media.nombre ? `Abrir ${media.nombre}` : "Ver archivo";
-  return (
-    <a
-      href={media.url}
-      target="_blank"
-      rel="noreferrer"
-      className="mt-1 inline-flex items-center gap-1 rounded-lg border px-2.5 py-1.5 text-[12.5px]"
-      style={{ borderColor: "var(--borde)", color: "var(--tinta)" }}
-    >
-      📎 {etiqueta}
-    </a>
-  );
-}
-
-/**
- * La hora de un mensaje, SIEMPRE en hora de Chile.
+ * INBOX EN VIVO — la pantalla donde el negocio atiende.
  *
- * BUG REAL (17-ago-2026): esto no fijaba `timeZone`, así que usaba la del
- * entorno. El servidor de Vercel corre en UTC y dibujaba "15:55"; el navegador
- * del cliente, en Chile, dibujaba "11:55". React compara lo que recibió con lo
- * que produce y, al no coincidir el texto, falla la hidratación (error #418).
- * A partir de ahí React queda en mal estado y lo que revienta después son
- * esquirlas: "i is not a function", la pantalla de error, todo.
+ * El modelo es humano-primero: la persona sabe el negocio; el asistente es un
+ * ayudante que se calla apenas ella toma el control.
  *
- * Se veía como un problema de despliegues porque el cartel de error decía eso,
- * pero pasaba en CADA carga de una conversación desde siempre.
+ * REESCRITO EL 21-AGO-2026 POR RENDIMIENTO. Lo que había hacía esto:
+ *  - pedía los 200 mensajes completos cada 4 s y reemplazaba la lista entera;
+ *  - usaba el índice del arreglo como clave de React, así que en cada ciclo
+ *    re-montaba todas las burbujas y las imágenes parpadeaban;
+ *  - tenía el texto que se está escribiendo en el MISMO componente que la lista,
+ *    así que cada tecla redibujaba la conversación completa;
+ *  - arrastraba el scroll al final aunque estuvieras leyendo mensajes viejos;
+ *  - vivía en una caja de 44vh, o sea media pantalla desperdiciada.
  *
- * Fijar la zona es lo que garantiza que servidor y navegador escriban lo mismo.
- * Es el mismo criterio que ya usa el resto del portal (lib/fechas.ts).
+ * Ahora: el transporte en vivo está en `useMensajesEnVivo` (SSE con respaldo de
+ * sondeo), cada burbuja se memoiza por su contenido, el compositor es su propio
+ * componente y el scroll respeta lo que la persona está haciendo.
  */
-const hora = (iso: string) => {
-  try {
-    return new Date(iso).toLocaleTimeString("es-CL", {
-      hour: "2-digit",
-      minute: "2-digit",
-      timeZone: "America/Santiago",
-    });
-  } catch {
-    return "";
-  }
-};
 
-/**
- * Respuestas rápidas por defecto (atajos de la persona, no IA). Son NEUTRALES:
- * sirven para cualquier negocio. Cada cliente puede pasar las suyas por la prop
- * `rapidas` (p. ej. con su dirección de retiro), sin tocar el código.
- */
-const RAPIDAS_DEFECTO = [
-  "¡Hola! ¿En qué te puedo ayudar?",
-  "Te confirmo y te aviso a la brevedad 👍",
-  "¿Me cuentas un poco más para ayudarte mejor?",
-  "¡Gracias por escribirnos! 🙌",
-];
+/** A qué distancia del final se considera que la persona "está abajo". */
+const UMBRAL_ABAJO = 120;
 
-/**
- * Inbox en vivo para que CECILIA atienda. El modelo es humano-primero: ella sabe
- * el negocio; Tino es solo un asistente que se calla apenas ella toma el control.
- *  - Toma de control en 1 clic (o al escribir) → Tino queda en silencio al instante.
- *  - Devolver el control a Tino cuando ella quiera.
- *  - Mensajes en vivo (sin recargar) + envío con Enter.
- */
 export default function InboxConversacion({
   empleadoId,
   chatId,
@@ -109,55 +43,100 @@ export default function InboxConversacion({
   chatId: string;
   empleadoNombre: string;
   ventana: "abierta" | "cerrada" | "desconocida";
-  mensajesIniciales: Msg[];
+  mensajesIniciales: MensajeUI[];
   modoInicial: string;
-  /** Respuestas rápidas del negocio; si no vienen, se usan las neutrales. */
   rapidas?: string[];
 }) {
-  const RAPIDAS = rapidas && rapidas.length > 0 ? rapidas : RAPIDAS_DEFECTO;
-  const [mensajes, setMensajes] = useState<Msg[]>(mensajesIniciales);
-  const [modo, setModo] = useState(modoInicial);
-  const [texto, setTexto] = useState("");
-  const [pendiente, startTransition] = useTransition();
+  const {
+    mensajes,
+    modo,
+    setModo,
+    conexion,
+    sondear,
+    agregarOptimista,
+    quitar,
+    marcar,
+    cargarAnteriores,
+    hayMasHistorial,
+    cargandoHistorial,
+  } = useMensajesEnVivo({ empleadoId, chatId, inicial: mensajesIniciales, modoInicial });
+
+  const [, startTransition] = useTransition();
   const [cambiando, setCambiando] = useState(false);
-  const [subiendo, setSubiendo] = useState(false);
   const [aviso, setAviso] = useState<string | null>(null);
-  const areaRef = useRef<HTMLTextAreaElement>(null);
-  const fileRef = useRef<HTMLInputElement>(null);
+  const [subiendo, setSubiendo] = useState(false);
+  const [progreso, setProgreso] = useState(0);
+  const [sinLeer, setSinLeer] = useState(0);
+
+  const scrollRef = useRef<HTMLDivElement>(null);
   const finRef = useRef<HTMLDivElement>(null);
+  const estabaAbajo = useRef(true);
+  const cantidadPrevia = useRef(mensajes.length);
+  /** Alto del contenido antes de insertar historial, para no perder el punto. */
+  const altoPrevio = useRef(0);
 
-  const bajar = () => finRef.current?.scrollIntoView({ behavior: "smooth" });
-  // Las llaves NO son decorativas. `useEffect(bajar, ...)` le entrega a React lo
-  // que devuelva `bajar`, y React usa ese valor como función de limpieza sin
-  // comprobar que lo sea: le basta con que no sea `undefined`. Hoy devuelve
-  // undefined y funciona, pero cualquier cambio futuro en `bajar` —devolver el
-  // elemento, un booleano, lo que sea— rompería el portal entero al desmontar,
-  // con un error minificado imposible de rastrear. Así el retorno queda
-  // controlado acá.
+  const estaAbajo = useCallback(() => {
+    const el = scrollRef.current;
+    if (!el) return true;
+    return el.scrollHeight - el.scrollTop - el.clientHeight < UMBRAL_ABAJO;
+  }, []);
+
+  const irAlFinal = useCallback((suave = true) => {
+    finRef.current?.scrollIntoView({ behavior: suave ? "smooth" : "auto", block: "end" });
+    setSinLeer(0);
+  }, []);
+
+  /**
+   * SCROLL QUE NO SECUESTRA.
+   *
+   * Antes se bajaba al final cada vez que cambiaba la cantidad de mensajes. Si
+   * estabas leyendo algo de ayer y entraba un mensaje, te tiraba abajo. Ahora
+   * solo baja solo si YA estabas abajo; si no, aparece un contador de "nuevos".
+   *
+   * Es exactamente lo que hace WhatsApp, y la diferencia se nota al primer uso.
+   */
   useEffect(() => {
-    bajar();
-  }, [mensajes.length]);
+    const nuevos = mensajes.length - cantidadPrevia.current;
+    cantidadPrevia.current = mensajes.length;
+    if (nuevos <= 0) return;
 
-  // Poll en vivo cada 4s: mensajes nuevos + modo actual, sin recargar la página.
-  const refrescar = useCallback(async () => {
-    try {
-      const r = await fetch(
-        `/api/whatsapp/mensajes?emp=${empleadoId}&chat=${encodeURIComponent(chatId)}`,
-        { cache: "no-store" },
-      );
-      if (!r.ok) return;
-      const d = await r.json();
-      if (Array.isArray(d.mensajes)) setMensajes(d.mensajes);
-      if (d.modo) setModo(d.modo);
-    } catch {
-      /* silencioso */
+    if (estabaAbajo.current) {
+      irAlFinal();
+    } else {
+      // Los propios no cuentan como "sin leer": los acabas de mandar tú.
+      const ajenos = mensajes.slice(-nuevos).filter((m) => m.rol === "cliente").length;
+      if (ajenos > 0) setSinLeer((n) => n + ajenos);
     }
-  }, [empleadoId, chatId]);
+  }, [mensajes, irAlFinal]);
 
+  /** Primera pintada: al final, sin animación. */
   useEffect(() => {
-    const t = setInterval(refrescar, 4000);
-    return () => clearInterval(t);
-  }, [refrescar]);
+    irAlFinal(false);
+    // Solo al montar.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const onScroll = useCallback(() => {
+    estabaAbajo.current = estaAbajo();
+    if (estabaAbajo.current && sinLeer) setSinLeer(0);
+  }, [estaAbajo, sinLeer]);
+
+  /**
+   * Cargar historial conservando la posición visual.
+   *
+   * Sin esto, insertar 50 mensajes arriba empuja el contenido y la persona
+   * termina mirando otra parte de la conversación sin haber tocado nada.
+   */
+  const verAnteriores = useCallback(async () => {
+    const el = scrollRef.current;
+    altoPrevio.current = el?.scrollHeight ?? 0;
+    await cargarAnteriores();
+    requestAnimationFrame(() => {
+      const e2 = scrollRef.current;
+      if (!e2) return;
+      e2.scrollTop = e2.scrollHeight - altoPrevio.current;
+    });
+  }, [cargarAnteriores]);
 
   const enControl = modo === "humano";
 
@@ -173,107 +152,119 @@ export default function InboxConversacion({
         await cambiarModo(fd);
       } finally {
         setCambiando(false);
-        refrescar();
       }
     });
   }
 
-  function enviar() {
-    const limpio = texto.trim();
-    if (!limpio || pendiente) return;
-    // Al escribir, Cecilia toma el control y Tino se calla.
-    const creadoOptimista = new Date().toISOString();
-    setMensajes((m) => [...m, { rol: "humano", texto: limpio, creadoEn: creadoOptimista }]);
-    setModo("humano");
-    setTexto("");
-    const fd = new FormData();
-    fd.set("empleadoId", empleadoId);
-    fd.set("chatId", chatId);
-    fd.set("texto", limpio);
-    startTransition(async () => {
-      try {
-        const r = await responderComoHumano(fd);
-        if (!r.ok) {
-          if (!r.enviado) {
-            setMensajes((m) => m.filter((msg) => msg.creadoEn !== creadoOptimista));
-            setTexto((actual) => actual || limpio);
-          }
-          setAviso(r.error || "No se pudo enviar el mensaje.");
-        } else {
-          setAviso(null);
-        }
-      } catch {
-        setMensajes((m) => m.filter((msg) => msg.creadoEn !== creadoOptimista));
-        setTexto((actual) => actual || limpio);
-        setAviso("No se pudo enviar el mensaje. Intenta de nuevo.");
-      } finally {
-        areaRef.current?.focus();
-        refrescar();
-      }
-    });
-  }
+  /** Enviar texto: se dibuja al instante y se confirma o se revierte después. */
+  const enviarTexto = useCallback(
+    (limpio: string) => {
+      const idTmp = agregarOptimista({
+        rol: "humano",
+        texto: limpio,
+        creadoEn: new Date().toISOString(),
+        estado: "pendiente",
+      });
+      setModo("humano");
 
-  /** Lee un File como base64 (sin el prefijo data:) para mandarlo al server. */
-  function leerBase64(file: File): Promise<string> {
-    return new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = () => {
-        const res = String(reader.result || "");
-        const coma = res.indexOf(",");
-        resolve(coma >= 0 ? res.slice(coma + 1) : res);
-      };
-      reader.onerror = () => reject(new Error("No se pudo leer el archivo"));
-      reader.readAsDataURL(file);
-    });
-  }
-
-  async function onArchivo(e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0];
-    if (file) e.target.value = ""; // permitir re-elegir el mismo archivo
-    if (!file || subiendo) return;
-    // Base64 agrega ~33% y la acción completa tiene tope de 12 MB. Ocho MB de
-    // binario deja margen para FormData y evita fallar antes de llegar al server.
-    if (file.size > 8 * 1024 * 1024) {
-      setAviso("El archivo supera los 8MB. Prueba con uno más liviano.");
-      return;
-    }
-    setAviso(null);
-    setSubiendo(true);
-    // Al adjuntar, la persona toma el control y Tino se calla (igual que al escribir).
-    setModo("humano");
-    try {
-      const data = await leerBase64(file);
       const fd = new FormData();
       fd.set("empleadoId", empleadoId);
       fd.set("chatId", chatId);
-      fd.set("filename", file.name);
-      fd.set("mimetype", file.type || "application/octet-stream");
-      fd.set("data", data);
-      if (texto.trim()) fd.set("caption", texto.trim()); // el texto va como pie de foto
-      const r = await enviarArchivoComoHumano(fd);
-      if (r.ok) {
-        setTexto("");
-        refrescar();
-      } else {
-        // Si el proveedor confirmó el envío pero falló el historial, no dejar
-        // el caption listo para reenviar: eso duplicaría contenido real.
-        if (r.enviado) {
-          setTexto("");
-          refrescar();
-        }
-        setAviso(r.error || "No se pudo enviar el archivo.");
-      }
-    } catch {
-      setAviso("No se pudo leer el archivo.");
-    } finally {
-      setSubiendo(false);
-    }
-  }
+      fd.set("texto", limpio);
 
-  const ocupado = pendiente || subiendo;
+      startTransition(async () => {
+        try {
+          const r = await responderComoHumano(fd);
+          if (!r.ok) {
+            // Si el proveedor SÍ lo mandó, quitarlo sería mentir al revés: el
+            // cliente lo recibió. Se deja marcado y se avisa.
+            if (!r.enviado) quitar(idTmp);
+            else marcar(idTmp, { fallido: true });
+            setAviso(r.error || "No se pudo enviar el mensaje.");
+          } else {
+            setAviso(null);
+            // Trae la versión real (con id y estado) para que el ✓ empiece a
+            // moverse sin esperar al próximo ciclo.
+            void sondear();
+          }
+        } catch {
+          quitar(idTmp);
+          setAviso("No se pudo enviar el mensaje. Intenta de nuevo.");
+        }
+      });
+    },
+    [empleadoId, chatId, agregarOptimista, quitar, marcar, setModo, sondear],
+  );
+
+  /**
+   * Enviar archivo con vista previa inmediata y progreso real.
+   *
+   * Se usa XMLHttpRequest y no `fetch` por una sola razón: `fetch` todavía no
+   * expone el progreso de SUBIDA de forma confiable en todos los navegadores, y
+   * sin progreso una foto de 5 MB parece que se colgó.
+   */
+  const enviarArchivo = useCallback(
+    (archivo: File, caption: string) => {
+      if (subiendo) return;
+      const esImagen = archivo.type.startsWith("image/");
+      const previa = esImagen ? URL.createObjectURL(archivo) : null;
+
+      const idTmp = agregarOptimista({
+        rol: "humano",
+        texto: caption || (esImagen ? "📷 Imagen enviada" : `📎 ${archivo.name}`),
+        creadoEn: new Date().toISOString(),
+        estado: "pendiente",
+        previa,
+      });
+      setModo("humano");
+      setSubiendo(true);
+      setProgreso(0);
+      setAviso(null);
+
+      const fd = new FormData();
+      fd.set("empleadoId", empleadoId);
+      fd.set("chatId", chatId);
+      fd.set("archivo", archivo);
+      if (caption) fd.set("caption", caption);
+
+      const xhr = new XMLHttpRequest();
+      xhr.open("POST", "/api/whatsapp/adjunto");
+      xhr.upload.onprogress = (e) => {
+        if (e.lengthComputable) setProgreso(Math.round((e.loaded / e.total) * 100));
+      };
+      const terminar = () => {
+        setSubiendo(false);
+        setProgreso(0);
+        if (previa) URL.revokeObjectURL(previa);
+      };
+      xhr.onload = () => {
+        let r: { ok?: boolean; error?: string; enviado?: boolean } = {};
+        try {
+          r = JSON.parse(xhr.responseText);
+        } catch {
+          /* respuesta ilegible */
+        }
+        if (r.ok) {
+          void sondear();
+        } else {
+          if (!r.enviado) quitar(idTmp);
+          else marcar(idTmp, { fallido: true });
+          setAviso(r.error || "No se pudo enviar el archivo.");
+        }
+        terminar();
+      };
+      xhr.onerror = () => {
+        quitar(idTmp);
+        setAviso("Se cortó la conexión al enviar el archivo.");
+        terminar();
+      };
+      xhr.send(fd);
+    },
+    [empleadoId, chatId, subiendo, agregarOptimista, quitar, marcar, setModo, sondear],
+  );
 
   return (
-    <div className="mt-4 flex flex-col">
+    <div className="mt-4 flex min-h-0 flex-1 flex-col">
       {/* Barra de control: quién tiene la conversación */}
       <div
         className="mb-3 flex flex-wrap items-center justify-between gap-2 rounded-xl px-3.5 py-2.5"
@@ -282,12 +273,37 @@ export default function InboxConversacion({
           border: `1px solid ${enControl ? "#C7D2FE" : "var(--borde)"}`,
         }}
       >
-        <span className="text-[13px] font-semibold" style={{ color: enControl ? "#3730A3" : "var(--muted)" }}>
+        <span
+          className="flex items-center gap-2 text-[13px] font-semibold"
+          style={{ color: enControl ? "#3730A3" : "var(--muted)" }}
+        >
           {enControl ? (
             <>🙋 Tú tienes el control · {empleadoNombre} está en silencio</>
           ) : (
             <>🤖 {empleadoNombre} está atendiendo este chat</>
           )}
+          {/*
+            Punto de conexión. Discreto a propósito: informa sin alarmar, porque
+            esta pantalla la puede estar viendo un prospecto en una demo.
+          */}
+          <span
+            title={
+              conexion === "vivo"
+                ? "En vivo"
+                : conexion === "sondeando"
+                  ? "Actualizando cada pocos segundos"
+                  : "Reconectando…"
+            }
+            aria-label={conexion === "vivo" ? "En vivo" : "Reconectando"}
+            style={{
+              width: 7,
+              height: 7,
+              borderRadius: "50%",
+              display: "inline-block",
+              background:
+                conexion === "vivo" ? "#22C55E" : conexion === "sondeando" ? "#F59E0B" : "#CBD5E1",
+            }}
+          />
         </span>
         {enControl ? (
           <button
@@ -308,145 +324,65 @@ export default function InboxConversacion({
         )}
       </div>
 
-      {/* Mensajes en vivo */}
-      <div className="flex max-h-[44vh] flex-col gap-2.5 overflow-y-auto pr-1">
-        {mensajes.map((m, i) => {
-          const delCliente = m.rol === "cliente";
-          const esHumano = m.rol === "humano";
-          return (
-            <div key={i} className={`flex ${delCliente ? "justify-start" : "justify-end"}`}>
-              <div
-                className={
-                  "max-w-[76%] px-3.5 py-2 leading-relaxed " +
-                  (delCliente
-                    ? "rounded-2xl rounded-bl-md border bg-white"
-                    : "rounded-2xl rounded-br-md")
-                }
-                style={
-                  /*
-                     BURBUJA DEL ASISTENTE EN ÍNDIGO CLARO, NO EN COLOR SÓLIDO.
-
-                     Estaba en el color pleno del empleado con texto blanco. En
-                     una conversación donde el asistente escribe el 60% de los
-                     mensajes, eso son bloques saturados ocupando más de media
-                     pantalla, y el ojo termina yendo al color en vez del texto.
-                     Un chat se lee, no se mira.
-
-                     El tinte deja legible el contenido y sigue distinguiendo
-                     quién habló. El humano se queda en tinta sólida porque es la
-                     excepción —cuando una persona interviene, conviene que salte.
-                  */
-                  delCliente
-                    ? { borderColor: "var(--borde)" }
-                    : esHumano
-                      ? { background: "#334155", color: "#fff" }
-                      : { background: "var(--indigo-suave)", color: "var(--tinta)" }
-                }
+      {/* Conversación */}
+      <div className="relative min-h-0 flex-1">
+        <div
+          ref={scrollRef}
+          onScroll={onScroll}
+          className="flex h-full min-h-[46vh] flex-col gap-2.5 overflow-y-auto pr-1"
+          style={{ overflowAnchor: "none" }}
+        >
+          {hayMasHistorial && mensajes.length > 0 && (
+            <div className="flex justify-center py-1">
+              <button
+                onClick={verAnteriores}
+                disabled={cargandoHistorial}
+                className="rounded-full px-3 py-1 text-[12px] disabled:opacity-50"
+                style={{ background: "#F1F2F7", color: "var(--muted)" }}
               >
-                {esHumano && (
-                  <div className="mb-0.5 text-[10px] font-semibold uppercase tracking-widest opacity-80">
-                    Tú
-                  </div>
-                )}
-                <div className="whitespace-pre-wrap">{m.texto}</div>
-                {m.media ? <Adjunto media={m.media} /> : null}
-                <div
-                  className={"mt-1 text-[10.5px] " + (delCliente ? "" : "opacity-75")}
-                  style={delCliente ? { color: "var(--muted-2)" } : undefined}
-                >
-                  {hora(m.creadoEn)}
-                </div>
-              </div>
+                {cargandoHistorial ? "Cargando…" : "Ver mensajes anteriores"}
+              </button>
             </div>
-          );
-        })}
-        <div ref={finRef} />
+          )}
+
+          {mensajes.map((m) => (
+            <Burbuja key={m.id} m={m} />
+          ))}
+          <div ref={finRef} />
+        </div>
+
+        {/* Aviso de mensajes nuevos cuando estás leyendo más arriba */}
+        {sinLeer > 0 && (
+          <button
+            onClick={() => irAlFinal()}
+            className="absolute bottom-3 left-1/2 -translate-x-1/2 rounded-full px-3.5 py-1.5 text-[12.5px] font-semibold shadow-lg"
+            style={{ background: "var(--indigo, #4F46E5)", color: "#fff" }}
+          >
+            {sinLeer} mensaje{sinLeer > 1 ? "s" : ""} nuevo{sinLeer > 1 ? "s" : ""} ↓
+          </button>
+        )}
       </div>
 
-      {/* Compositor */}
-      <div className="mt-4 border-t pt-3" style={{ borderColor: "var(--borde)" }}>
-        {ventana === "cerrada" && (
-          <div
-            className="mb-2 rounded-lg px-3 py-2 text-[12.5px]"
-            style={{ background: "var(--alerta-suave)", color: "var(--alerta)" }}
-          >
-            Pasaron más de 24h desde el último mensaje del cliente. WhatsApp solo permite
-            responder con plantilla aprobada; un texto libre puede no llegar.
-          </div>
-        )}
-
-        {aviso && (
-          <div
-            className="mb-2 rounded-lg px-3 py-2 text-[12.5px]"
-            style={{ background: "var(--alerta-suave)", color: "var(--alerta)" }}
-          >
-            {aviso}
-          </div>
-        )}
-
-        {/* Respuestas rápidas de Cecilia */}
-        <div className="mb-2 flex flex-wrap gap-1.5">
-          {RAPIDAS.map((r) => (
-            <button
-              key={r}
-              onClick={() => { setTexto(r); areaRef.current?.focus(); }}
-              className="rounded-full px-3 py-1.5 text-[12px]"
-              style={{ background: "#F1F2F7", color: "var(--muted)" }}
-              title="Insertar respuesta rápida"
-            >
-              {r.length > 34 ? r.slice(0, 32) + "…" : r}
-            </button>
-          ))}
+      {aviso && (
+        <div
+          className="mt-2 rounded-lg px-3 py-2 text-[12.5px]"
+          style={{ background: "var(--alerta-suave)", color: "var(--alerta)" }}
+        >
+          {aviso}
         </div>
+      )}
 
-        <div className="flex items-end gap-2">
-          {/* Adjuntar imagen o PDF */}
-          <input
-            ref={fileRef}
-            type="file"
-            accept="image/*,application/pdf"
-            onChange={onArchivo}
-            className="hidden"
-          />
-          <button
-            type="button"
-            onClick={() => fileRef.current?.click()}
-            disabled={ocupado}
-            title="Adjuntar imagen o PDF"
-            aria-label="Adjuntar archivo"
-            className="btn-suave shrink-0 disabled:opacity-50"
-            style={{ padding: "0 12px", height: 42 }}
-          >
-            {subiendo ? "…" : "📎"}
-          </button>
-
-          <textarea
-            ref={areaRef}
-            value={texto}
-            onChange={(e) => setTexto(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" && !e.shiftKey) {
-                e.preventDefault();
-                enviar();
-              }
-            }}
-            rows={2}
-            placeholder="Escríbele al cliente…  (Enter envía · 📎 adjunta imagen/PDF)"
-            className="campo flex-1 resize-none"
-          />
-          <button
-            onClick={enviar}
-            disabled={ocupado || !texto.trim()}
-            className="btn-primario shrink-0 disabled:opacity-50"
-          >
-            {pendiente ? "Enviando…" : "Enviar"}
-          </button>
-        </div>
-        <p className="mt-2 text-[11.5px]" style={{ color: "var(--muted-2)" }}>
-          {enControl
-            ? `${empleadoNombre} no responde mientras tú tienes el control.`
-            : `Apenas escribas, tomas el control y ${empleadoNombre} se calla en este chat.`}
-        </p>
+      <div className="mt-4">
+        <Compositor
+          enviarTexto={enviarTexto}
+          enviarArchivo={enviarArchivo}
+          ventana={ventana}
+          empleadoNombre={empleadoNombre}
+          enControl={enControl}
+          rapidas={rapidas}
+          subiendo={subiendo}
+          progreso={progreso}
+        />
       </div>
     </div>
   );

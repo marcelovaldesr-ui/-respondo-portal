@@ -108,13 +108,31 @@ test("el texto que guarda el portal es el mismo cuerpo aprobado", () => {
   }
 });
 
-test("solo la reactivación va como marketing", () => {
-  // El resto continúa una transacción que el cliente ya inició, y por eso es
-  // utilidad: ≈$18 en vez de ≈$85 por mensaje.
+test("solo son marketing las dos que Meta no deja en utilidad", () => {
+  /**
+   * Utilidad cuesta ≈$18 y marketing ≈$85, así que esta lista es plata.
+   *
+   * `mantencion_toca` es marketing por diseño: ahí el negocio inicia algo nuevo.
+   *
+   * `cotizacion_pendiente` es marketing porque Meta lo impuso. Se probaron dos
+   * textos el 19-ago-2026 y los movió los dos de UTILITY a MARKETING durante la
+   * revisión: una cotización todavía no es un pedido, así que para Meta
+   * cualquier seguimiento sobre ella es reactivación comercial.
+   *
+   * Si esta prueba falla, alguien cambió una categoría. Antes de "arreglar" el
+   * test, verificar en Meta qué categoría quedó de verdad: el catálogo tiene que
+   * declarar la real, no la que nos gustaría.
+   */
   const marketing = Object.values(PLANTILLAS)
     .filter((p) => p.categoria === "marketing")
-    .map((p) => p.nombre);
-  assert.deepEqual(marketing, ["mantencion_toca"]);
+    .map((p) => p.nombre)
+    .sort();
+  assert.deepEqual(marketing, ["cotizacion_pendiente", "mantencion_toca"]);
+
+  // Y las de la agenda no pueden salirse de utilidad: son las de más volumen.
+  for (const n of ["cita_confirmacion", "cita_recordatorio", "encuesta_postventa"]) {
+    assert.equal(PLANTILLAS[n].categoria, "utility", `${n} debe ser utilidad`);
+  }
 });
 
 test("la plantilla de reactivación ofrece salida", () => {
