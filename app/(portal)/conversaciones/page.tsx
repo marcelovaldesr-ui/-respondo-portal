@@ -4,15 +4,12 @@ import { metaEmpleado } from "@/lib/empleados";
 import {
   listarConversacionesPagina,
   obtenerConversacion,
-  ETIQUETA_RESULTADO,
-  ETIQUETA_TRIGGER,
   fechaCorta,
 } from "@/lib/conversaciones";
-import InboxConversacion from "@/components/InboxConversacion";
-import EtiquetasEditor from "@/components/EtiquetasEditor";
+import PanelChat from "@/components/inbox/PanelChat";
+import { SeleccionChatProvider, FilaChat } from "@/components/inbox/SeleccionChat";
 import RefrescarLista from "@/components/RefrescarLista";
 import { metaEtiqueta } from "@/lib/etiquetas";
-import { metaEtapa } from "@/lib/embudo";
 
 export const dynamic = "force-dynamic";
 
@@ -67,31 +64,7 @@ function prioridadEtiqueta(v: string): number {
   return ORDEN_ETIQUETA[v] ?? 9;
 }
 
-/** Rótulo de bloque en la columna de contexto. */
-function Rotulo({ children }: { children: React.ReactNode }) {
-  return (
-    <div
-      className="font-semibold uppercase"
-      style={{
-        fontSize: "var(--t-columna)",
-        letterSpacing: "0.07em",
-        color: "var(--muted-3)",
-      }}
-    >
-      {children}
-    </div>
-  );
-}
 
-/** Fila etiqueta/valor del bloque de contexto. */
-function Dato({ etiqueta, children }: { etiqueta: string; children: React.ReactNode }) {
-  return (
-    <div className="flex items-center justify-between gap-3">
-      <dt style={{ fontSize: "var(--t-menor)", color: "var(--muted)" }}>{etiqueta}</dt>
-      <dd style={{ fontSize: "var(--t-menor)" }}>{children}</dd>
-    </div>
-  );
-}
 
 export default async function Conversaciones({
   searchParams,
@@ -136,8 +109,6 @@ export default async function Conversaciones({
       ? await obtenerConversacion(usuario.clienteId, params.emp, params.chat)
       : null;
 
-  const metaSel = seleccion ? metaEmpleado(seleccion.empleadoRol) : null;
-  const colorSel = metaSel?.color ?? "var(--indigo)";
 
   // URLs que COMBINAN filtros: cambiar uno no borra los demás (clave con
   // muchos chats: puedes buscar "rodrigo" Y filtrar "te esperan" a la vez).
@@ -301,6 +272,10 @@ export default async function Conversaciones({
         costado, donde se consulta sin estorbar. La tercera columna desaparece
         bajo 1280px: en un notebook chico, chat angosto es peor que sin panel.
       */}
+      <SeleccionChatProvider
+        empleadoIdInicial={params.emp ?? ""}
+        chatIdInicial={params.chat ?? ""}
+      >
       <div className="mt-3 grid gap-3 lg:h-[calc(100vh-150px)] lg:grid-cols-[330px_minmax(0,1fr)] xl:grid-cols-[330px_minmax(0,1fr)_290px]">
         {/* Lista — en móvil se oculta cuando hay una conversación abierta,
             porque los dos paneles lado a lado no caben en un teléfono. */}
@@ -319,17 +294,15 @@ export default async function Conversaciones({
           )}
           {lista.map((c) => {
             const meta = metaEmpleado(c.empleadoRol);
-            const activo =
-              params.emp === c.empleadoId && params.chat === c.chatId;
             return (
-              <Link
+              <FilaChat
                 key={`${c.empleadoId}|${c.chatId}`}
+                empleadoId={c.empleadoId}
+                chatId={c.chatId}
                 href={urlCon({ emp: c.empleadoId, chat: c.chatId })}
                 className="flex gap-3 border-b px-4 py-3.5 transition last:border-0 hover:bg-[#FAFAFD]"
-                style={{
-                  borderColor: "var(--borde)",
-                  background: activo ? "var(--indigo-suave)" : undefined,
-                }}
+                estilo={{ borderColor: "var(--borde)" }}
+                estiloActivo={{ background: "var(--indigo-suave)" }}
               >
                 {/*
                   AVATAR = INICIALES DEL CONTACTO.
@@ -423,7 +396,7 @@ export default async function Conversaciones({
                     );
                   })()}
                 </div>
-              </Link>
+              </FilaChat>
             );
           })}
           {totalFiltrado > POR_PAGINA && (
@@ -457,254 +430,19 @@ export default async function Conversaciones({
           )}
         </div>
 
-        {/* Detalle — en móvil ocupa toda la pantalla; el panel vacío solo tiene
-            sentido en escritorio, donde convive con la lista. */}
-        <div
-          className={
-            "tarjeta-plana min-w-0 overflow-y-auto p-4 sm:p-5 lg:h-full " +
-            (seleccion ? "block" : "hidden lg:block")
-          }
-          style={{ background: "var(--fondo)" }}
-        >
-          {seleccion && (
-            <Link
-              href="/conversaciones"
-              className="mb-3 inline-flex items-center gap-1.5 text-[14px] font-semibold lg:hidden"
-              style={{ color: "var(--indigo)" }}
-            >
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M15 18l-6-6 6-6" />
-              </svg>
-              Volver a la lista
-            </Link>
-          )}
-          {!seleccion ? (
-            <div
-              className="flex h-full min-h-[340px] flex-col items-center justify-center gap-2 text-center"
-              style={{ color: "var(--muted)" }}
-            >
-              <svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="var(--muted-2)" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M21 12a8 8 0 0 1-8 8H4l1.8-3.2A8 8 0 1 1 21 12z" />
-              </svg>
-              Elige una conversación para ver el chat completo.
-            </div>
-          ) : (
-            <>
-              <div
-                /*
-                  CABECERA FIJA.
-
-                  La columna entera hace scroll, así que al bajar por una
-                  conversación larga el nombre del contacto se iba de la
-                  pantalla: terminabas escribiéndole a alguien sin ver a quién.
-                  En una bandeja con 101 chats abiertos eso es una forma directa
-                  de mandarle a Erika lo que era para Marcelo.
-
-                  Pegada arriba con el fondo del panel, para que los mensajes
-                  pasen por debajo sin transparentarse.
-                */
-                className="sticky top-0 z-10 -mx-4 flex flex-wrap items-center justify-between gap-3 border-b px-4 pb-3 pt-1 sm:-mx-5 sm:px-5"
-                style={{ borderColor: "var(--borde)", background: "var(--fondo)" }}
-              >
-                <div className="flex min-w-0 items-center gap-2.5">
-                  {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img
-                    src={metaSel!.avatar}
-                    alt={seleccion.empleadoNombre}
-                    width={34}
-                    height={34}
-                    className="avatar h-[34px] w-[34px]"
-                    style={{ ["--anillo" as string]: colorSel }}
-                  />
-                  <div className="min-w-0">
-                    <div className="h-cifra truncate">{seleccion.contacto}</div>
-                    <div
-                      className="truncate"
-                      style={{ fontSize: "var(--t-menor)", color: "var(--muted)" }}
-                    >
-                      <span className="cifra">
-                        {seleccion.telefono ?? `+${seleccion.chatId}`}
-                      </span>
-                      {seleccion.etiqueta ? ` · ${seleccion.etiqueta}` : ""}
-                    </div>
-                  </div>
-                </div>
-
-                {/* Atajo a la agenda: en el rediseño de Design está acá arriba
-                    porque agendar es la acción que más se dispara desde una
-                    conversación abierta. */}
-                <Link href="/agenda" className="btn-chico shrink-0">
-                  Agendar hora
-                </Link>
-              </div>
-
-              {seleccion.escalacion && (
-                <div
-                  className="mt-4 rounded-xl border p-4"
-                  style={{
-                    borderColor: "var(--alerta-borde)",
-                    background: "var(--alerta-suave)",
-                  }}
-                >
-                  <div className="text-[13.5px] font-bold" style={{ color: "var(--alerta)" }}>
-                    {ETIQUETA_TRIGGER[seleccion.escalacion.trigger] ?? "Derivada a tu equipo"}
-                    {seleccion.escalacion.atendida ? " · ya atendida" : " · te espera"}
-                  </div>
-                  <p className="mt-1 text-[14px]">{seleccion.escalacion.resumen}</p>
-                </div>
-              )}
-
-              {/* Inbox en vivo: control (tomar/devolver) + mensajes + responder manual */}
-              <InboxConversacion
-                empleadoId={params.emp!}
-                chatId={seleccion.chatId}
-                empleadoNombre={seleccion.empleadoNombre}
-                ventana={seleccion.ventana}
-                /*
-                  Se pasa el mensaje COMPLETO (id, adjunto y estado de entrega).
-                  Antes se recortaba a rol/texto/fecha, así que la primera
-                  pintada no tenía ni claves estables ni imágenes: las fotos
-                  aparecían recién cuando el refresco reemplazaba la lista.
-                */
-                mensajesIniciales={seleccion.mensajes}
-                modoInicial={seleccion.modo}
-              />
-            </>
-          )}
-        </div>
-
         {/*
-          COLUMNA DE CONTEXTO — quién atiende, cómo está clasificada y qué
-          historia tiene esta persona con el negocio.
+          EL CHAT Y SU CONTEXTO, DEL LADO DEL CLIENTE.
 
-          Todo sale de ed_contactos, que desde la migración 250 mantiene el total
-          de mensajes y la fecha del primero por trigger. Sin eso, mostrar
-          "cliente desde" habría obligado a buscar el mensaje más antiguo del
-          chat cada vez que se abre una conversación.
+          Este bloque vivía acá, renderizado en el servidor, y por eso cambiar
+          de conversación obligaba a reconstruir la página entera —lista y
+          resumen incluidos— y a tapar toda la pantalla con el esqueleto.
+
+          Ahora se mueve tal cual a PanelChat, que pide solo el chat que se
+          necesita y recuerda los que ya se abrieron. El marcado es el mismo.
         */}
-        {seleccion && (
-          <aside className="hidden min-w-0 flex-col gap-3 overflow-y-auto xl:flex xl:h-full">
-            <div className="tarjeta p-3.5">
-              <Rotulo>Quién atiende</Rotulo>
-              <div className="mt-2 flex items-center gap-2.5">
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img
-                  src={metaSel!.avatar}
-                  alt=""
-                  width={30}
-                  height={30}
-                  className="avatar h-[30px] w-[30px]"
-                  style={{ ["--anillo" as string]: colorSel }}
-                />
-                <div className="min-w-0">
-                  <div className="truncate font-semibold" style={{ fontSize: "var(--t-fila)" }}>
-                    {seleccion.empleadoNombre}
-                  </div>
-                  <div style={{ fontSize: "var(--t-micro)", color: "var(--muted-2)" }}>
-                    {seleccion.modo === "humano"
-                      ? "en silencio · tú tienes el control"
-                      : seleccion.modo === "pausado"
-                        ? "pausado"
-                        : "respondiendo"}
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            <div className="tarjeta p-3.5">
-              <Rotulo>Etiquetas</Rotulo>
-              <EtiquetasEditor chatId={seleccion.chatId} etiquetas={seleccion.etiquetas} />
-            </div>
-
-            <div className="tarjeta p-3.5">
-              <Rotulo>Contexto</Rotulo>
-              <dl className="mt-2 space-y-1.5">
-                <Dato etiqueta="Etapa">
-                  {(() => {
-                    const e = metaEtapa(seleccion.etapa);
-                    return (
-                      <span className="pildora" style={{ background: e.fondo, color: e.color }}>
-                        {e.label}
-                      </span>
-                    );
-                  })()}
-                </Dato>
-                <Dato etiqueta="Mensajes">
-                  <span className="cifra">{seleccion.mensajesTotal}</span>
-                </Dato>
-                {/* Un contacto anterior al trigger de la 250 puede no tener
-                    primer mensaje registrado. Se omite la fila en vez de
-                    mostrar una fecha inventada o un guion sin explicación. */}
-                {seleccion.clienteDesde && (
-                  <Dato etiqueta="Cliente desde">
-                    {/* Solo la fecha: la hora exacta en que alguien escribió por
-                        primera vez hace meses no le sirve a nadie. */}
-                    <span className="cifra">
-                      {new Intl.DateTimeFormat("es-CL", {
-                        timeZone: "America/Santiago",
-                        day: "numeric",
-                        month: "short",
-                        year: "numeric",
-                      }).format(new Date(seleccion.clienteDesde))}
-                    </span>
-                  </Dato>
-                )}
-                {seleccion.ventana !== "desconocida" && (
-                  <Dato etiqueta="Ventana 24 h">
-                    <span
-                      className="pildora"
-                      style={
-                        seleccion.ventana === "abierta"
-                          ? { background: "var(--ok-suave)", color: "var(--ok)" }
-                          : { background: "var(--fondo-hundido)", color: "var(--muted)" }
-                      }
-                    >
-                      {seleccion.ventana === "abierta" ? "Abierta" : "Cerrada"}
-                    </span>
-                  </Dato>
-                )}
-              </dl>
-            </div>
-
-            {seleccion.resultados.length > 0 && (
-              <div className="tarjeta p-3.5">
-                <Rotulo>Resultados</Rotulo>
-                <div className="mt-2 flex flex-wrap gap-1.5">
-                  {seleccion.resultados.map((r, i) => (
-                    <span key={`${r}-${i}`} className="pildora-ok">
-                      {ETIQUETA_RESULTADO[r] ?? r}
-                    </span>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {seleccion.notas && (
-              <div className="tarjeta p-3.5">
-                <Rotulo>Nota interna</Rotulo>
-                <p
-                  className="mt-2 whitespace-pre-wrap"
-                  style={{ fontSize: "var(--t-menor)", color: "var(--muted)" }}
-                >
-                  {seleccion.notas}
-                </p>
-                {/* Se dice explícito porque es la duda que aparece siempre: si
-                    el cliente puede leer esto. */}
-                <p className="mt-2" style={{ fontSize: "var(--t-micro)", color: "var(--muted-3)" }}>
-                  Solo la ve tu equipo. El cliente nunca la lee.
-                </p>
-              </div>
-            )}
-
-            <Link
-              href={`/clientes/${seleccion.chatId}`}
-              className="btn-suave w-full justify-center"
-            >
-              Ver ficha completa →
-            </Link>
-          </aside>
-        )}
+        <PanelChat inicial={seleccion} claveInicial={seleccion ? `${params.emp}|${params.chat}` : ""} />
       </div>
+      </SeleccionChatProvider>
     </main>
   );
 }

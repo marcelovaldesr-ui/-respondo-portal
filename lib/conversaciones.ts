@@ -47,7 +47,7 @@ export type DetalleConversacion = {
   resultados: string[];
   etiquetas: string[];
   /** Estado de la ventana de 24h de WhatsApp (Opción B). */
-  ventana: "abierta" | "cerrada" | "desconocida";
+  ventana: "abierta" | "cerrada" | "desconocida" | "no_aplica";
   /**
    * CONTEXTO de la persona, para el panel lateral del rediseño.
    *
@@ -77,15 +77,49 @@ export type PaginaConversaciones = {
 };
 
 /**
- * Estado de la ventana de 24h a partir del último mensaje entrante del cliente.
- * Defensivo: la columna ultimo_entrante_en la agrega la migración 210; si aún
- * no está aplicada, la consulta devuelve error y esto retorna "desconocida" sin
- * romper la página.
+ * Estado de la ventana de 24 h de WhatsApp para este chat.
+ *
+ * ⚠️ LA VENTANA NO APLICA IGUAL EN LOS DOS TRANSPORTES, y esto no lo miraba
+ * (arreglado el 24-ago-2026).
+ *
+ *  - **Cloud API (oficial)**: Meta solo acepta texto libre dentro de las 24 h
+ *    desde el último mensaje DEL CLIENTE. Después, solo plantillas aprobadas.
+ *    Y aplica a todos por igual: al asistente y a la persona del negocio.
+ *  - **WAHA (vía no oficial)**: no existe tal ventana. Es una sesión real de la
+ *    app de WhatsApp, así que se puede escribir cuando sea, como desde el
+ *    teléfono.
+ *
+ * Antes esto calculaba solo con la fecha, sin mirar el transporte, así que a un
+ * cliente en WAHA le mostraba «pasaron más de 24 h, tu mensaje puede no llegar»
+ * cuando su mensaje iba a llegar perfectamente. Un aviso falso en la pantalla
+ * donde alguien decide si escribirle a un cliente es peor que no tener aviso:
+ * frena a la persona sin motivo.
+ *
+ * ⚠️ **CONSECUENCIA COMERCIAL QUE NO ESTABA ANOTADA EN NINGUNA PARTE:** migrar
+ * un cliente de WAHA a Cloud API le QUITA la posibilidad de escribirle libremente
+ * a quien quiera cuando quiera. Para un negocio que hoy retoma conversaciones
+ * viejas a mano, eso es una pérdida de capacidad concreta, no un detalle
+ * técnico. Debe decirse ANTES de migrar. Ver docs/PLAN_MIGRACION_WAHA_A_CLOUD.
+ *
+ * Defensivo: la columna `ultimo_entrante_en` la agrega la migración 210; si no
+ * está, devuelve "desconocida" sin romper la página.
  */
 export async function estadoVentana(
   empleadoId: string,
   chatId: string,
-): Promise<"abierta" | "cerrada" | "desconocida"> {
+  clienteId?: string,
+): Promise<"abierta" | "cerrada" | "desconocida" | "no_aplica"> {
+  // En WAHA no hay ventana que calcular.
+  if (clienteId) {
+    const { data: cli } = await db()
+      .from("ed_clientes")
+      .select("transporte")
+      .eq("id", clienteId)
+      .maybeSingle();
+    const transporte = (cli?.transporte as string | null) ?? "waha";
+    if (transporte !== "cloud") return "no_aplica";
+  }
+
   const { data, error } = await db()
     .from("ed_chat_estado")
     .select("ultimo_entrante_en")
@@ -361,7 +395,7 @@ export async function obtenerConversacion(
       .eq("chat_id", chatId),
     // Iba suelta al final, en serie. Es una consulta más que puede viajar junto
     // a las otras cinco en vez de sumar su latencia a la de todas.
-    estadoVentana(empleadoId, chatId),
+    estadoVentana(empleadoId, chatId, clienteId),
   ]);
 
   if (!mensajes.length) return null;

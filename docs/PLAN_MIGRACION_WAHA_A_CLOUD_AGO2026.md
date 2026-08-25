@@ -37,6 +37,23 @@ escriben primero: ese es exactamente el caso gratuito.
 
 ## 2. Por qué migrar (y por qué no correr)
 
+> ⚠️ **PÉRDIDA DE CAPACIDAD QUE NO ESTABA ANOTADA ACÁ (agregado 24-ago-2026).**
+>
+> En **WAHA no existe la ventana de 24 h**: es una sesión real de la app, así que
+> el negocio le puede escribir a quien quiera cuando quiera, como desde el
+> teléfono. En **Cloud API sí existe**, y aplica al asistente Y a la persona por
+> igual: pasadas 24 h desde el último mensaje del cliente, solo salen plantillas
+> aprobadas.
+>
+> Para Impresora Color eso significa que Cecilia **deja de poder retomar a mano
+> una conversación vieja** escribiendo nomás. Es un cambio en cómo trabaja, no un
+> detalle técnico, y hay que decírselo ANTES de migrar — no descubrirlo el lunes
+> siguiente.
+>
+> Mitigación: el portal ya ofrece mandar una plantilla aprobada desde la bandeja
+> cuando la conversación está fuera de plazo. No es lo mismo que escribir libre,
+> pero es una salida y cuesta ≈$18 por mensaje (utilidad).
+
 ### A favor
 - **Estabilidad.** WAHA es no oficial: depende de mantener una sesión vinculada
   por QR. Si WhatsApp cambia algo, o el teléfono se desvincula, Tino se cae. Con

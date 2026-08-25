@@ -38,14 +38,17 @@ export default function InboxConversacion({
   mensajesIniciales,
   modoInicial,
   rapidas,
+  contacto,
 }: {
   empleadoId: string;
   chatId: string;
   empleadoNombre: string;
-  ventana: "abierta" | "cerrada" | "desconocida";
+  ventana: "abierta" | "cerrada" | "desconocida" | "no_aplica";
   mensajesIniciales: MensajeUI[];
   modoInicial: string;
   rapidas?: string[];
+  /** Nombre del contacto: precarga el primer dato de las plantillas. */
+  contacto?: string;
 }) {
   const {
     mensajes,
@@ -67,6 +70,7 @@ export default function InboxConversacion({
   const [subiendo, setSubiendo] = useState(false);
   const [progreso, setProgreso] = useState(0);
   const [sinLeer, setSinLeer] = useState(0);
+  const [enviandoPlantilla, setEnviandoPlantilla] = useState(false);
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const finRef = useRef<HTMLDivElement>(null);
@@ -263,6 +267,31 @@ export default function InboxConversacion({
     [empleadoId, chatId, subiendo, agregarOptimista, quitar, marcar, setModo, sondear],
   );
 
+  /** Enviar una plantilla aprobada (única vía fuera de la ventana de 24 h). */
+  const enviarPlantilla = useCallback(
+    (nombre: string, params: string[]) => {
+      setEnviandoPlantilla(true);
+      setAviso(null);
+      fetch("/api/whatsapp/plantilla", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ empleadoId, chatId, plantilla: nombre, params }),
+      })
+        .then((r) => r.json())
+        .then((r: { ok?: boolean; error?: string }) => {
+          if (r.ok) {
+            setModo("humano");
+            void sondear();
+          } else {
+            setAviso(r.error || "No se pudo enviar la plantilla.");
+          }
+        })
+        .catch(() => setAviso("Se cortó la conexión al enviar la plantilla."))
+        .finally(() => setEnviandoPlantilla(false));
+    },
+    [empleadoId, chatId, setModo, sondear],
+  );
+
   return (
     <div className="mt-4 flex min-h-0 flex-1 flex-col">
       {/* Barra de control: quién tiene la conversación */}
@@ -382,6 +411,9 @@ export default function InboxConversacion({
           rapidas={rapidas}
           subiendo={subiendo}
           progreso={progreso}
+          contacto={contacto ?? ""}
+          enviarPlantilla={enviarPlantilla}
+          enviandoPlantilla={enviandoPlantilla}
         />
       </div>
     </div>

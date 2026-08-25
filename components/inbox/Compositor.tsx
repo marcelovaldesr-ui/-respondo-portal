@@ -1,6 +1,7 @@
 "use client";
 
 import { memo, useRef, useState } from "react";
+import { SelectorPlantilla } from "./SelectorPlantilla";
 
 /**
  * EL COMPOSITOR, AISLADO DEL RESTO DEL CHAT.
@@ -31,17 +32,25 @@ function CompositorBase({
   rapidas,
   subiendo,
   progreso,
+  contacto,
+  enviarPlantilla,
+  enviandoPlantilla,
 }: {
   enviarTexto: (texto: string) => void;
   enviarArchivo: (archivo: File, caption: string) => void;
-  ventana: "abierta" | "cerrada" | "desconocida";
+  ventana: "abierta" | "cerrada" | "desconocida" | "no_aplica";
   empleadoNombre: string;
   enControl: boolean;
   rapidas?: string[];
   subiendo: boolean;
   progreso: number;
+  /** Nombre del contacto, para precargar la plantilla. */
+  contacto: string;
+  enviarPlantilla: (nombre: string, params: string[]) => void;
+  enviandoPlantilla: boolean;
 }) {
   const [texto, setTexto] = useState("");
+  const [conPlantilla, setConPlantilla] = useState(false);
   const areaRef = useRef<HTMLTextAreaElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const RAPIDAS = rapidas && rapidas.length > 0 ? rapidas : RAPIDAS_DEFECTO;
@@ -78,14 +87,45 @@ function CompositorBase({
 
   return (
     <div className="border-t pt-3" style={{ borderColor: "var(--borde)" }}>
-      {ventana === "cerrada" && (
+      {/*
+        FUERA DE PLAZO: OFRECER UNA SALIDA, NO SOLO AVISAR.
+
+        Antes acá solo estaba la advertencia. La persona la leía, escribía igual
+        —porque el campo seguía habilitado— y el mensaje moría en Meta con el
+        error 131047. Un aviso que no ofrece qué hacer es peor que ninguno:
+        deja a alguien mirando una conversación que no puede retomar.
+
+        La ventana de 24 h es de Meta y aplica al asistente y a la persona por
+        igual. Lo que SÍ pasa fuera de plazo es una plantilla aprobada.
+      */}
+      {ventana === "cerrada" && !conPlantilla && (
         <div
-          className="mb-2 rounded-lg px-3 py-2 text-[12.5px]"
+          className="mb-2 flex flex-wrap items-center justify-between gap-2 rounded-lg px-3 py-2 text-[12.5px]"
           style={{ background: "var(--alerta-suave)", color: "var(--alerta)" }}
         >
-          Pasaron más de 24 h desde el último mensaje del cliente. WhatsApp solo permite
-          responder con plantilla aprobada; un texto libre puede no llegar.
+          <span>
+            Pasaron más de 24 h desde el último mensaje del cliente. WhatsApp solo permite
+            retomar con una plantilla aprobada.
+          </span>
+          <button
+            onClick={() => setConPlantilla(true)}
+            className="btn-suave shrink-0 px-3 py-1 text-[12px]"
+          >
+            Usar plantilla
+          </button>
         </div>
+      )}
+
+      {conPlantilla && (
+        <SelectorPlantilla
+          contacto={contacto}
+          enviando={enviandoPlantilla}
+          onCancelar={() => setConPlantilla(false)}
+          onEnviar={(nombre, params) => {
+            enviarPlantilla(nombre, params);
+            setConPlantilla(false);
+          }}
+        />
       )}
 
       <div className="mb-2 flex flex-wrap gap-1.5">
