@@ -626,6 +626,24 @@ export type EcoMeta = {
   para: string; // número del cliente final (chat_id)
   texto: string;
   waId: string | null;
+  /**
+   * Adjunto que mandó la PERSONA desde su teléfono.
+   *
+   * ⚠️ FALTABA, Y NO ERA COSMÉTICO (26-ago-2026). Acá había un
+   * `if (e.type !== "text") continue` que descartaba el eco entero. O sea: si
+   * Cecilia mandaba una FOTO desde su teléfono, pasaban dos cosas malas a la vez:
+   *
+   *  1. la foto no aparecía en el portal, y
+   *  2. **Tino no se enteraba de que ella había tomado el chat**, así que podía
+   *     seguir respondiendo encima — el cliente recibía dos voces del mismo
+   *     negocio.
+   *
+   * Es el mismo error que ya se arregló dos veces en el camino del cliente
+   * (auditoría del 1-ago y adjuntos del 21-ago): descartar todo lo que no fuera
+   * texto. Quedó vivo en el camino de los ecos hasta que Impresora migró a la vía
+   * oficial y empezó a importar.
+   */
+  adjunto?: { id: string; tipo: string; mime?: string | null; nombre?: string | null };
 };
 
 /** Extrae los ecos de Coexistencia (message_echoes) de un payload de Meta. */
@@ -641,11 +659,26 @@ export function parsearEcosMeta(payload: unknown): EcoMeta[] {
             to?: string;
             type?: string;
             text?: { body?: string };
+            image?: { id?: string; mime_type?: string; caption?: string };
+            video?: { id?: string; mime_type?: string; caption?: string };
+            document?: { id?: string; mime_type?: string; caption?: string; filename?: string };
+            audio?: { id?: string; mime_type?: string };
+            voice?: { id?: string; mime_type?: string };
+            sticker?: { id?: string; mime_type?: string };
           }[];
         };
       }[];
     }[];
   };
+
+  /**
+   * `revoke` y `edit` NO son mensajes nuevos.
+   *
+   * Meta los manda con el id del mensaje ORIGINAL cuando alguien borra o edita
+   * desde la app. Tratarlos como mensajes duplicaría el texto en el portal y
+   * podría leerse como una toma de control humana que ya había ocurrido.
+   */
+  const NO_SON_MENSAJES = new Set(["revoke", "edit", "reaction", "system", "unsupported"]);
 
   for (const entry of p.entry ?? []) {
     for (const change of entry.changes ?? []) {
@@ -653,17 +686,89 @@ export function parsearEcosMeta(payload: unknown): EcoMeta[] {
       const phoneNumberId = value?.metadata?.phone_number_id;
       if (!phoneNumberId || !value?.message_echoes?.length) continue;
       for (const e of value.message_echoes) {
-        if (e.type !== "text" || !e.text?.body || !e.to) continue;
+        const tipo = e.type ?? "";
+        // ⚠️ `to`, no `from`: en un eco el que manda es el negocio.
+        if (!e.to || !tipo || NO_SON_MENSAJES.has(tipo)) continue;
+
+        let texto: string;
+        if (tipo === "text") {
+          if (!e.text?.body) continue;
+          texto = e.text.body;
+        } else {
+          /**
+           * Pie de foto, o un marcador legible.
+           *
+           * El marcador dice «el equipo envió…» y no «el cliente envió…» —que es
+           * lo que usa el camino del cliente— porque acá el que mandó fue el
+           * negocio. Un historial que dice al revés quién mandó qué confunde a
+           * quien lo lee y, peor, confunde a Tino cuando arma el contexto.
+           */
+          const caption =
+            e.image?.caption ?? e.video?.caption ?? e.document?.caption ?? "";
+          texto = caption.trim() || marcadorEcoAdjunto(tipo, e.document?.filename);
+        }
+
+        const bruto = e.image ?? e.video ?? e.document ?? e.audio ?? e.voice ?? e.sticker;
+        const adjunto =
+          bruto?.id && tipo !== "text"
+            ? {
+                id: bruto.id,
+                tipo: tipoAdjuntoMeta(tipo),
+                mime: bruto.mime_type ?? null,
+                nombre: e.document?.filename ?? null,
+              }
+            : undefined;
+
         out.push({
           phoneNumberId,
           para: e.to,
-          texto: e.text.body,
+          texto,
           waId: e.id ?? null,
+          ...(adjunto ? { adjunto } : {}),
         });
       }
     }
   }
   return out;
+}
+
+/** Vocabulario propio de tipos, el mismo que usan WAHA y el parser del cliente. */
+function tipoAdjuntoMeta(tipoMeta: string): string {
+  switch (tipoMeta) {
+    case "image":
+      return "imagen";
+    case "document":
+      return "documento";
+    case "audio":
+    case "voice":
+      return "audio";
+    case "video":
+      return "video";
+    case "sticker":
+      return "sticker";
+    default:
+      return "otro";
+  }
+}
+
+/** Marcador de un adjunto que mandó el NEGOCIO desde la app del teléfono. */
+function marcadorEcoAdjunto(tipo: string, filename?: string): string {
+  const nombre = filename ? ` (${filename})` : "";
+  switch (tipo) {
+    case "image":
+      return `[el equipo envió una imagen${nombre}]`;
+    case "document":
+      return `[el equipo envió un archivo${nombre}]`;
+    case "audio":
+    case "voice":
+      return "[el equipo envió un audio]";
+    case "video":
+      return "[el equipo envió un video]";
+    case "sticker":
+      return "[el equipo envió un sticker]";
+    default:
+      return "[el equipo envió un archivo]";
+  }
 }
 
 /** El empleado que atiende el inbound de WhatsApp de un cliente es su Tino. */

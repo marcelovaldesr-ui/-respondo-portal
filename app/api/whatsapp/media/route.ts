@@ -67,6 +67,49 @@ export async function GET(request: NextRequest) {
   let urlFinal = "";
   let cabeceras: Record<string, string> | undefined;
 
+  /**
+   * ── ARCHIVADO EN NUESTRO PROPIO ALMACENAMIENTO ─────────────────────────────
+   *
+   * Camino preferido y el único que no caduca. `lib/archivarMedia.ts` bajó el
+   * archivo de Meta antes de que lo borrara (7 días para lo que llega por
+   * webhook) y dejó acá la ruta del bucket.
+   *
+   * Se responde con el binario, no con una URL firmada: el bucket es privado y
+   * mandarle al navegador un enlace directo a Storage saltaría la validación de
+   * `cliente_id` que ya se hizo arriba. El aislamiento entre negocios en este
+   * portal es por código, y este es uno de los lugares donde se sostiene.
+   */
+  if (guardado.startsWith("sb:")) {
+    const ruta = guardado.slice("sb:".length);
+    const { data, error } = await supa.storage.from("adjuntos").download(ruta);
+    if (error || !data) {
+      console.error("[media] archivado pero no se pudo leer:", error?.message);
+      return new NextResponse("No disponible", { status: 502 });
+    }
+    return new NextResponse(data, {
+      headers: {
+        "Content-Type": mime || data.type || "application/octet-stream",
+        // Un año: el contenido de un mensaje es inmutable. Ya archivado, además,
+        // no hay ningún viaje a Meta que ahorrar en las visitas siguientes.
+        "Cache-Control": "private, max-age=31536000, immutable",
+      },
+    });
+  }
+
+  /**
+   * ── ERA MUY GRANDE, O META YA LO BORRÓ ─────────────────────────────────────
+   *
+   * Se responde 410 (Gone) y no 404 a propósito: no es que no exista, es que
+   * existió y ya no. Decirlo con claridad es mejor que un error mudo que deja a
+   * la persona recargando la página pensando que se rompió algo.
+   */
+  if (guardado.startsWith("meta-grande:")) {
+    return new NextResponse(
+      "Este archivo superaba el tamaño que guardamos y WhatsApp ya lo eliminó de sus servidores.",
+      { status: 410, headers: { "Content-Type": "text/plain; charset=utf-8" } },
+    );
+  }
+
   if (guardado.startsWith("meta:")) {
     // ── Cloud API ────────────────────────────────────────────────────────────
     const mediaId = guardado.slice("meta:".length);

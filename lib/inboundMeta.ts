@@ -136,6 +136,23 @@ export async function manejarEntranteMeta(
       rol: "humano",
       texto: eco.texto,
       waId: eco.waId,
+      /**
+       * El adjunto que mandó la persona desde su teléfono (26-ago-2026).
+       *
+       * Antes el eco descartaba todo lo que no fuera texto, así que una foto de
+       * Cecilia no se guardaba **y Tino ni se enteraba de que ella había tomado
+       * el chat**: seguía respondiendo encima. Mismo formato `meta:<id>` que el
+       * camino del cliente, así que el proxy y el archivador ya saben servirlo
+       * sin ningún cambio.
+       */
+      media: eco.adjunto
+        ? {
+            url: `meta:${eco.adjunto.id}`,
+            tipo: eco.adjunto.tipo,
+            mime: eco.adjunto.mime ?? null,
+            nombre: eco.adjunto.nombre ?? null,
+          }
+        : null,
       canal: "whatsapp",
     });
     await setModo(empleadoId, chatId, "humano", supa);

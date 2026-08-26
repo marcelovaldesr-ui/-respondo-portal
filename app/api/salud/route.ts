@@ -1,6 +1,8 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { db } from "@/lib/db";
 import { limitarDistribuido, secretoValido } from "@/lib/seguridad";
+import { contarArchivados, contarPerdidos } from "@/lib/archivarMedia";
+import { DIAS_UTILES } from "@/lib/archivarMediaCore";
 import { pushConfigurado } from "@/lib/push";
 import { ipDeRequest } from "@/lib/reservasPublicas";
 import { LATIDO_CRON_SEGUIMIENTOS, estadoDelCron, leerLatido } from "@/lib/latidos";
@@ -317,6 +319,45 @@ async function chequearTokensClientes(): Promise<Chequeo> {
  * vigilante externo debe verlo apenas alguien conecte un cliente por la vía
  * equivocada, no cuando un cliente reclame que su asistente no contesta.
  */
+/**
+ * ¿SE ESTÁN GUARDANDO LOS ADJUNTOS ANTES DE QUE META LOS BORRE?
+ *
+ * Meta elimina el archivo que llega por webhook a los **7 días**. Si el
+ * archivador deja de correr, nadie lo nota: el portal sigue funcionando y las
+ * fotos simplemente empiezan a desaparecer una semana después, de a poco. Es el
+ * mismo tipo de falla muda que las notificaciones, y por eso está acá.
+ *
+ * Se pone en ROJO si hay adjuntos con puntero de Meta más viejos que el margen
+ * del barrido: significa que el archivador no los alcanzó y están por vencer.
+ */
+async function chequearArchivado(): Promise<Chequeo> {
+  const supa = db();
+
+  const limite = new Date(Date.now() - DIAS_UTILES * 24 * 3600_000).toISOString();
+  const [pendientes, guardados, perdidos] = await Promise.all([
+    // Sin archivar y ya fuera del margen: estos se pierden si nadie actúa.
+    supa
+      .from("ed_mensajes")
+      .select("id", { count: "exact", head: true })
+      .like("media_url", "meta:%")
+      .lt("creado_en", limite),
+    contarArchivados(supa),
+    contarPerdidos(supa),
+  ]);
+
+  if (pendientes.error) {
+    return { ok: true, detalle: `no verificable (${pendientes.error.message})` };
+  }
+
+  const enRiesgo = pendientes.count ?? 0;
+  const detalle =
+    `${guardados ?? 0} archivados` +
+    (perdidos ? `, ${perdidos} muy grandes (no recuperables)` : "") +
+    (enRiesgo ? ` · ⚠️ ${enRiesgo} sin archivar y por vencer` : "");
+
+  return { ok: enRiesgo === 0, detalle };
+}
+
 async function chequearWahaUnCliente(): Promise<Chequeo> {
   const instancia = process.env.WAHA_INSTANCIA || "impresora-color";
   const supa = db();
@@ -349,13 +390,31 @@ async function chequearWahaUnCliente(): Promise<Chequeo> {
     clientes = (conNueva.data ?? []) as Fila[];
   }
 
+  /**
+   * ⚠️ CERO CLIENTES EN WAHA NO ES LO MISMO QUE «UN CLIENTE, TODO BIEN».
+   *
+   * Antes ambos casos caían en la misma rama y el vigilante respondía «1 negocio
+   * en WAHA» aunque no quedara ninguno. Un dato plausible y falso, que es
+   * justo lo que un monitor no puede hacer: un error se ve y se arregla, un
+   * número creíble se cree.
+   *
+   * Dejó de ser hipotético el 26-ago-2026, cuando Impresora Color —el único
+   * cliente en WAHA— se migró a Cloud API.
+   */
+  if (clientes.length === 0) {
+    return {
+      ok: true,
+      detalle: "nadie usa WAHA: el servidor se puede apagar cuando Cloud esté confirmado",
+    };
+  }
+
   // El dueño es el que declara la instancia global (waha_instancia desde la
   // migración 275; waba_phone_id mientras no esté aplicada).
   const ajenos = clientes.filter(
     (c) => (c.waha_instancia ?? c.waba_phone_id) !== instancia,
   );
   if (ajenos.length === 0) {
-    return { ok: true, detalle: `1 negocio en WAHA (${instancia})` };
+    return { ok: true, detalle: `${clientes.length} negocio(s) en WAHA (${instancia})` };
   }
 
   /**
@@ -431,6 +490,7 @@ export async function GET(request: NextRequest) {
   if (autorizado) {
     chequeos.tokens_clientes = await medir(chequearTokensClientes);
     chequeos.waha_un_solo_cliente = await medir(chequearWahaUnCliente);
+    chequeos.adjuntos_archivados = await medir(chequearArchivado);
   }
   if (full && autorizado) {
     chequeos.modelo_ia = await medir(chequearModelo);

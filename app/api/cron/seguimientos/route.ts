@@ -13,6 +13,7 @@ import { renovarTokensIg } from "@/lib/instagram";
 import { reprocesarWebhooksPendientes } from "@/lib/webhookInbox";
 import { revisarCuposYAvisar } from "@/lib/avisosCupo";
 import { revisarAbandonadas } from "@/lib/reingresoTino";
+import { archivarPendientes } from "@/lib/archivarMedia";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -205,6 +206,31 @@ export async function GET(request: NextRequest) {
     console.error("[cron] vigilante de abandonadas falló (no afecta lo demás)", (e as Error).message);
   }
 
+  /**
+   * ARCHIVAR ADJUNTOS ANTES DE QUE META LOS BORRE (26-ago-2026).
+   *
+   * Meta elimina el archivo que llega por webhook a los **7 días**. El portal
+   * guardaba solo un puntero, así que cada foto que mandaba un cliente dejaba de
+   * verse en una semana, sola.
+   *
+   * Va acá y no en el webhook a propósito: bajar 10 MB dentro del webhook se
+   * come su presupuesto de tiempo y Meta lo reintentaría. Con el cron cada 5
+   * minutos y 6 días de margen, tendría que estar caído casi una semana para
+   * perder algo.
+   */
+  let adjuntos = { revisados: 0, archivados: 0, grandes: 0, fallidos: 0 };
+  try {
+    const a = await archivarPendientes(supa);
+    adjuntos = {
+      revisados: a.revisados,
+      archivados: a.archivados,
+      grandes: a.grandes,
+      fallidos: a.fallidos,
+    };
+  } catch (e) {
+    console.error("[cron] archivado de adjuntos falló (no afecta lo demás)", (e as Error).message);
+  }
+
   // Deja constancia de que el cron corrió, aunque no haya enviado nada. Esto es
   // lo que permite que /api/salud detecte que el cron DEJÓ de correr; sin el
   // latido, un cron muerto se ve igual que un cron sin trabajo pendiente.
@@ -225,5 +251,6 @@ export async function GET(request: NextRequest) {
     cupos: { revisados: cupos.revisados, avisados: cupos.avisados },
     // El detalle nombra conversaciones: va el conteo, no las líneas.
     reingresos,
+    adjuntos,
   });
 }
