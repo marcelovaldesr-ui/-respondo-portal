@@ -1,7 +1,7 @@
 import { db } from "@/lib/db";
 import { ultimosMensajes, type MensajeInbox } from "@/lib/inboxConsulta";
 import { empleadosDeCliente } from "@/lib/empleadosCache";
-import { ventanaDesde } from "@/lib/ventana24h";
+import { ventanaDesde } from "@/lib/ventana24Regla";
 
 /**
  * Datos de la pantalla de Conversaciones. Solo lectura en v1: el portal no

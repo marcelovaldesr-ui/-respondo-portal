@@ -12,6 +12,7 @@ import { generarInformesPendientes } from "@/lib/insightsAuto";
 import { renovarTokensIg } from "@/lib/instagram";
 import { reprocesarWebhooksPendientes } from "@/lib/webhookInbox";
 import { revisarCuposYAvisar } from "@/lib/avisosCupo";
+import { revisarAbandonadas } from "@/lib/reingresoTino";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -185,6 +186,25 @@ export async function GET(request: NextRequest) {
     console.error("[cron] reintento de webhooks falló", (e as Error).message);
   }
 
+  /**
+   * VIGILANTE DE CONVERSACIONES ABANDONADAS (25-ago-2026).
+   *
+   * Tapa un agujero que existía desde siempre: cuando alguien del equipo toma el
+   * control de un chat, Tino se apaga ahí PARA SIEMPRE. Si esa persona contesta
+   * dos mensajes y se olvida, la conversación queda muerta y nadie se entera.
+   *
+   * ⚠️ Es INERTE hasta que un cliente active `reingreso_activo`. Mientras nadie
+   * lo encienda cuesta una consulta por latido y nada más — mismo criterio que
+   * los cupos.
+   */
+  let reingresos = { revisados: 0, reingresados: 0, callados: 0 };
+  try {
+    const rr = await revisarAbandonadas(supa);
+    reingresos = { revisados: rr.revisados, reingresados: rr.reingresados, callados: rr.callados };
+  } catch (e) {
+    console.error("[cron] vigilante de abandonadas falló (no afecta lo demás)", (e as Error).message);
+  }
+
   // Deja constancia de que el cron corrió, aunque no haya enviado nada. Esto es
   // lo que permite que /api/salud detecte que el cron DEJÓ de correr; sin el
   // latido, un cron muerto se ve igual que un cron sin trabajo pendiente.
@@ -203,5 +223,7 @@ export async function GET(request: NextRequest) {
     instagram,
     webhooks,
     cupos: { revisados: cupos.revisados, avisados: cupos.avisados },
+    // El detalle nombra conversaciones: va el conteo, no las líneas.
+    reingresos,
   });
 }

@@ -36,27 +36,43 @@ Crea la tabla donde se guarda a qué teléfono hay que avisarle.
 **Cómo saber que quedó:** `select count(*) from ed_push_suscripciones;` debe devolver 0 sin
 error.
 
-### 2 · Cargar las tres variables en Vercel  ·  3 minutos
+### 2 · Generar el par de llaves y cargarlo en Vercel  ·  5 minutos
 
-Vercel → el proyecto del portal → Settings → Environment Variables. Las tres, en
-**Production**:
+**Primero, generarlas en tu computador:**
 
-```
-NEXT_PUBLIC_VAPID_PUBLIC_KEY = BJPhsBY7cha5bRRpIdaYkTUvKC0yhlPN7cTwEGdVMnvMMiujUwZbPAEDJi6fXVa3FMfJhFaGzz2elzmu4ptT6wA
-VAPID_PUBLIC_KEY             = BJPhsBY7cha5bRRpIdaYkTUvKC0yhlPN7cTwEGdVMnvMMiujUwZbPAEDJi6fXVa3FMfJhFaGzz2elzmu4ptT6wA
-VAPID_SUBJECT                = mailto:hola@respon-do.com
+```powershell
+cd "C:\Users\marce\Claude\Projects\ChatBot Ventas\respondo-portal"
+npx web-push generate-vapid-keys
 ```
 
-La **cuarta es secreta** y está en el chat, no en este archivo. Se llama
-`VAPID_PRIVATE_KEY`.
+Devuelve dos líneas: `Public Key` y `Private Key`.
+
+> **Por qué se generan acá y no te las paso yo.** La privada es un secreto: con ella
+> cualquiera puede mandar notificaciones haciéndose pasar por Respondo. Generándola en tu
+> máquina **no pasa por ningún chat ni queda escrita en este repositorio**. Es el mismo
+> criterio que con la contraseña de Gmail de la cuenta de revisión.
+
+**Después, Vercel → el proyecto del portal → Settings → Environment Variables.** Las cuatro,
+en **Production**:
+
+| Variable | Valor |
+|---|---|
+| `NEXT_PUBLIC_VAPID_PUBLIC_KEY` | la **Public Key** que salió arriba |
+| `VAPID_PUBLIC_KEY` | la **misma Public Key**, otra vez |
+| `VAPID_PRIVATE_KEY` | la **Private Key** |
+| `VAPID_SUBJECT` | `mailto:hola@respon-do.com` |
+
+Sí, la pública va dos veces y no es un error: una la lee el navegador (por eso lleva
+`NEXT_PUBLIC_`, que en Next significa "esto se publica") y la otra la lee el servidor para
+firmar. Separadas a propósito, para que nunca haya dudas de cuál es cuál.
 
 > **Qué son.** Un par de llaves que firman cada aviso para que Google y Apple sepan que
 > viene de nosotros. La pública viaja al navegador (es pública por diseño); **la privada
-> jamás sale del servidor** — con ella cualquiera podría mandar notificaciones haciéndose
-> pasar por Respondo.
+> jamás sale del servidor**.
 >
-> ⚠️ **Si algún día se pierden o se cambian, todas las suscripciones dejan de funcionar** y
-> hay que volver a pedir permiso en cada teléfono. Guárdalas donde guardas el resto.
+> ⚠️ **Si se pierden o se cambian, todas las suscripciones dejan de funcionar** y hay que
+> volver a pedir permiso en cada teléfono. Guárdalas donde guardas el resto de las claves.
+> Mientras no haya nadie suscrito, regenerarlas no cuesta nada; después sí.
 
 ### 3 · Desplegar  ·  5 minutos
 

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { HORAS_VENTANA, ventanaDesde } from "../lib/ventana24h.ts";
+import { HORAS_VENTANA, ventanaDesde } from "../lib/ventana24Regla.ts";
 
 /**
  * Esta regla decide si en la bandeja aparece «tu mensaje puede no llegar».

@@ -7,6 +7,8 @@ import {
   HORARIO,
   SUPUESTOS,
 } from "@/lib/analitica";
+import { calcularFidelizacion } from "@/lib/fidelizacion";
+import type { Fidelizacion } from "@/lib/fidelizacionCore";
 
 export const dynamic = "force-dynamic";
 
@@ -103,6 +105,174 @@ function Barra({ tramos }: { tramos: { n: number; color: string; label: string }
   );
 }
 
+/**
+ * ¿VUELVE LA GENTE? — el bloque que le habla al dueño, no al operador.
+ *
+ * El resto de la página mide la conversación: cuántos mensajes, quién los
+ * escribió, cuánto tiempo se ahorró. Eso responde "¿está funcionando?". Esto
+ * responde la pregunta que hace el que firma: si la gente vuelve.
+ *
+ * Se muestra solo cuando el negocio usa la agenda o los seguimientos. Un
+ * cliente que contrató únicamente a Tino no tiene por qué ver cuatro ceros:
+ * una fila de ceros se lee como "esto no funciona" y no como "esto no lo
+ * tienes contratado".
+ */
+function SeccionFidelizacion({ f }: { f: Fidelizacion }) {
+  const cerradas = f.completadas + f.noShow;
+  return (
+    <div className="mt-8">
+      <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+        <h2 className="h-pagina">¿Vuelve la gente?</h2>
+        <span className="sub-titulo">La agenda y los seguimientos, en números</span>
+      </div>
+
+      <div className="mt-5 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+        <Metrica
+          destacada
+          titulo="Horas agendadas"
+          valor={String(f.citas)}
+          color="var(--indigo)"
+          pie={
+            f.citas
+              ? f.porcentajeSinIntervencion +
+                "% se reservaron solas, sin que nadie de tu equipo interviniera"
+              : "Todavía no se reservó ninguna hora en este período"
+          }
+        />
+        <Metrica
+          destacada
+          titulo="Clientes que vuelven"
+          valor={f.tasaRetorno + "%"}
+          color="var(--indigo)"
+          pie={
+            f.personasAtendidas
+              ? f.personasQueVolvieron +
+                " de " +
+                f.personasAtendidas +
+                " personas atendidas volvieron una segunda vez"
+              : "Todavía no hay atenciones cerradas para comparar"
+          }
+          extra={
+            <span className="pildora" style={{ background: "#F1F2F7", color: "var(--muted)" }}>
+              Últimos 12 meses
+            </span>
+          }
+        />
+        <Metrica
+          titulo="No llegaron"
+          valor={cerradas ? f.porcentajeNoShow + "%" : "—"}
+          color={cerradas && f.porcentajeNoShow >= 15 ? "var(--coral)" : undefined}
+          pie={
+            cerradas
+              ? f.noShow + " de " + cerradas + " horas que ya pasaron"
+              : "Ninguna hora del período se ha cerrado todavía"
+          }
+        />
+        <Metrica
+          titulo="Clientes reactivados"
+          valor={String(f.reactivados)}
+          color={f.reactivados > 0 ? "var(--indigo)" : undefined}
+          pie={
+            "Estaban sin venir, recibieron un mensaje y agendaron dentro de " +
+            f.ventanaReactivacionDias +
+            " días"
+          }
+        />
+      </div>
+
+      <div className="mt-6 grid gap-5 lg:grid-cols-2">
+        {/* Quién agendó */}
+        <div className="tarjeta p-5">
+          <h2 className="h-seccion">Quién agendó la hora</h2>
+          <p className="mt-1 text-[13px]" style={{ color: "var(--muted)" }}>
+            Reservas creadas en el período
+          </p>
+          {f.citas ? (
+            <>
+              <div className="mt-4">
+                <Barra
+                  tramos={[
+                    { n: f.porAsistente, color: "var(--indigo)", label: "Tu asistente" },
+                    { n: f.porEnlace, color: "#10B981", label: "Enlace de reservas" },
+                    { n: f.porEquipo, color: COLOR_EQUIPO, label: "Tu equipo, a mano" },
+                  ]}
+                />
+              </div>
+              <div className="mt-6">
+                <div className="text-[13px] font-bold" style={{ color: "var(--muted)" }}>
+                  Cómo terminaron ({cerradas + f.canceladas})
+                </div>
+                <div className="mt-2.5">
+                  <Barra
+                    tramos={[
+                      { n: f.completadas, color: "#10B981", label: "Se cumplieron" },
+                      { n: f.noShow, color: "var(--coral)", label: "No llegó" },
+                      { n: f.canceladas, color: COLOR_EQUIPO, label: "Canceladas" },
+                    ]}
+                  />
+                </div>
+                <p className="mt-3 text-[12px] leading-relaxed" style={{ color: "var(--muted-2)" }}>
+                  Las horas que todavía no llegan no aparecen acá: no son ni asistencia ni
+                  falta hasta que pasen.
+                </p>
+              </div>
+            </>
+          ) : (
+            <p className="mt-4 text-[13px]" style={{ color: "var(--muted-2)" }}>
+              Sin reservas nuevas en este período.
+            </p>
+          )}
+        </div>
+
+        {/* Seguimientos */}
+        <div className="tarjeta p-5">
+          <h2 className="h-seccion">Los mensajes que salieron solos</h2>
+          <p className="mt-1 text-[13px]" style={{ color: "var(--muted)" }}>
+            Recordatorios, encuestas y avisos de mantención
+          </p>
+          {f.seguimientosEnviados ? (
+            <>
+              <div className="mt-4">
+                <Barra
+                  tramos={[
+                    {
+                      n: f.seguimientosRespondidos,
+                      color: "var(--indigo)",
+                      label: "Contestaron",
+                    },
+                    {
+                      n: f.seguimientosEnviados - f.seguimientosRespondidos,
+                      color: COLOR_EQUIPO,
+                      label: "No contestaron",
+                    },
+                  ]}
+                />
+              </div>
+              <p className="mt-5 text-[13px] leading-relaxed" style={{ color: "var(--muted)" }}>
+                Salieron <strong>{f.seguimientosEnviados}</strong> mensajes,{" "}
+                <strong>{f.tasaRespuesta}%</strong> tuvo respuesta y{" "}
+                <strong>{f.reactivados}</strong>{" "}
+                {f.reactivados === 1
+                  ? "persona terminó agendando"
+                  : "personas terminaron agendando"}
+                .
+              </p>
+              <p className="mt-3 text-[12px] leading-relaxed" style={{ color: "var(--muted-2)" }}>
+                Contestar no es lo mismo que volver, por eso son dos números distintos.
+                «Reactivado» exige que la persona haya reservado una hora después del
+                mensaje, no que solo haya respondido.
+              </p>
+            </>
+          ) : (
+            <p className="mt-4 text-[13px]" style={{ color: "var(--muted-2)" }}>
+              No salió ningún seguimiento en este período.
+            </p>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
 export default async function Analitica({
   searchParams,
 }: {
@@ -114,8 +284,15 @@ export default async function Analitica({
     ? Number(params.dias)
     : 30;
   const a = await calcularAnalitica(usuario.clienteId, dias);
+  const fid = await calcularFidelizacion(usuario.clienteId, dias);
 
-  if (!a || a.recibidos + a.enviadosIA + a.enviadosHumano === 0) {
+  /**
+   * Un negocio puede tener la agenda andando y casi ningún mensaje (por
+   * ejemplo si reserva todo por el enlace web). Si el vacío se decidiera solo
+   * con los mensajes, ese cliente vería «todavía no hay actividad» con la
+   * agenda llena.
+   */
+  if (!a || (a.recibidos + a.enviadosIA + a.enviadosHumano === 0 && !fid)) {
     return (
       <main className="px-5 py-6 sm:px-7 lg:px-8">
         <h1 className="h-pagina">
@@ -211,6 +388,8 @@ export default async function Analitica({
         del empleador, sobre una jornada de 42 horas. No incluimos la venta que se pierde
         cuando nadie responde: tu ahorro real es mayor. Horario de referencia: {horas}.
       </p>
+
+      {fid && <SeccionFidelizacion f={fid} />}
 
       <div className="mt-6 grid gap-5 lg:grid-cols-2">
         {/* Cobertura */}

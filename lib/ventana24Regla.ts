@@ -23,6 +23,28 @@
  * ⚠️ ESTE ARCHIVO NO IMPORTA NADA A PROPÓSITO. Sin `@/lib/db` ni nada de Next,
  * `node --test` puede cargarlo y probar la regla sin levantar la aplicación —
  * igual que `parserMeta.ts` y `ritmoHumano.ts`.
+ *
+ * ⚠️⚠️ NO CONFUNDIR CON `lib/ventana24.ts`, QUE HACE OTRA COSA
+ * ------------------------------------------------------------
+ * Los nombres se parecen demasiado y calculan la ventana con criterios
+ * distintos. Antes de usar uno, elegir a conciencia:
+ *
+ *  - **`ventana24.ts` → `ventanaAbierta()`** consulta la base y mira los
+ *    mensajes de **TODOS los empleados del cliente**. Es la CORRECTA para
+ *    decidir si se puede enviar, porque para Meta la ventana es **por número de
+ *    WhatsApp**, no por empleado: si el cliente le escribió a Tino, Beto también
+ *    puede responderle.
+ *
+ *  - **este archivo → `ventanaDesde()`** es la regla pura, sin base de datos, y
+ *    se alimenta de `ed_chat_estado.ultimo_entrante_en`, que es **por (empleado,
+ *    chat)**. Sirve para PINTAR el estado en la bandeja, donde ya se está
+ *    mirando un empleado concreto.
+ *
+ * ⚠️ Consecuencia conocida y todavía sin arreglar: con Beto y Vera activos, el
+ * cartel de la bandeja puede decir «cerrada» aunque la ventana esté abierta por
+ * un mensaje que recibió otro empleado. Con un solo empleado da igual, y hoy
+ * ningún cliente tiene más de uno operativo. **Revisar cuando Beto entre en
+ * producción.**
  */
 
 export type EstadoVentana = "abierta" | "cerrada" | "desconocida" | "no_aplica";
