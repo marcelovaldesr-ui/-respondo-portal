@@ -9,6 +9,7 @@ import {
 import PanelChat from "@/components/inbox/PanelChat";
 import { SeleccionChatProvider, FilaChat } from "@/components/inbox/SeleccionChat";
 import { ColumnaLista } from "@/components/inbox/ColumnaLista";
+import PrecargaInicial from "@/components/inbox/PrecargaInicial";
 import RefrescarLista from "@/components/RefrescarLista";
 import { metaEtiqueta } from "@/lib/etiquetas";
 
@@ -277,6 +278,14 @@ export default async function Conversaciones({
         empleadoIdInicial={params.emp ?? ""}
         chatIdInicial={params.chat ?? ""}
       >
+      {/*
+        Adelanta las primeras conversaciones mientras el navegador está
+        desocupado. Cubre el primer clic —al que la precarga por hover nunca
+        llega— y el teléfono, donde no hay mouse que pasar por encima.
+      */}
+      <PrecargaInicial
+        filas={lista.map((c) => ({ empleadoId: c.empleadoId, chatId: c.chatId }))}
+      />
       <div className="mt-3 grid gap-3 lg:h-[calc(100vh-150px)] lg:grid-cols-[330px_minmax(0,1fr)] xl:grid-cols-[330px_minmax(0,1fr)_290px]">
         {/* Lista — en móvil se oculta cuando hay una conversación abierta,
             porque los dos paneles lado a lado no caben en un teléfono. */}
@@ -296,6 +305,18 @@ export default async function Conversaciones({
                 empleadoId={c.empleadoId}
                 chatId={c.chatId}
                 href={urlCon({ emp: c.empleadoId, chat: c.chatId })}
+                /*
+                  Lo que esta fila YA sabe. Con esto la cabecera del chat se
+                  pinta en el mismo instante del clic, sin pedirle nada al
+                  servidor: el nombre, quién atiende y el modo están acá desde
+                  que la lista se dibujó.
+                */
+                adelanto={{
+                  contacto: c.contacto,
+                  empleadoNombre: c.empleadoNombre,
+                  empleadoRol: c.empleadoRol,
+                  modo: c.modo,
+                }}
                 className="flex gap-3 border-b px-4 py-3.5 transition last:border-0 hover:bg-[#FAFAFD]"
                 estilo={{ borderColor: "var(--borde)" }}
                 estiloActivo={{ background: "var(--indigo-suave)" }}

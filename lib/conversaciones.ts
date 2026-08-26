@@ -1,6 +1,7 @@
 import { db } from "@/lib/db";
 import { ultimosMensajes, type MensajeInbox } from "@/lib/inboxConsulta";
 import { empleadosDeCliente } from "@/lib/empleadosCache";
+import { ventanaDesde } from "@/lib/ventana24h";
 
 /**
  * Datos de la pantalla de Conversaciones. Solo lectura en v1: el portal no
@@ -127,10 +128,8 @@ export async function estadoVentana(
     .eq("chat_id", chatId)
     .maybeSingle();
 
-  if (error || !data?.ultimo_entrante_en) return "desconocida";
-  const desde = new Date(data.ultimo_entrante_en as string).getTime();
-  const horas = (Date.now() - desde) / 36e5;
-  return horas < 24 ? "abierta" : "cerrada";
+  if (error) return "desconocida";
+  return ventanaDesde("cloud", (data?.ultimo_entrante_en as string | null) ?? null);
 }
 
 /**
@@ -358,7 +357,25 @@ export async function obtenerConversacion(
   const emp = empleados.find((e) => e.id === empleadoId);
   if (!emp) return null;
 
-  const [mensajes, contacto, estado, escalacion, resultados, ventana] = await Promise.all([
+  /**
+   * ⚠️ TODAS ESTAS CONSULTAS VIAJAN A LA VEZ. NO AGREGAR UNA QUE DEPENDA DE OTRA.
+   *
+   * Este `Promise.all` tarda lo que tarda la MÁS LENTA, no la suma — pero solo
+   * mientras ninguna de las ramas encadene dos consultas por dentro. Si una lo
+   * hace, el bloque entero pasa a tardar esa cadena y la ganancia se pierde sin
+   * que nada lo delate en el código.
+   *
+   * Pasó exactamente eso el 24-ago-2026: `estadoVentana` se llamaba desde acá y
+   * por dentro consultaba PRIMERO el transporte del cliente y DESPUÉS la fila de
+   * `ed_chat_estado` — dos viajes en serie. Además pedía esa fila por SEGUNDA vez,
+   * porque el `modo` de la misma fila ya se estaba trayendo tres líneas más
+   * arriba. Un viaje de más y una consulta de más, en el camino que corre cada
+   * vez que alguien abre una conversación.
+   *
+   * Ahora el transporte viaja en paralelo, la fila de estado se pide UNA vez con
+   * las dos columnas, y la ventana se calcula sin red con `ventanaDesde`.
+   */
+  const [mensajes, contacto, estado, escalacion, resultados, cliente] = await Promise.all([
     /**
      * Tramo reciente, con id, adjunto y estado de entrega.
      *
@@ -374,9 +391,12 @@ export async function obtenerConversacion(
       .eq("cliente_id", clienteId)
       .eq("chat_id", chatId)
       .maybeSingle(),
+    // Las DOS columnas de una sola vez: el modo para la cabecera y la fecha del
+    // último entrante para la ventana de 24 h. Antes eran dos consultas a la
+    // misma fila de la misma tabla.
     supa
       .from("ed_chat_estado")
-      .select("modo")
+      .select("modo, ultimo_entrante_en")
       .eq("empleado_id", empleadoId)
       .eq("chat_id", chatId)
       .maybeSingle(),
@@ -393,9 +413,9 @@ export async function obtenerConversacion(
       .select("tipo")
       .eq("empleado_id", empleadoId)
       .eq("chat_id", chatId),
-    // Iba suelta al final, en serie. Es una consulta más que puede viajar junto
-    // a las otras cinco en vez de sumar su latencia a la de todas.
-    estadoVentana(empleadoId, chatId, clienteId),
+    // Solo el transporte: decide si la ventana de 24 h aplica. Es una consulta
+    // suelta y liviana, así que viaja con el resto en vez de encadenarse.
+    supa.from("ed_clientes").select("transporte").eq("id", clienteId).maybeSingle(),
   ]);
 
   if (!mensajes.length) return null;
@@ -418,7 +438,11 @@ export async function obtenerConversacion(
       : null,
     resultados: (resultados.data ?? []).map((r) => r.tipo as string),
     etiquetas: ((contacto.data?.etiquetas as string[] | null) ?? []),
-    ventana,
+    // Se calcula sin red, con lo que ya trajeron las consultas de arriba.
+    ventana: ventanaDesde(
+      cliente.data?.transporte as string | null,
+      estado.data?.ultimo_entrante_en as string | null,
+    ),
     etapa: (contacto.data?.etapa as string) ?? "nuevo",
     // Si el resumen todavía no existe (contacto anterior al trigger), se cae al
     // largo del hilo que ya se trajo: nunca un 0 que parezca un dato real.

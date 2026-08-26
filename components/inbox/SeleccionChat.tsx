@@ -1,6 +1,7 @@
 "use client";
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
+import { traer } from "./cacheDetalle";
 
 /**
  * QUÉ CONVERSACIÓN ESTÁ ABIERTA — del lado del cliente.
@@ -24,9 +25,31 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useState } 
 
 type Seleccion = { empleadoId: string; chatId: string };
 
+/**
+ * LO QUE LA LISTA YA SABE DE UNA CONVERSACIÓN, ANTES DE PEDIR NADA.
+ *
+ * La fila de la lista ya trae en pantalla el nombre del contacto, quién atiende
+ * y en qué modo está. Son exactamente los datos de la cabecera del chat.
+ *
+ * Pasarlos al hacer clic permite dibujar la cabecera **en el mismo fotograma
+ * del toque**, sin esperar al servidor. Lo único que queda cargando son los
+ * mensajes, que es lo único que la lista de verdad no tiene.
+ *
+ * Esto no acelera la red: hace que la pantalla RESPONDA. Es la diferencia entre
+ * "tocué y no pasó nada" y "ya estoy en el chat, faltan los mensajes".
+ */
+export type Adelanto = {
+  contacto: string;
+  empleadoNombre: string;
+  empleadoRol: string;
+  modo: string;
+};
+
 type Contexto = Seleccion & {
-  seleccionar: (empleadoId: string, chatId: string) => void;
+  seleccionar: (empleadoId: string, chatId: string, adelanto?: Adelanto) => void;
   limpiar: () => void;
+  /** Datos de la fila del chat elegido, para pintar antes de que llegue el detalle. */
+  adelanto: Adelanto | null;
 };
 
 const Ctx = createContext<Contexto | null>(null);
@@ -50,6 +73,7 @@ export function SeleccionChatProvider({
     empleadoId: empleadoIdInicial,
     chatId: chatIdInicial,
   });
+  const [adelanto, setAdelanto] = useState<Adelanto | null>(null);
 
   const escribirUrl = useCallback((empleadoId: string, chatId: string) => {
     const url = new URL(window.location.href);
@@ -64,7 +88,8 @@ export function SeleccionChatProvider({
   }, []);
 
   const seleccionar = useCallback(
-    (empleadoId: string, chatId: string) => {
+    (empleadoId: string, chatId: string, datos?: Adelanto) => {
+      setAdelanto(datos ?? null);
       setSel({ empleadoId, chatId });
       escribirUrl(empleadoId, chatId);
     },
@@ -72,6 +97,7 @@ export function SeleccionChatProvider({
   );
 
   const limpiar = useCallback(() => {
+    setAdelanto(null);
     setSel({ empleadoId: "", chatId: "" });
     escribirUrl("", "");
   }, [escribirUrl]);
@@ -84,6 +110,9 @@ export function SeleccionChatProvider({
   useEffect(() => {
     const alVolver = () => {
       const p = new URLSearchParams(window.location.search);
+      // El adelanto pertenece a la fila que se tocó; al volver con "atrás" no
+      // hubo clic, así que mostrarlo sería pintar la cabecera de otro chat.
+      setAdelanto(null);
       setSel({ empleadoId: p.get("emp") ?? "", chatId: p.get("chat") ?? "" });
     };
     window.addEventListener("popstate", alVolver);
@@ -91,8 +120,8 @@ export function SeleccionChatProvider({
   }, []);
 
   const valor = useMemo<Contexto>(
-    () => ({ ...sel, seleccionar, limpiar }),
-    [sel, seleccionar, limpiar],
+    () => ({ ...sel, seleccionar, limpiar, adelanto }),
+    [sel, seleccionar, limpiar, adelanto],
   );
 
   return <Ctx.Provider value={valor}>{children}</Ctx.Provider>;
@@ -117,6 +146,7 @@ export function FilaChat({
   className,
   estilo,
   estiloActivo,
+  adelanto,
   children,
 }: {
   empleadoId: string;
@@ -125,19 +155,26 @@ export function FilaChat({
   className?: string;
   estilo?: React.CSSProperties;
   estiloActivo?: React.CSSProperties;
+  /** Lo que esta fila ya sabe, para pintar la cabecera sin esperar al servidor. */
+  adelanto?: Adelanto;
   children: React.ReactNode;
 }) {
   const { empleadoId: selEmp, chatId: selChat, seleccionar } = useSeleccionChat();
   const activo = selEmp === empleadoId && selChat === chatId;
 
+  /**
+   * ⚠️ ANTES ESTO NO SERVÍA PARA NADA.
+   *
+   * La versión anterior hacía un `fetch` suelto y **tiraba la respuesta**: no la
+   * guardaba en ningún lado, y el endpoint responde `Cache-Control: no-store`,
+   * así que el navegador tampoco la conservaba. Al hacer clic se volvía a pedir
+   * todo desde cero. Lo único que lograba era calentar la función de Vercel.
+   *
+   * Ahora `traer` guarda en la misma caché que lee el panel, así que el trabajo
+   * adelantado se aprovecha de verdad.
+   */
   const precargar = useCallback(() => {
-    // `fetch` normal: la respuesta queda en la caché de la petición del panel
-    // solo si el navegador la reusa, así que además se avisa al panel por su
-    // propia caché en memoria a través del mismo endpoint.
-    void fetch(
-      `/api/conversaciones/detalle?emp=${encodeURIComponent(empleadoId)}&chat=${encodeURIComponent(chatId)}`,
-      { priority: "low" } as RequestInit,
-    ).catch(() => {});
+    void traer(empleadoId, chatId);
   }, [empleadoId, chatId]);
 
   return (
@@ -145,11 +182,18 @@ export function FilaChat({
       href={href}
       onMouseEnter={precargar}
       onFocus={precargar}
+      /**
+       * `pointerdown` dispara ANTES que `click`, y en un teléfono esa diferencia
+       * son los ~80-150 ms que pasan entre que el dedo toca y se levanta. En
+       * escritorio adelanta el trayecto del botón. Es gratis y no hay mouse que
+       * pasar por encima en un celular, donde `onMouseEnter` nunca ocurre.
+       */
+      onPointerDown={precargar}
       onClick={(e) => {
         // Respetar Ctrl/Cmd/medio: la persona quiere una pestaña nueva.
         if (e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0) return;
         e.preventDefault();
-        seleccionar(empleadoId, chatId);
+        seleccionar(empleadoId, chatId, adelanto);
       }}
       className={className}
       style={{ ...estilo, ...(activo ? estiloActivo : null) }}

@@ -8,6 +8,7 @@ import { metaEmpleado } from "@/lib/empleados";
 import { ETIQUETA_RESULTADO, ETIQUETA_TRIGGER, type DetalleConversacion } from "@/lib/conversaciones";
 import { metaEtapa } from "@/lib/embudo";
 import { useSeleccionChat } from "./SeleccionChat";
+import { clave as claveDe, guardar, leer, olvidar, traer } from "./cacheDetalle";
 
 /**
  * LA COLUMNA DEL CHAT, DEL LADO DEL CLIENTE.
@@ -38,9 +39,6 @@ import { useSeleccionChat } from "./SeleccionChat";
  * El JSX es el MISMO que tenía la página. No se rediseñó nada acá: se movió.
  */
 
-/** Caché por pestaña. `emp|chat` → detalle ya traído. */
-const cache = new Map<string, DetalleConversacion>();
-
 function Rotulo({ children }: { children: React.ReactNode }) {
   return (
     <div
@@ -48,6 +46,55 @@ function Rotulo({ children }: { children: React.ReactNode }) {
       style={{ fontSize: "var(--t-micro)", letterSpacing: ".08em", color: "var(--muted-3)" }}
     >
       {children}
+    </div>
+  );
+}
+
+/**
+ * ESQUELETO DE LOS MENSAJES.
+ *
+ * Ocupa el lugar de la conversación mientras llega, con burbujas alternadas del
+ * ancho aproximado de un mensaje real. No es decoración: sin algo acá, la
+ * cabecera quedaría flotando sobre un vacío y parecería un chat sin mensajes en
+ * vez de un chat cargando.
+ *
+ * `animate-pulse` es de Tailwind y no necesita configuración.
+ */
+function EsqueletoMensajes() {
+  // Anchos distintos a propósito: bloques iguales se leen como una tabla rota.
+  const filas: [boolean, string][] = [
+    [false, "62%"], [true, "45%"], [false, "78%"], [true, "38%"],
+    [false, "55%"], [true, "68%"], [false, "42%"],
+  ];
+  return (
+    <div className="mt-4 animate-pulse space-y-3" aria-hidden="true">
+      {filas.map(([propio, ancho], i) => (
+        <div key={i} className={"flex " + (propio ? "justify-end" : "justify-start")}>
+          <div
+            className="rounded-2xl"
+            style={{
+              width: ancho,
+              height: i % 3 === 0 ? 46 : 32,
+              background: propio ? "var(--indigo-suave)" : "var(--fondo-hundido)",
+            }}
+          />
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/** Mismo papel que el anterior, para que la columna de contexto no se mueva. */
+function EsqueletoContexto() {
+  return (
+    <div className="animate-pulse space-y-3" aria-hidden="true">
+      {[92, 78, 148].map((alto, i) => (
+        <div
+          key={i}
+          className="rounded-xl"
+          style={{ height: alto, background: "var(--fondo-hundido)" }}
+        />
+      ))}
     </div>
   );
 }
@@ -71,8 +118,30 @@ export default function PanelChat({
   /** `emp|chat` de lo que vino del servidor, para sembrar la caché. */
   claveInicial: string;
 }) {
-  const { empleadoId, chatId, limpiar } = useSeleccionChat();
-  const [d, setD] = useState<DetalleConversacion | null>(inicial);
+  const { empleadoId, chatId, limpiar, adelanto } = useSeleccionChat();
+
+  /**
+   * ⚠️ EL DETALLE SE GUARDA JUNTO A LA CLAVE DE A QUIÉN PERTENECE. NO SEPARARLOS.
+   *
+   * Guardar solo el detalle abre un agujero de un fotograma, y es un agujero
+   * grave. Al hacer clic en otra conversación, el estado de selección cambia y
+   * React vuelve a dibujar ENSEGUIDA; el efecto que carga el detalle corre
+   * DESPUÉS de esa pintada. En ese hueco quedaba en pantalla la mezcla peor
+   * posible: la cabecera del chat nuevo sobre los mensajes del anterior.
+   *
+   * Peor todavía, la `key` de `InboxConversacion` se armaba con el empleado
+   * nuevo y el chat viejo, o sea una combinación que no existe.
+   *
+   * Con la clave adentro del estado, `d` se calcula: si lo cargado no es de la
+   * conversación que está abierta AHORA, vale null. No hay fotograma posible en
+   * el que se vean dos chats mezclados, porque no depende de cuándo corra un
+   * efecto.
+   */
+  const [cargado, setCargado] = useState<{ clave: string; d: DetalleConversacion } | null>(
+    inicial && claveInicial ? { clave: claveInicial, d: inicial } : null,
+  );
+  const claveActual = empleadoId && chatId ? claveDe(empleadoId, chatId) : "";
+  const d = cargado && cargado.clave === claveActual ? cargado.d : null;
   const [cargando, setCargando] = useState(false);
   const [fallo, setFallo] = useState(false);
   /** Cambiarlo vuelve a disparar el efecto de carga sin tocar la selección. */
@@ -85,52 +154,73 @@ export default function PanelChat({
    * abre un chat, se va a otro y vuelve, el primero no se vuelve a pedir.
    */
   useEffect(() => {
-    if (inicial && claveInicial) cache.set(claveInicial, inicial);
+    if (inicial && claveInicial) guardar(claveInicial, inicial);
   }, [inicial, claveInicial]);
 
   useEffect(() => {
     if (!empleadoId || !chatId) {
-      setD(null);
+      setCargado(null);
       return;
     }
-    const clave = `${empleadoId}|${chatId}`;
-    const guardado = cache.get(clave);
-    if (guardado) {
-      setD(guardado);
-      setCargando(false);
-      return;
-    }
+    const k = claveDe(empleadoId, chatId);
     const mio = ++pedido.current;
+    /** Guarda atando el detalle a ESTA conversación, nunca a "la actual". */
+    const poner = (v: DetalleConversacion) => setCargado({ clave: k, d: v });
+
+    /**
+     * CAMINO RÁPIDO: ya lo tenemos. Cero red, cero espera.
+     *
+     * Se lee de forma SÍNCRONA —no dentro de una promesa— a propósito: así el
+     * chat aparece en la misma pintada del clic. Metido en un `.then()`, aunque
+     * la promesa ya esté resuelta, se iría al siguiente ciclo y se vería un
+     * parpadeo de esqueleto por nada.
+     */
+    const guardado = leer(k);
+    if (guardado) {
+      poner(guardado);
+      setCargando(false);
+      setFallo(false);
+
+      /**
+       * Y ADEMÁS SE REFRESCA POR DETRÁS (stale-while-revalidate).
+       *
+       * Lo guardado puede tener la etapa, las etiquetas o la nota internas de
+       * hace un rato. Los MENSAJES no importan —el stream en vivo los pone al
+       * día solo— pero el panel de contexto sí, y ahí un dato viejo se cree.
+       *
+       * La persona ve el chat al instante y el panel se corrige solo un momento
+       * después. Nunca hay pantalla en blanco esperando esto.
+       */
+      void traer(empleadoId, chatId, { forzar: true }).then((fresco) => {
+        if (fresco && mio === pedido.current) poner(fresco);
+      });
+      return;
+    }
+
+    /**
+     * ⚠️ NO HACE FALTA BORRAR LO ANTERIOR: YA NO SE VE.
+     *
+     * `d` se deriva comparando la clave de lo cargado con la conversación
+     * abierta, así que al cambiar de chat lo viejo deja de mostrarse solo, en la
+     * misma pintada, sin depender de que este efecto alcance a correr.
+     *
+     * Antes acá se dejaba a propósito la conversación anterior en pantalla,
+     * atenuada, "para que no quedara en blanco". Pero eso es mostrar los
+     * mensajes de un cliente bajo el nombre y la URL de OTRO: alguien podía leer
+     * —o responder— creyendo que estaba en el chat que acababa de abrir.
+     *
+     * En ese hueco ahora va la cabecera de verdad (que la lista ya conocía) y un
+     * esqueleto donde irán los mensajes. Se ve mejor Y es correcto.
+     */
     setCargando(true);
     setFallo(false);
-    fetch(`/api/conversaciones/detalle?emp=${encodeURIComponent(empleadoId)}&chat=${encodeURIComponent(chatId)}`)
-      .then((r) => (r.ok ? r.json() : null))
-      .then((json: DetalleConversacion | null) => {
+
+    void traer(empleadoId, chatId)
+      .then((json) => {
         // Llegó tarde: la persona ya está en otro chat. Descartar.
         if (mio !== pedido.current) return;
-        if (json) {
-          cache.set(clave, json);
-          setD(json);
-        } else {
-          /**
-           * ⚠️ SI NO SE PUDO CARGAR, SE BORRA LO ANTERIOR.
-           *
-           * Antes acá no se hacía nada, y el efecto era el peor posible:
-           * quedaba en pantalla la conversación ANTERIOR mientras la URL decía
-           * otra. Alguien podía responderle a un cliente creyendo que le
-           * escribía a otro.
-           *
-           * Mostrar un error es incómodo; mostrar la conversación equivocada es
-           * inaceptable.
-           */
-          setD(null);
-          setFallo(true);
-        }
-      })
-      .catch(() => {
-        if (mio !== pedido.current) return;
-        setD(null);
-        setFallo(true);
+        if (json) poner(json);
+        else setFallo(true);
       })
       .finally(() => {
         if (mio === pedido.current) setCargando(false);
@@ -141,7 +231,7 @@ export default function PanelChat({
 
   /** Reintento manual tras un fallo de carga. */
   const reintentar = () => {
-    cache.delete(`${empleadoId}|${chatId}`);
+    olvidar(claveDe(empleadoId, chatId));
     setFallo(false);
     setReintento((n) => n + 1);
   };
@@ -160,8 +250,25 @@ export default function PanelChat({
     );
   }
 
-  const meta = d ? metaEmpleado(d.empleadoRol) : null;
+  /**
+   * QUÉ SE DIBUJA MIENTRAS LLEGAN LOS MENSAJES.
+   *
+   * Si hay detalle, manda el detalle. Si no, mandan los datos de la fila que se
+   * tocó: el nombre del contacto, quién atiende y su color ya estaban en
+   * pantalla en la lista, así que la cabecera puede pintarse **en el mismo
+   * fotograma del clic**, sin una sola petición.
+   *
+   * Lo único que espera es la lista de mensajes, que es lo único que la fila de
+   * verdad no sabe.
+   */
+  const rolVisible = d?.empleadoRol ?? adelanto?.empleadoRol ?? null;
+  const meta = rolVisible ? metaEmpleado(rolVisible) : null;
   const color = meta?.color ?? "var(--indigo)";
+  const contactoVisible = d?.contacto ?? adelanto?.contacto ?? "";
+  const empleadoVisible = d?.empleadoNombre ?? adelanto?.empleadoNombre ?? "";
+  const modoVisible = d?.modo ?? adelanto?.modo ?? "bot";
+  /** Hay conversación abierta: con detalle completo o solo con el adelanto. */
+  const hayChat = Boolean(d) || Boolean(adelanto && empleadoId && chatId);
 
   return (
     /**
@@ -176,10 +283,7 @@ export default function PanelChat({
      * hijas de la grilla, pero sigue existiendo para colgarle el estado de carga.
      */
     <div
-      style={{
-        display: "contents",
-        opacity: cargando ? 0.55 : 1,
-      }}
+      style={{ display: "contents" }}
       aria-busy={cargando}
     >
     {/* Detalle — en móvil ocupa toda la pantalla; el panel vacío solo tiene
@@ -187,17 +291,11 @@ export default function PanelChat({
     <div
       className={
         "tarjeta-plana min-w-0 overflow-y-auto p-4 sm:p-5 lg:h-full " +
-        (d ? "block" : "hidden lg:block")
+        (hayChat ? "block" : "hidden lg:block")
       }
-      style={{
-        background: "var(--fondo)",
-        // Mientras llega otro chat se atenúa en vez de quedar en blanco: un
-        // vacío parece que algo se rompió; un contenido que se aclara, no.
-        opacity: cargando ? 0.5 : 1,
-        transition: "opacity .12s ease-out",
-      }}
+      style={{ background: "var(--fondo)" }}
     >
-      {d && (
+      {hayChat && (
         /*
           VOLVER A LA LISTA, en móvil.
 
@@ -218,7 +316,7 @@ export default function PanelChat({
           Volver a la lista
         </button>
       )}
-      {!d ? (
+      {!hayChat ? (
         <div
           className="flex h-full min-h-[340px] flex-col items-center justify-center gap-2 text-center"
           style={{ color: "var(--muted)" }}
@@ -247,25 +345,39 @@ export default function PanelChat({
             style={{ borderColor: "var(--borde)", background: "var(--fondo)" }}
           >
             <div className="flex min-w-0 items-center gap-2.5">
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img
-                src={meta!.avatar}
-                alt={d.empleadoNombre}
-                width={34}
-                height={34}
-                className="avatar h-[34px] w-[34px]"
-                style={{ ["--anillo" as string]: color }}
-              />
+              {meta && (
+                /* eslint-disable-next-line @next/next/no-img-element */
+                <img
+                  src={meta.avatar}
+                  alt={empleadoVisible}
+                  width={34}
+                  height={34}
+                  className="avatar h-[34px] w-[34px]"
+                  style={{ ["--anillo" as string]: color }}
+                />
+              )}
               <div className="min-w-0">
-                <div className="h-cifra truncate">{d.contacto}</div>
+                <div className="h-cifra truncate">{contactoVisible}</div>
                 <div
                   className="truncate"
                   style={{ fontSize: "var(--t-menor)", color: "var(--muted)" }}
                 >
-                  <span className="cifra">
-                    {d.telefono ?? `+${d.chatId}`}
-                  </span>
-                  {d.etiqueta ? ` · ${d.etiqueta}` : ""}
+                  {/*
+                    El teléfono y la etiqueta solo los sabe el detalle. Mientras
+                    llega se deja el hueco con el alto exacto de esa línea, para
+                    que al aparecer el texto no empuje la cabecera hacia abajo:
+                    un salto acá mueve toda la conversación bajo el cursor.
+                  */}
+                  {d ? (
+                    <>
+                      <span className="cifra">{d.telefono ?? `+${d.chatId}`}</span>
+                      {d.etiqueta ? ` · ${d.etiqueta}` : ""}
+                    </>
+                  ) : (
+                    <span className="cifra" style={{ opacity: 0.45 }}>
+                      +{chatId}
+                    </span>
+                  )}
                 </div>
               </div>
             </div>
@@ -278,7 +390,7 @@ export default function PanelChat({
             </Link>
           </div>
 
-          {d.escalacion && (
+          {d?.escalacion && (
             <div
               className="mt-4 rounded-xl border p-4"
               style={{
@@ -316,6 +428,9 @@ export default function PanelChat({
             cliente. Antes cada clic recargaba la página entera, así que el
             remontaje ocurría solo y esto nunca se notó.
           */}
+          {!d ? (
+            <EsqueletoMensajes />
+          ) : (
           <InboxConversacion
             key={`${empleadoId}|${d.chatId}`}
             empleadoId={empleadoId!}
@@ -332,6 +447,7 @@ export default function PanelChat({
             modoInicial={d.modo}
             contacto={d.contacto}
           />
+          )}
         </>
       )}
     </div>
@@ -345,28 +461,42 @@ export default function PanelChat({
       "cliente desde" habría obligado a buscar el mensaje más antiguo del
       chat cada vez que se abre una conversación.
     */}
-    {d && (
+    {/*
+      ⚠️ SE DIBUJA CON `hayChat`, NO CON `d`.
+
+      Al vaciar `d` para no mostrar la conversación anterior, esta columna
+      desaparecía y volvía en cada cambio de chat. En una grilla de tres
+      columnas eso NO es que se vea un hueco: las otras dos se ensanchan y se
+      vuelven a angostar, o sea la conversación entera salta de lugar bajo el
+      cursor justo cuando la persona va a leer.
+
+      Con el adelanto, "quién atiende" ya se puede pintar de verdad, y lo que
+      todavía no sabemos va como esqueleto ocupando su lugar.
+    */}
+    {hayChat && (
       <aside className="hidden min-w-0 flex-col gap-3 overflow-y-auto xl:flex xl:h-full">
         <div className="tarjeta p-3.5">
           <Rotulo>Quién atiende</Rotulo>
           <div className="mt-2 flex items-center gap-2.5">
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img
-              src={meta!.avatar}
-              alt=""
-              width={30}
-              height={30}
-              className="avatar h-[30px] w-[30px]"
-              style={{ ["--anillo" as string]: color }}
-            />
+            {meta && (
+              /* eslint-disable-next-line @next/next/no-img-element */
+              <img
+                src={meta.avatar}
+                alt=""
+                width={30}
+                height={30}
+                className="avatar h-[30px] w-[30px]"
+                style={{ ["--anillo" as string]: color }}
+              />
+            )}
             <div className="min-w-0">
               <div className="truncate font-semibold" style={{ fontSize: "var(--t-fila)" }}>
-                {d.empleadoNombre}
+                {empleadoVisible}
               </div>
               <div style={{ fontSize: "var(--t-micro)", color: "var(--muted-2)" }}>
-                {d.modo === "humano"
+                {modoVisible === "humano"
                   ? "en silencio · tú tienes el control"
-                  : d.modo === "pausado"
+                  : modoVisible === "pausado"
                     ? "pausado"
                     : "respondiendo"}
               </div>
@@ -374,6 +504,10 @@ export default function PanelChat({
           </div>
         </div>
 
+        {!d ? (
+          <EsqueletoContexto />
+        ) : (
+        <>
         <div className="tarjeta p-3.5">
           <Rotulo>Etiquetas</Rotulo>
           <EtiquetasEditor chatId={d.chatId} etiquetas={d.etiquetas} />
@@ -465,6 +599,8 @@ export default function PanelChat({
         >
           Ver ficha completa →
         </Link>
+        </>
+        )}
       </aside>
     )}
     </div>
