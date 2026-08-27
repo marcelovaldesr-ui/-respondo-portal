@@ -3,7 +3,9 @@ import test from "node:test";
 
 import {
   DIAS_UTILES,
+  PREFIJO_GRANDE,
   PREFIJO_META,
+  PREFIJO_VENCIDO,
   TOPE_BYTES,
   decidir,
   extensionDe,
@@ -108,4 +110,25 @@ test("a los 7 días se considera vencido", () => {
   const ahora = new Date("2026-08-26T00:00:00.000Z").getTime();
   assert.equal(vencido("2026-08-25T00:00:00.000Z", ahora), false);
   assert.equal(vencido("2026-08-18T00:00:00.000Z", ahora), true);
+});
+
+// ── Las dos marcas de «no se archivó» son distintas ─────────────────────────
+
+test("⭐⭐ «muy grande» y «Meta ya lo borró» NO comparten marca", () => {
+  // Compartían marca y /api/salud reportó «1 muy grandes» sobre un archivo que
+  // no era grande: era viejo. Un dato plausible y falso lleva a la conclusión
+  // equivocada — «subamos el tope» cuando lo cierto era «llegamos tarde».
+  assert.notEqual(PREFIJO_GRANDE, PREFIJO_VENCIDO);
+});
+
+test("ninguna de las dos marcas se confunde con un puntero vivo de Meta", () => {
+  // `meta-grande:` y `meta-vencido:` empiezan con «meta», así que un filtro
+  // descuidado por `meta%` los volvería a barrer para siempre.
+  for (const marca of [PREFIJO_GRANDE, PREFIJO_VENCIDO]) {
+    assert.equal(
+      decidir({ ...BASE, mediaUrl: `${marca}123` }).accion,
+      "omitir",
+      marca,
+    );
+  }
 });

@@ -105,7 +105,20 @@ export async function GET(request: NextRequest) {
    */
   if (guardado.startsWith("meta-grande:")) {
     return new NextResponse(
-      "Este archivo superaba el tamaño que guardamos y WhatsApp ya lo eliminó de sus servidores.",
+      "Este archivo superaba los 10 MB que guardamos, y WhatsApp ya lo eliminó de sus servidores.",
+      { status: 410, headers: { "Content-Type": "text/plain; charset=utf-8" } },
+    );
+  }
+
+  /**
+   * Llegamos tarde: cuando el archivador fue a buscarlo, Meta ya lo había
+   * borrado. Se distingue del caso anterior a propósito — decirle a alguien que
+   * su archivo «era muy grande» cuando en realidad venció lo manda a revisar un
+   * límite que no tuvo nada que ver.
+   */
+  if (guardado.startsWith("meta-vencido:")) {
+    return new NextResponse(
+      "WhatsApp elimina los archivos a los 7 días y este ya no está disponible.",
       { status: 410, headers: { "Content-Type": "text/plain; charset=utf-8" } },
     );
   }

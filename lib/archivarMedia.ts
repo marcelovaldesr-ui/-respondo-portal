@@ -4,6 +4,7 @@ import {
   DIAS_UTILES,
   PREFIJO_GRANDE,
   PREFIJO_META,
+  PREFIJO_VENCIDO,
   PREFIJO_STORAGE,
   TOPE_BYTES,
   decidir,
@@ -41,6 +42,8 @@ export type ResumenArchivado = {
   revisados: number;
   archivados: number;
   grandes: number;
+  /** Meta ya los había borrado cuando fuimos a buscarlos. */
+  vencidos: number;
   fallidos: number;
   bytes: number;
 };
@@ -53,6 +56,7 @@ export async function archivarPendientes(
     revisados: 0,
     archivados: 0,
     grandes: 0,
+    vencidos: 0,
     fallidos: 0,
     bytes: 0,
   };
@@ -96,13 +100,19 @@ export async function archivarPendientes(
       const res = await resolverMediaMeta(cfg, mediaId);
       if (!res) {
         /**
-         * Meta ya no lo tiene. Puede ser que venció o que el cliente lo borró.
-         * No es un fallo del archivador: se deja de intentar marcándolo como
-         * grande/no disponible, o el barrido lo reintentaría en cada pasada
-         * hasta que la ventana de 6 días lo saque, gastando cuota para nada.
+         * Meta ya no lo tiene: venció el plazo o el cliente lo borró.
+         *
+         * ⚠️ MARCA PROPIA, NO LA DE «MUY GRANDE». Al principio compartían marca y
+         * el chequeo de salud terminó reportando «1 muy grandes» sobre un archivo
+         * que no era grande — llevaba a la conclusión equivocada («subamos el
+         * tope») cuando lo cierto era «llegamos tarde».
+         *
+         * Se marca para dejar de intentarlo: sin esto, el barrido lo reintentaría
+         * en cada pasada hasta que la ventana de 6 días lo saque, gastando cuota
+         * para recibir el mismo 404.
          */
-        await marcar(supa, mensajeId, `${PREFIJO_GRANDE}${mediaId}`);
-        out.fallidos++;
+        await marcar(supa, mensajeId, `${PREFIJO_VENCIDO}${mediaId}`);
+        out.vencidos++;
         continue;
       }
 
@@ -228,11 +238,15 @@ export async function contarArchivados(supa = db()): Promise<number | null> {
  * Meta. Son archivos **que ya no se pueden recuperar**: sirve para decirlo en la
  * pantalla en vez de mostrar un error mudo.
  */
-export async function contarPerdidos(supa = db()): Promise<number | null> {
-  const { count, error } = await supa
-    .from("ed_mensajes")
-    .select("id", { count: "exact", head: true })
-    .like("media_url", `${PREFIJO_GRANDE}%`);
-  if (error) return null;
-  return count ?? 0;
+export async function contarPerdidos(
+  supa = db(),
+): Promise<{ grandes: number; vencidos: number } | null> {
+  const [g, v] = await Promise.all([
+    supa.from("ed_mensajes").select("id", { count: "exact", head: true })
+      .like("media_url", `${PREFIJO_GRANDE}%`),
+    supa.from("ed_mensajes").select("id", { count: "exact", head: true })
+      .like("media_url", `${PREFIJO_VENCIDO}%`),
+  ]);
+  if (g.error || v.error) return null;
+  return { grandes: g.count ?? 0, vencidos: v.count ?? 0 };
 }

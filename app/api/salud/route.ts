@@ -350,12 +350,20 @@ async function chequearArchivado(): Promise<Chequeo> {
   }
 
   const enRiesgo = pendientes.count ?? 0;
-  const detalle =
-    `${guardados ?? 0} archivados` +
-    (perdidos ? `, ${perdidos} muy grandes (no recuperables)` : "") +
-    (enRiesgo ? ` · ⚠️ ${enRiesgo} sin archivar y por vencer` : "");
 
-  return { ok: enRiesgo === 0, detalle };
+  /**
+   * ⚠️ «MUY GRANDE» Y «META YA LO BORRÓ» SON COSAS DISTINTAS, Y SE DICEN DISTINTO.
+   *
+   * Antes compartían marca y este chequeo llegó a reportar «1 muy grandes» sobre
+   * un archivo que no era grande: era viejo. Llevaba a la conclusión equivocada
+   * —«hay que subir el tope»— cuando lo cierto era «llegamos tarde».
+   */
+  const partes = [`${guardados ?? 0} archivados`];
+  if (perdidos?.grandes) partes.push(`${perdidos.grandes} sobre el tope de 10 MB`);
+  if (perdidos?.vencidos) partes.push(`${perdidos.vencidos} que Meta ya había borrado`);
+  if (enRiesgo) partes.push(`⚠️ ${enRiesgo} sin archivar y por vencer`);
+
+  return { ok: enRiesgo === 0, detalle: partes.join(" · ") };
 }
 
 async function chequearWahaUnCliente(): Promise<Chequeo> {

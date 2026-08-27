@@ -35,6 +35,19 @@ export const PREFIJO_STORAGE = "sb:";
  * que avisa «era muy grande para archivarlo, descárgalo antes del <fecha>».
  */
 export const PREFIJO_GRANDE = "meta-grande:";
+/**
+ * Archivo que Meta YA NO TIENE cuando el archivador fue a buscarlo.
+ *
+ * ⚠️ SEPARADO DE `meta-grande:` A PROPÓSITO (27-ago-2026). Al principio los dos
+ * casos compartían marca, y `/api/salud` reportó «1 muy grandes (no
+ * recuperables)» sobre un archivo que **no era grande**: era uno viejo que Meta
+ * ya había borrado.
+ *
+ * Un dato plausible y falso es peor que un error: el error se ve y se arregla,
+ * el número creíble se cree. Y acá llevaba a la conclusión equivocada — «hay que
+ * subir el tope» cuando lo cierto era «llegamos tarde».
+ */
+export const PREFIJO_VENCIDO = "meta-vencido:";
 
 export type Decision =
   | { accion: "archivar"; ruta: string }
