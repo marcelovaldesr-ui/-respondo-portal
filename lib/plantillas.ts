@@ -54,7 +54,31 @@ export type Plantilla = {
   variables: string[];
   /** Valores de ejemplo que pide Meta al crear la plantilla. */
   ejemplos: string[];
+  /**
+   * A QUÉ RUBROS APLICA. Sin este campo, aplica a todos.
+   *
+   * ⚠️ POR QUÉ EXISTE (26-ago-2026). Antes el catálogo era uno solo para todos
+   * los clientes, y se había armado pensando en RS-Shop: `moto_lista`,
+   * `repuesto_llego`, `mantencion_toca`. Al conectar Impresora Color se iba a
+   * crear en su WABA una plantilla llamada «moto_lista» — y encima cuatro de las
+   * siete eran de agenda, que **una imprenta no usa**: no agenda horas, cotiza y
+   * vende.
+   *
+   * Dar de alta plantillas que nunca se van a usar no rompe nada, pero ensucia
+   * el portafolio de Meta de un cliente y deja a la vista que no pensamos su
+   * caso. Y una de las inútiles era de categoría marketing.
+   *
+   * Es el primer paso de «plantillas por industria», adelantado por necesidad.
+   * Las llaves son las de `ed_clientes.rubro`, el mismo vocabulario que usan
+   * `lib/plantillasRubro.ts` y `lib/clasificadorProducto.ts`.
+   */
+  rubros?: string[];
 };
+
+/** Rubros que agendan horas. Los que no están acá no usan las citas. */
+const CON_AGENDA = ["estetica", "dental", "salud", "nutricion", "taller", "motos", "inmobiliaria"];
+/** Rubros que entregan un producto o trabajo terminado. */
+const CON_PEDIDOS = ["imprenta", "tienda", "retail"];
 
 /**
  * Las plantillas se dan de alta UNA VEZ por WABA (por cliente), con estos
@@ -73,6 +97,7 @@ export const PLANTILLAS: Record<string, Plantilla> = {
       "Cualquier duda, respóndenos por este mismo chat.",
     variables: ["nombre del cliente", "servicio", "día y hora", "enlace de gestión de la cita"],
     ejemplos: ["Cristian", "mantención programada", "jueves 21 a las 10:00", "https://respondo.cl/cita/abc123"],
+    rubros: CON_AGENDA,
   },
 
   cita_recordatorio: {
@@ -86,6 +111,7 @@ export const PLANTILLAS: Record<string, Plantilla> = {
       "¡Te esperamos!",
     variables: ["nombre del cliente", "servicio", "hora", "enlace de gestión de la cita"],
     ejemplos: ["Cristian", "mantención programada", "10:00", "https://respondo.cl/cita/abc123"],
+    rubros: CON_AGENDA,
   },
 
   // ─────────────────────── Vera ───────────────────────
@@ -111,6 +137,7 @@ export const PLANTILLAS: Record<string, Plantilla> = {
       "respóndenos BAJA y no volvemos a molestarte.",
     variables: ["nombre del cliente", "nombre del negocio", "moto", "próximo servicio"],
     ejemplos: ["Cristian", "RS-Shop", "KTM 390 Duke 2023", "su próxima mantención"],
+    rubros: ["motos", "taller", "automotriz"],
   },
 
   /**
@@ -155,6 +182,7 @@ export const PLANTILLAS: Record<string, Plantilla> = {
       "Queda reservado a tu nombre. ¿Lo pasas a buscar o prefieres que lo despachemos?",
     variables: ["nombre del cliente", "nombre del negocio", "repuesto"],
     ejemplos: ["Cristian", "RS-Shop", "kit de arrastre"],
+    rubros: ["motos", "taller", "automotriz"],
   },
 
   moto_lista: {
@@ -166,6 +194,39 @@ export const PLANTILLAS: Record<string, Plantilla> = {
       "Te esperamos en el horario que te acomode. Si necesitas coordinar el retiro, respóndenos por acá.",
     variables: ["nombre del cliente", "nombre del negocio", "moto"],
     ejemplos: ["Cristian", "RS-Shop", "KTM 390 Duke"],
+    rubros: ["motos", "taller", "automotriz"],
+  },
+
+  // ─────────────────── Imprenta y tiendas (26-ago-2026) ───────────────────
+  //
+  // Un negocio que vende y entrega NO agenda horas. Impresora Color tiene 349
+  // conversaciones y ninguna es para reservar: son cotizaciones, pedidos y
+  // encargos. Estas dos son el equivalente de `moto_lista` y `repuesto_llego`
+  // para ese mundo, y las dos son UTILITY: continúan algo que el cliente ya
+  // inició, así que son baratas y gratis dentro de las 24 h.
+
+  pedido_listo: {
+    nombre: "pedido_listo",
+    idioma: "es",
+    categoria: "utility",
+    cuerpo:
+      "Hola {{1}}, tu {{3}} ya está listo para retirar en {{2}}.\n\n" +
+      "Te esperamos en el horario que te acomode. Si necesitas coordinar el retiro, respóndenos por acá.",
+    variables: ["nombre del cliente", "nombre del negocio", "trabajo o pedido"],
+    ejemplos: ["Cristian", "Impresora Color", "pedido de 500 tarjetas"],
+    rubros: CON_PEDIDOS,
+  },
+
+  encargo_llego: {
+    nombre: "encargo_llego",
+    idioma: "es",
+    categoria: "utility",
+    cuerpo:
+      "Hola {{1}}, buenas noticias: llegó el {{3}} que encargaste en {{2}}.\n\n" +
+      "Te lo dejamos reservado. Respóndenos por acá para coordinar el retiro.",
+    variables: ["nombre del cliente", "nombre del negocio", "producto encargado"],
+    ejemplos: ["Cristian", "Impresora Color", "tóner Xerox C8000"],
+    rubros: CON_PEDIDOS,
   },
 };
 
@@ -179,7 +240,28 @@ export const PLANTILLA_POR_TIPO: Record<string, string> = {
   cotizacion_pendiente: "cotizacion_pendiente",
   repuesto_llego: "repuesto_llego",
   moto_lista: "moto_lista",
+  pedido_listo: "pedido_listo",
+  encargo_llego: "encargo_llego",
 };
+
+/**
+ * Las plantillas que le corresponden a un rubro.
+ *
+ * Las que no declaran `rubros` son universales (hoy: `encuesta_postventa` y
+ * `cotizacion_pendiente`, que aplican a cualquier negocio que entregue algo o
+ * cotice).
+ *
+ * ⚠️ Sin rubro conocido devuelve SOLO las universales, no todas. Crear plantillas
+ * de más en el WABA de un cliente no rompe nada, pero deja en su portafolio de
+ * Meta cosas que no le corresponden — y una de ellas es marketing. Ante la duda,
+ * de menos.
+ */
+export function plantillasParaRubro(rubro: string | null | undefined): Plantilla[] {
+  const r = (rubro ?? "").trim().toLowerCase();
+  return Object.values(PLANTILLAS).filter(
+    (p) => !p.rubros || (r !== "" && p.rubros.includes(r)),
+  );
+}
 
 export function plantillaPara(tipoONombre: string): Plantilla | null {
   const nombre = PLANTILLA_POR_TIPO[tipoONombre] ?? tipoONombre;

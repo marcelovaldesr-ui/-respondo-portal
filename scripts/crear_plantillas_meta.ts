@@ -1,15 +1,15 @@
 import "./_env";
 import { db } from "../lib/db";
-import { PLANTILLAS, validarCuerpo } from "../lib/plantillas";
+import { plantillasParaRubro, validarCuerpo, type Plantilla } from "../lib/plantillas";
 import { tokenDeFila } from "../lib/whatsapp";
 
 /**
  * DA DE ALTA LAS PLANTILLAS EN META, CON UN COMANDO.
  *
  * USO
- *   npx tsx scripts/crear_plantillas_meta.ts --cliente <uuid>            (revisa)
- *   npx tsx scripts/crear_plantillas_meta.ts --cliente <uuid> --crear    (crea)
- *   npx tsx scripts/crear_plantillas_meta.ts --cliente <uuid> --estado   (solo lista)
+ *   npx tsx scripts/crear_plantillas_meta.ts                              (lista clientes)
+ *   npx tsx scripts/crear_plantillas_meta.ts --cliente impresora --estado  (revisa)
+ *   npx tsx scripts/crear_plantillas_meta.ts --cliente impresora --crear   (crea)
  *
  * POR QUÉ EXISTE
  * Las siete plantillas se pueden crear a mano en WhatsApp Manager, pero son
@@ -28,13 +28,61 @@ import { tokenDeFila } from "../lib/whatsapp";
 const GRAPH = "https://graph.facebook.com/v21.0";
 
 const args = process.argv.slice(2);
-const clienteId = args[args.indexOf("--cliente") + 1];
+const quien = args[args.indexOf("--cliente") + 1];
 const crear = args.includes("--crear");
 const soloEstado = args.includes("--estado");
 
-if (!args.includes("--cliente") || !clienteId) {
-  console.error("Uso: npx tsx scripts/crear_plantillas_meta.ts --cliente <uuid> [--crear|--estado]");
-  process.exit(1);
+const ES_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * Resuelve el cliente por uuid o POR NOMBRE, y si no se pasa nada, los lista.
+ *
+ * ⚠️ Antes exigía el uuid sí o sí, y eso obligaba a ir a buscarlo a Supabase
+ * cada vez. El resultado predecible: se pega el marcador `<uuid-de-impresora>`
+ * tal cual y PowerShell responde «El operador '<' está reservado para uso
+ * futuro», que no se parece en nada al problema real.
+ *
+ * Esto se repite con CADA cliente nuevo, así que arreglarlo una vez ahorra la
+ * misma fricción para siempre. Aceptar el nombre además evita el otro riesgo:
+ * pegar el uuid del cliente equivocado y crear las plantillas en el WABA de otro
+ * negocio, que sí cuesta plata deshacer.
+ */
+async function resolverCliente(): Promise<string> {
+  const supa = db();
+  if (quien && ES_UUID.test(quien)) return quien;
+
+  const consulta = supa.from("ed_clientes").select("id, nombre, transporte").limit(50);
+  const { data, error } = quien
+    ? await consulta.ilike("nombre", `%${quien}%`)
+    : await consulta;
+
+  if (error) {
+    console.error("No se pudo leer los clientes:", error.message);
+    process.exit(1);
+  }
+  const filas = data ?? [];
+
+  if (!quien) {
+    console.error("\nFalta --cliente. Estos son los clientes disponibles:\n");
+    for (const c of filas) console.error(`  ${c.id}  ${c.nombre}  (${c.transporte ?? "?"})`);
+    console.error("\nSe puede pasar el uuid o parte del nombre, por ejemplo: --cliente impresora\n");
+    process.exit(1);
+  }
+  if (!filas.length) {
+    console.error(`Ningún cliente coincide con "${quien}".`);
+    process.exit(1);
+  }
+  if (filas.length > 1) {
+    // Nunca elegir por la persona cuando hay ambigüedad: crear plantillas
+    // modifica el portafolio de Meta de un negocio real.
+    console.error(`\n"${quien}" coincide con varios clientes. Precisa cuál:\n`);
+    for (const c of filas) console.error(`  ${c.id}  ${c.nombre}`);
+    console.error("");
+    process.exit(1);
+  }
+
+  console.log(`Cliente resuelto por nombre: ${filas[0].nombre}`);
+  return filas[0].id as string;
 }
 
 type PlantillaRemota = { name: string; language: string; status: string; category: string };
@@ -55,7 +103,7 @@ async function listarRemotas(wabaId: string, token: string): Promise<PlantillaRe
 async function crearRemota(
   wabaId: string,
   token: string,
-  p: (typeof PLANTILLAS)[string],
+  p: Plantilla,
 ): Promise<{ ok: boolean; detalle: string }> {
   const cuerpo = {
     name: p.nombre,
@@ -81,10 +129,11 @@ async function crearRemota(
 }
 
 async function main() {
+  const clienteId = await resolverCliente();
   const supa = db();
   const { data: cli } = await supa
     .from("ed_clientes")
-    .select("nombre, waba_id, waba_token, waba_token_cifrado")
+    .select("nombre, rubro, waba_id, waba_token, waba_token_cifrado")
     .eq("id", clienteId)
     .maybeSingle();
 
@@ -103,12 +152,34 @@ async function main() {
     process.exit(1);
   }
 
-  console.log(`\nCliente: ${cli.nombre}   WABA: ${wabaId}\n`);
+  /**
+   * ⚠️ SOLO LAS PLANTILLAS DE SU RUBRO.
+   *
+   * Antes se creaban las 7 en todos los clientes. Con Impresora Color quedó a la
+   * vista el problema: una imprenta no agenda horas, así que 4 de las 7 no le
+   * servían — y una de las inútiles era MARKETING. Ver `lib/plantillas.ts`.
+   */
+  const rubro = (cli.rubro as string | null) ?? "";
+  const plantillas = plantillasParaRubro(rubro);
+
+  console.log(`\nCliente: ${cli.nombre}   Rubro: ${rubro || "(sin rubro)"}   WABA: ${wabaId}\n`);
+
+  if (!plantillas.length) {
+    console.error(
+      `Ninguna plantilla aplica al rubro "${rubro}". Revisa ed_clientes.rubro, ` +
+        `o agrega el rubro en lib/plantillas.ts.`,
+    );
+    process.exitCode = 1;
+    return;
+  }
+  if (!rubro) {
+    console.log("  ⚠ El cliente no tiene rubro: solo se consideran las universales.\n");
+  }
 
   // 1) Validar los cuerpos ANTES de mandarlos. Meta tarda horas en revisar y el
   //    motivo del rechazo no siempre dice qué regla se rompió.
   let invalidas = 0;
-  for (const p of Object.values(PLANTILLAS)) {
+  for (const p of plantillas) {
     const errs = validarCuerpo(p);
     if (errs.length) {
       invalidas++;
@@ -119,7 +190,7 @@ async function main() {
     console.error(`\n${invalidas} plantilla(s) con problemas. No se manda nada hasta arreglarlas.`);
     process.exit(1);
   }
-  console.log(`  ✓ los ${Object.keys(PLANTILLAS).length} cuerpos cumplen las reglas de Meta`);
+  console.log(`  ✓ los ${plantillas.length} cuerpos cumplen las reglas de Meta`);
 
   // 2) Qué hay ya en ese WABA.
   const remotas = await listarRemotas(wabaId, token);
@@ -127,7 +198,7 @@ async function main() {
 
   console.log("\nEstado en Meta");
   const faltan: string[] = [];
-  for (const p of Object.values(PLANTILLAS)) {
+  for (const p of plantillas) {
     const r = porNombre.get(`${p.nombre}|${p.idioma}`);
     if (!r) {
       faltan.push(p.nombre);
