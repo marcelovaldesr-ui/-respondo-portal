@@ -1,0 +1,25 @@
+{
+  // ==========================================================================
+  // TYPECHECK DE scripts/  —  npm run typecheck:scripts
+  // ==========================================================================
+  //
+  // POR QUÉ EXISTE (26-ago-2026)
+  // ----------------------------
+  // El `tsconfig.json` principal EXCLUYE `scripts`, así que `npx tsc --noEmit`
+  // pasaba limpio aunque un script estuviera roto. No es teórico: ese día el
+  // script de alta de plantillas quedó con una referencia a una constante que ya
+  // no se importaba, el typecheck dijo que todo estaba bien, y el error apareció
+  // recién al ejecutarlo contra el WABA de un cliente real — después de haber
+  // leído el estado y justo antes de crear las plantillas.
+  //
+  // Estos scripts no son juguetes: dan de alta plantillas en el portafolio de
+  // Meta de un negocio, importan contactos y tocan la base de producción. Que no
+  // se revisen es peor que en cualquier otra carpeta.
+  //
+  // Va SEPARADO del principal a propósito: incluirlos ahí metería los scripts en
+  // el build de Next, que no los necesita para nada.
+  // ==========================================================================
+  "extends": "./tsconfig.json",
+  "include": ["scripts/**/*.ts", "lib/**/*.ts"],
+  "exclude": ["node_modules"]
+}

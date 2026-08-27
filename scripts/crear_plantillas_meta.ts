@@ -223,8 +223,13 @@ async function main() {
   }
 
   console.log(`\nCreando ${faltan.length} plantilla(s)…\n`);
+  // Se busca dentro de las del RUBRO, no en el catálogo global: `faltan` salió
+  // de ahí, y usar el catálogo completo abriría la puerta a crear una plantilla
+  // que no le corresponde a este cliente.
+  const porNombreLocal = new Map(plantillas.map((p) => [p.nombre, p]));
   for (const nombre of faltan) {
-    const p = PLANTILLAS[nombre];
+    const p = porNombreLocal.get(nombre);
+    if (!p) continue;
     const r = await crearRemota(wabaId, token, p);
     console.log(`  ${r.ok ? "✓" : "✗"} ${nombre.padEnd(22)} ${r.detalle}`);
   }
