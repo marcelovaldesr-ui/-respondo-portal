@@ -14,6 +14,7 @@ import { reprocesarWebhooksPendientes } from "@/lib/webhookInbox";
 import { revisarCuposYAvisar } from "@/lib/avisosCupo";
 import { revisarAbandonadas } from "@/lib/reingresoTino";
 import { archivarPendientes } from "@/lib/archivarMedia";
+import { generarSeguimientosCotizacion } from "@/lib/generadorCotizacion";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -231,6 +232,23 @@ export async function GET(request: NextRequest) {
     console.error("[cron] archivado de adjuntos falló (no afecta lo demás)", (e as Error).message);
   }
 
+  /**
+   * BETO PERSIGUE LAS COTIZACIONES SIN RESPUESTA (26-ago-2026).
+   *
+   * Los tres generadores que había dependían de una CITA o del rubro motos, así
+   * que a una imprenta —que no agenda— Beto y Vera no le hacían nada.
+   *
+   * ⚠️ Cada envío es una plantilla de MARKETING (~$85). Nace apagado por cliente
+   * y con tope diario: el tope es de GASTO, no de carga.
+   */
+  let cotizaciones = { clientes: 0, candidatos: 0, programados: 0 };
+  try {
+    const c = await generarSeguimientosCotizacion(supa);
+    cotizaciones = { clientes: c.clientes, candidatos: c.candidatos, programados: c.programados };
+  } catch (e) {
+    console.error("[cron] seguimiento de cotizaciones falló (no afecta lo demás)", (e as Error).message);
+  }
+
   // Deja constancia de que el cron corrió, aunque no haya enviado nada. Esto es
   // lo que permite que /api/salud detecte que el cron DEJÓ de correr; sin el
   // latido, un cron muerto se ve igual que un cron sin trabajo pendiente.
@@ -252,5 +270,7 @@ export async function GET(request: NextRequest) {
     // El detalle nombra conversaciones: va el conteo, no las líneas.
     reingresos,
     adjuntos,
+    // El detalle nombra clientes y chats: va el conteo, no las líneas.
+    cotizaciones,
   });
 }
