@@ -50,6 +50,14 @@ export type DetalleConversacion = {
   /** Estado de la ventana de 24h de WhatsApp (Opción B). */
   ventana: "abierta" | "cerrada" | "desconocida" | "no_aplica";
   /**
+   * Rubro del negocio, para ofrecer SOLO las plantillas que existen en su WABA.
+   *
+   * ⚠️ Sin esto el selector mostraba las 9 del catálogo a todos. En Impresora
+   * Color aparecían «moto lista» y las dos de cita, que no están creadas en su
+   * WABA: elegirlas fallaba con 132001 y el mensaje nunca salía.
+   */
+  rubro: string | null;
+  /**
    * CONTEXTO de la persona, para el panel lateral del rediseño.
    *
    * Sale todo de ed_contactos, que desde la migración 250 ya trae el total de
@@ -415,7 +423,7 @@ export async function obtenerConversacion(
       .eq("chat_id", chatId),
     // Solo el transporte: decide si la ventana de 24 h aplica. Es una consulta
     // suelta y liviana, así que viaja con el resto en vez de encadenarse.
-    supa.from("ed_clientes").select("transporte").eq("id", clienteId).maybeSingle(),
+    supa.from("ed_clientes").select("transporte, rubro").eq("id", clienteId).maybeSingle(),
   ]);
 
   if (!mensajes.length) return null;
@@ -438,6 +446,7 @@ export async function obtenerConversacion(
       : null,
     resultados: (resultados.data ?? []).map((r) => r.tipo as string),
     etiquetas: ((contacto.data?.etiquetas as string[] | null) ?? []),
+    rubro: (cliente.data?.rubro as string | null) ?? null,
     // Se calcula sin red, con lo que ya trajeron las consultas de arriba.
     ventana: ventanaDesde(
       cliente.data?.transporte as string | null,

@@ -33,6 +33,7 @@ function CompositorBase({
   subiendo,
   progreso,
   contacto,
+  rubro,
   enviarPlantilla,
   enviandoPlantilla,
 }: {
@@ -46,6 +47,8 @@ function CompositorBase({
   progreso: number;
   /** Nombre del contacto, para precargar la plantilla. */
   contacto: string;
+  /** Rubro del negocio: decide qué plantillas se ofrecen. */
+  rubro: string | null;
   enviarPlantilla: (nombre: string, params: string[]) => void;
   enviandoPlantilla: boolean;
 }) {
@@ -118,6 +121,7 @@ function CompositorBase({
 
       {conPlantilla && (
         <SelectorPlantilla
+          rubro={rubro}
           contacto={contacto}
           enviando={enviandoPlantilla}
           onCancelar={() => setConPlantilla(false)}

@@ -446,6 +446,7 @@ export default function PanelChat({
             mensajesIniciales={d.mensajes}
             modoInicial={d.modo}
             contacto={d.contacto}
+            rubro={d.rubro}
           />
           )}
         </>

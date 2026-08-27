@@ -3,7 +3,7 @@ import { obtenerUsuarioConPermiso } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { guardarMensaje } from "@/lib/mensajes";
 import { limitarDistribuido } from "@/lib/seguridad";
-import { PLANTILLAS, limpiarParam, render } from "@/lib/plantillas";
+import { PLANTILLAS, limpiarParam, plantillasParaRubro, render } from "@/lib/plantillas";
 import { enviarPlantilla } from "@/lib/whatsapp";
 import { restaurarControl, tomarControlTemporal, transporteSalida } from "@/lib/controlChat";
 
@@ -60,6 +60,36 @@ export async function POST(request: NextRequest) {
   const plantilla = PLANTILLAS[nombre];
   if (!plantilla) {
     return NextResponse.json({ ok: false, error: "Esa plantilla no existe" }, { status: 400 });
+  }
+
+  /**
+   * ⚠️ QUE LA PLANTILLA EXISTA EN EL CATÁLOGO NO SIGNIFICA QUE EXISTA EN SU WABA.
+   *
+   * Las plantillas se dan de alta **en el WABA de cada cliente**, y desde el
+   * 26-ago-2026 solo se crean las de su rubro. A una imprenta nunca se le crea
+   * `moto_lista`: pedirla acá saldría con el error 132001 de Meta, que dice
+   * «plantilla no encontrada» y no ayuda a entender por qué.
+   *
+   * La lista de la bandeja ya viene filtrada, pero esta validación va igual: una
+   * comprobación que solo vive en la interfaz no es una comprobación. Basta con
+   * una petición armada a mano para saltarla.
+   */
+  const { data: cli } = await db()
+    .from("ed_clientes")
+    .select("rubro")
+    .eq("id", usuario.clienteId)
+    .maybeSingle();
+  const permitidas = plantillasParaRubro((cli?.rubro as string | null) ?? null);
+  if (!permitidas.some((p) => p.nombre === nombre)) {
+    return NextResponse.json(
+      {
+        ok: false,
+        error:
+          "Esa plantilla no está dada de alta para este negocio. " +
+          "Solo salen las que corresponden a su rubro.",
+      },
+      { status: 400 },
+    );
   }
 
   /**

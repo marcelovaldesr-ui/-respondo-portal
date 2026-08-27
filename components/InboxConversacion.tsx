@@ -39,6 +39,7 @@ export default function InboxConversacion({
   modoInicial,
   rapidas,
   contacto,
+  rubro,
 }: {
   empleadoId: string;
   chatId: string;
@@ -49,6 +50,8 @@ export default function InboxConversacion({
   rapidas?: string[];
   /** Nombre del contacto: precarga el primer dato de las plantillas. */
   contacto?: string;
+  /** Rubro del negocio: decide qué plantillas se ofrecen (ver SelectorPlantilla). */
+  rubro?: string | null;
 }) {
   const {
     mensajes,
@@ -412,6 +415,7 @@ export default function InboxConversacion({
           subiendo={subiendo}
           progreso={progreso}
           contacto={contacto ?? ""}
+          rubro={rubro ?? null}
           enviarPlantilla={enviarPlantilla}
           enviandoPlantilla={enviandoPlantilla}
         />

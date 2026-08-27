@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { PLANTILLAS, render } from "@/lib/plantillas";
+import { PLANTILLAS, plantillasParaRubro, render } from "@/lib/plantillas";
 
 /**
  * MANDAR UNA PLANTILLA CUANDO LA CONVERSACIÓN ESTÁ FUERA DE PLAZO.
@@ -28,17 +28,27 @@ import { PLANTILLAS, render } from "@/lib/plantillas";
  */
 export function SelectorPlantilla({
   contacto,
+  rubro,
   onEnviar,
   onCancelar,
   enviando,
 }: {
   /** Nombre del contacto, para precargar el primer dato. */
   contacto: string;
+  /**
+   * Rubro del negocio. Decide QUÉ plantillas se ofrecen.
+   *
+   * ⚠️ Sin esto se mostraban las 9 del catálogo a todos. En Impresora Color
+   * aparecían «moto lista» y las dos de cita, que **no están creadas en su
+   * WABA**: elegirlas fallaba con 132001 y el mensaje no salía. Ofrecer algo que
+   * no puede funcionar es peor que no ofrecerlo.
+   */
+  rubro: string | null;
   onEnviar: (plantilla: string, params: string[]) => void;
   onCancelar: () => void;
   enviando: boolean;
 }) {
-  const opciones = useMemo(() => Object.values(PLANTILLAS), []);
+  const opciones = useMemo(() => plantillasParaRubro(rubro), [rubro]);
   const [elegida, setElegida] = useState<string>("");
   const plantilla = elegida ? PLANTILLAS[elegida] : null;
 
