@@ -104,3 +104,33 @@ de Gestión queda pendiente y es opcional** — el camino universal ya cubre el 
    avisar → en ≤5 min llega el mensaje (texto libre si la ventana está abierta).
 5. Webhook: `curl -X POST .../api/integraciones/pedidos` con las cabeceras y un
    chat_id real → `{"ok":true,"programado":"pedido_listo"}`.
+
+---
+
+## Ronda 2 (misma noche): endurecimiento y visibilidad
+
+**`lib/pedidosCore.ts` (8 tests).** La validación del webhook salió del endpoint a un
+módulo puro: teléfonos en cualquier formato («+56 9 1234-5678») se normalizan a
+dígitos, los tipos inventados se rechazan, y el `detalle` limpia saltos de línea —
+que dentro de una plantilla de Meta revientan con el error 132012. Un webhook que
+solo se puede probar contra producción no está probado.
+
+**Tarjeta «Cobros por WhatsApp» en Inicio.** El monto cobrado del mes y los
+pendientes, donde el dueño mira todos los días. Solo aparece si la función se usa:
+mostrar un $0 permanente a quien no cobra por acá sería ruido.
+
+**Sección «Puesta en marcha» en /whatsapp.** El checklist de onboarding calculado
+contra el estado REAL — cada ítem es una herida de agosto convertida en control:
+
+| Ítem | Cómo se verifica |
+|---|---|
+| Número conectado (Cloud API) | credenciales en la base |
+| Rubro del negocio | `ed_clientes.rubro` |
+| Plantillas del rubro | **consultadas en vivo contra Meta**, con chip por estado (approved/pending/rejected/no existe) |
+| Método de pago del WABA | ✋ manual — la API no lo expone, y el checklist LO DICE en vez de fingir |
+| Cobros por WhatsApp | `pago_link_base` |
+| Avisos al teléfono | dispositivos suscritos |
+
+La consulta a Meta lleva timeout de 8 s: la página no puede quedarse pegada porque
+Graph ande lento. Con esto, el estado de las plantillas ya no requiere correr el
+script: se ve en pantalla, también para el cliente.

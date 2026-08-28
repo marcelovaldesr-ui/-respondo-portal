@@ -4,6 +4,7 @@ import { secretoValido, limitarDistribuido } from "@/lib/seguridad";
 import { ipDeRequest } from "@/lib/reservasPublicas";
 import { programarSeguimiento } from "@/lib/seguimientos";
 import { plantillasParaRubro } from "@/lib/plantillas";
+import { validarCuerpoPedido } from "@/lib/pedidosCore";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 30;
@@ -69,25 +70,11 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ ok: false, error: "Credenciales inválidas" }, { status: 401 });
   }
 
-  const body = (await request.json().catch(() => null)) as {
-    chat_id?: string;
-    tipo?: string;
-    detalle?: string;
-  } | null;
-
-  const chatId = String(body?.chat_id ?? "").replace(/\D/g, "");
-  const tipo = String(body?.tipo ?? "");
-  const detalle = String(body?.detalle ?? "").trim().slice(0, 80) || "tu pedido";
-
-  if (!chatId || chatId.length < 8) {
-    return NextResponse.json({ ok: false, error: "chat_id inválido" }, { status: 400 });
-  }
-  if (tipo !== "pedido_listo" && tipo !== "encargo_llego") {
-    return NextResponse.json(
-      { ok: false, error: "tipo debe ser pedido_listo o encargo_llego" },
-      { status: 400 },
-    );
-  }
+  // Validación en `lib/pedidosCore.ts` (pura y con tests): todo lo que llega de
+  // un sistema externo es hostil hasta que se demuestre lo contrario.
+  const v = validarCuerpoPedido(await request.json().catch(() => null));
+  if (!v.ok) return NextResponse.json({ ok: false, error: v.error }, { status: 400 });
+  const { chatId, tipo, detalle } = v;
 
   // El rubro del cliente tiene que incluir estas plantillas: si no, el envío
   // fallaría después con 132001 y nadie entendería por qué.

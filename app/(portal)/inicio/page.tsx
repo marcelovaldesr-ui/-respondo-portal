@@ -15,6 +15,8 @@ import { ETIQUETA_TRIGGER } from "@/lib/conversaciones";
 import { contadoresMenu, oportunidadesAbiertas } from "@/lib/contadores";
 import { db } from "@/lib/db";
 import { estadoDeCupo, type EstadoCupo } from "@/lib/cupoConversaciones";
+import { resumenPagos } from "@/lib/pagos";
+import { formatearMonto } from "@/lib/pagosCore";
 import { metaEtapa } from "@/lib/embudo";
 import {
   resumenAhorro,
@@ -291,7 +293,7 @@ function ConsumoDelPlan({ estado }: { estado: EstadoCupo }) {
 
 export default async function Inicio() {
   const usuario = await exigirUsuarioPortal();
-  const [empleados, metricas, esperando, ahorro, oportunidades, abiertas, cupo] =
+  const [empleados, metricas, esperando, ahorro, oportunidades, abiertas, cupo, pagos] =
     await Promise.all([
       resumenEmpleados(usuario.clienteId),
       metricasCliente(usuario.clienteId),
@@ -299,7 +301,8 @@ export default async function Inicio() {
       resumenAhorro(usuario.clienteId, 30),
       contadoresMenu(usuario.clienteId),
       oportunidadesAbiertas(usuario.clienteId),
-      estadoDeCupo(usuario.clienteId, db()),
+      estadoDeCupo(usuario.clienteId, db()),      // Cobros del mes (migración 289). Si la tabla no existe: ceros, sin romper.
+      resumenPagos(usuario.clienteId).catch(() => ({ pendientes: 0, pagadosMes: 0, montoMes: 0 })),
     ]);
 
   const { actual, comparacion } = metricas;
@@ -603,6 +606,28 @@ export default async function Inicio() {
         {/* ── Columna derecha: estado del equipo ───────────────────────────
             Se consulta, no se acciona. Por eso va al costado y no arriba. */}
         <aside className="mt-8 lg:mt-8">
+      {/*
+        COBROS DEL MES (27-ago-2026): el número que el dueño quiere ver primero.
+        Solo aparece si la función se usa — cero filas = cero tarjeta, para no
+        mostrar un $0 permanente a quien no cobra por acá.
+      */}
+      {(pagos.pagadosMes > 0 || pagos.pendientes > 0) && (
+        <>
+          <h2 className="h-seccion mb-2.5">Cobros por WhatsApp</h2>
+          <div className="tarjeta mb-6 p-4">
+            <div className="cifra text-[22px] font-bold">{formatearMonto(pagos.montoMes)}</div>
+            <div className="text-[12.5px]" style={{ color: "var(--muted)" }}>
+              cobrado este mes · {pagos.pagadosMes} pago{pagos.pagadosMes === 1 ? "" : "s"}
+            </div>
+            {pagos.pendientes > 0 && (
+              <div className="mt-1.5 text-[12.5px]" style={{ color: "#92400E" }}>
+                {pagos.pendientes} cobro{pagos.pendientes === 1 ? "" : "s"} esperando pago
+              </div>
+            )}
+          </div>
+        </>
+      )}
+
       {cupo && cupo.cupo !== null && (
         <>
           <h2 className="h-seccion mb-2.5">Tu plan</h2>

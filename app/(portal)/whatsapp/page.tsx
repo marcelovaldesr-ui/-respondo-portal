@@ -1,5 +1,6 @@
 import { exigirPermisoPortal } from "@/lib/auth";
 import { db } from "@/lib/db";
+import { estadoConexion } from "@/lib/conexion";
 import ConectarWhatsApp from "@/components/ConectarWhatsApp";
 import { instagramConfigurado } from "@/lib/instagramOAuth";
 
@@ -43,6 +44,13 @@ export default async function PaginaWhatsApp({
 
   // Sirve cualquiera de las dos columnas: la cifrada (279) o la vieja en claro,
   // que sigue existiendo hasta que corra la 280.
+  /**
+   * PUESTA EN MARCHA (27-ago-2026): checklist calculado contra la base y
+   * contra Meta. Cada ítem es una herida real de agosto convertida en control:
+   * portafolio propio, método de pago, plantillas por rubro, rubro vacío.
+   */
+  const conexion = await estadoConexion(usuario.clienteId);
+
   const conectado = Boolean(
     data?.waba_id && data?.waba_phone_id && (data?.waba_token_cifrado || data?.waba_token),
   );
@@ -132,6 +140,118 @@ export default async function PaginaWhatsApp({
         La conexión usa el proceso oficial de Meta (Embedded Signup). Respondo
         nunca ve tu contraseña de Facebook.
       </p>
+
+
+      {/* ── Puesta en marcha ─────────────────────────────────────────────── */}
+
+      <div className="tarjeta mt-6 p-6">
+
+        <h2 className="text-[17px] font-bold">Puesta en marcha</h2>
+
+        <p className="mt-1 text-[13px]" style={{ color: "var(--muted)" }}>
+
+          Estado real de la conexión, consultado ahora. Verde = funciona; lo demás dice
+
+          exactamente qué falta y cómo se arregla.
+
+        </p>
+
+        <ul className="mt-4 space-y-3">
+
+          {conexion.items.map((it) => (
+
+            <li key={it.titulo} className="flex gap-2.5">
+
+              <span aria-hidden className="mt-0.5 text-[14px]">
+
+                {it.estado === "ok" ? "✅" : it.estado === "falta" ? "⛔" : it.estado === "manual" ? "✋" : "⚠️"}
+
+              </span>
+
+              <span className="min-w-0">
+
+                <span className="block text-[13.5px] font-semibold">{it.titulo}</span>
+
+                <span className="block text-[12.5px]" style={{ color: "var(--muted)" }}>
+
+                  {it.detalle}
+
+                </span>
+
+                {it.accion && it.estado !== "ok" && (
+
+                  <span className="mt-0.5 block text-[12px]" style={{ color: "var(--indigo)" }}>
+
+                    → {it.accion}
+
+                  </span>
+
+                )}
+
+              </span>
+
+            </li>
+
+          ))}
+
+        </ul>
+
+        {conexion.plantillas.length > 0 && !conexion.metaInaccesible && (
+
+          <div className="mt-4 border-t pt-3" style={{ borderColor: "var(--borde)" }}>
+
+            <div className="mb-1.5 text-[12px] font-semibold" style={{ color: "var(--muted-2)" }}>
+
+              Plantillas del rubro en Meta
+
+            </div>
+
+            <div className="flex flex-wrap gap-1.5">
+
+              {conexion.plantillas.map((p) => (
+
+                <span
+
+                  key={p.nombre}
+
+                  className="rounded-full px-2.5 py-1 text-[11px] font-medium"
+
+                  style={
+
+                    p.estado === "APPROVED"
+
+                      ? { background: "#DCFCE7", color: "#166534" }
+
+                      : p.estado === "PENDING"
+
+                        ? { background: "#FEF3C7", color: "#92400E" }
+
+                        : p.estado === "REJECTED"
+
+                          ? { background: "#FEE2E2", color: "#991B1B" }
+
+                          : { background: "#F3F4F6", color: "#6B7280" }
+
+                  }
+
+                  title={`${p.categoria} · ${p.estado}`}
+
+                >
+
+                  {p.nombre} · {p.estado === "NO_EXISTE" ? "no existe" : p.estado.toLowerCase()}
+
+                </span>
+
+              ))}
+
+            </div>
+
+          </div>
+
+        )}
+
+      </div>
+
 
       <BloqueInstagram
         conectado={Boolean(ig?.ig_user_id && ig?.ig_token_cifrado)}
