@@ -2,6 +2,8 @@ import { db } from "@/lib/db";
 import { ultimosMensajes, type MensajeInbox } from "@/lib/inboxConsulta";
 import { empleadosDeCliente } from "@/lib/empleadosCache";
 import { ventanaDesde } from "@/lib/ventana24Regla";
+import { pagosDeChat, type Pago } from "@/lib/pagos";
+import { plantillasParaRubro } from "@/lib/plantillas";
 
 /**
  * Datos de la pantalla de Conversaciones. Solo lectura en v1: el portal no
@@ -57,6 +59,10 @@ export type DetalleConversacion = {
    * WABA: elegirlas fallaba con 132001 y el mensaje nunca salía.
    */
   rubro: string | null;
+  /** Cobros de esta conversación (migración 289). Vacío si no hay o falta la tabla. */
+  pagos: Pago[];
+  /** Si el rubro usa avisos de pedido (imprenta/tienda): muestra el botón. */
+  puedeAvisarPedido: boolean;
   /**
    * CONTEXTO de la persona, para el panel lateral del rediseño.
    *
@@ -383,7 +389,7 @@ export async function obtenerConversacion(
    * Ahora el transporte viaja en paralelo, la fila de estado se pide UNA vez con
    * las dos columnas, y la ventana se calcula sin red con `ventanaDesde`.
    */
-  const [mensajes, contacto, estado, escalacion, resultados, cliente] = await Promise.all([
+  const [mensajes, contacto, estado, escalacion, resultados, cliente, pagos] = await Promise.all([
     /**
      * Tramo reciente, con id, adjunto y estado de entrega.
      *
@@ -424,6 +430,12 @@ export async function obtenerConversacion(
     // Solo el transporte: decide si la ventana de 24 h aplica. Es una consulta
     // suelta y liviana, así que viaja con el resto en vez de encadenarse.
     supa.from("ed_clientes").select("transporte, rubro").eq("id", clienteId).maybeSingle(),
+    /**
+     * Cobros del chat (migración 289). `catch` propio: si la migración no está
+     * aplicada, la tabla no existe y eso NO puede tumbar la conversación —
+     * simplemente no se muestran pagos. Mismo criterio de rollout que la 273.
+     */
+    pagosDeChat({ clienteId, chatId, supa }).catch(() => [] as Pago[]),
   ]);
 
   if (!mensajes.length) return null;
@@ -447,6 +459,10 @@ export async function obtenerConversacion(
     resultados: (resultados.data ?? []).map((r) => r.tipo as string),
     etiquetas: ((contacto.data?.etiquetas as string[] | null) ?? []),
     rubro: (cliente.data?.rubro as string | null) ?? null,
+    pagos,
+    puedeAvisarPedido: plantillasParaRubro((cliente.data?.rubro as string | null) ?? null).some(
+      (p) => p.nombre === "pedido_listo",
+    ),
     // Se calcula sin red, con lo que ya trajeron las consultas de arriba.
     ventana: ventanaDesde(
       cliente.data?.transporte as string | null,

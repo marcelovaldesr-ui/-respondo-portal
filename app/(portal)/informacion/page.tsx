@@ -1,6 +1,8 @@
 import { exigirPermisoPortal } from "@/lib/auth";
 import { listarFichas, listarCorrecciones, type Ficha } from "@/lib/conocimiento";
 import { CATEGORIAS, PLANTILLAS } from "@/lib/plantillasRubro";
+import { guardarLinkPago } from "./accionesPago";
+import { linkDePago } from "@/lib/pagos";
 import {
   crearFicha,
   actualizarFicha,
@@ -77,9 +79,12 @@ function TarjetaFicha({ f }: { f: Ficha }) {
 
 export default async function Informacion() {
   const usuario = await exigirPermisoPortal("editar_conocimiento");
-  const [fichas, correcciones] = await Promise.all([
+  const [fichas, correcciones, pago] = await Promise.all([
     listarFichas(usuario.clienteId),
     listarCorrecciones(usuario.clienteId),
+    // Enlace de pago (migración 289). Si la columna no existe aún, null y la
+    // tarjeta simplemente muestra el campo vacío.
+    linkDePago(usuario.clienteId).catch(() => ({ link: null, nombre: "" })),
   ]);
 
   const vigentes = fichas.filter((f) => f.vigente).length;
@@ -104,6 +109,36 @@ export default async function Informacion() {
             {fichas.length - vigentes} apagadas
           </span>
         )}
+      </div>
+
+      {/*
+        ENLACE DE PAGO (26-ago-2026) — la única configuración del cobro en
+        conversación. Con esto puesto, el botón «Cobrar» de la bandeja manda el
+        enlace del negocio con una referencia y deja el registro con estado.
+        Vacío = la función está apagada para este negocio.
+      */}
+      <div className="tarjeta mt-7 p-5">
+        <h2 className="text-[16px] font-bold">Cobros por WhatsApp</h2>
+        <p className="mt-1 text-[13.5px]" style={{ color: "var(--muted)" }}>
+          Pega el enlace de pago de tu negocio (Mercado Pago, Flow, Getnet…). Con esto, desde
+          cualquier conversación puedes enviar un cobro con monto y referencia, y marcarlo
+          pagado cuando llegue la plata.
+        </p>
+        <form action={guardarLinkPago} className="mt-3 flex flex-wrap gap-2">
+          <input
+            name="link"
+            defaultValue={pago.link ?? ""}
+            placeholder="https://mpago.la/tu-negocio"
+            className="campo min-w-[260px] flex-1"
+            inputMode="url"
+          />
+          <button className="btn-primario px-4">Guardar</button>
+        </form>
+        <p className="mt-2 text-[12px]" style={{ color: "var(--muted-2)" }}>
+          {pago.link
+            ? "Cobros activados. Deja el campo vacío y guarda para apagarlos."
+            : "Sin enlace, el botón Cobrar de la bandeja está apagado."}
+        </p>
       </div>
 
       {/* Agregar */}

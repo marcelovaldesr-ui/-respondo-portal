@@ -9,6 +9,7 @@ import { ETIQUETA_RESULTADO, ETIQUETA_TRIGGER, type DetalleConversacion } from "
 import { metaEtapa } from "@/lib/embudo";
 import { useSeleccionChat } from "./SeleccionChat";
 import { clave as claveDe, guardar, leer, olvidar, traer } from "./cacheDetalle";
+import { AvisarPedido, PagosCard } from "./PagosCard";
 
 /**
  * LA COLUMNA DEL CHAT, DEL LADO DEL CLIENTE.
@@ -513,6 +514,14 @@ export default function PanelChat({
           <Rotulo>Etiquetas</Rotulo>
           <EtiquetasEditor chatId={d.chatId} etiquetas={d.etiquetas} />
         </div>
+
+        {/* Cobros del chat (migración 289). La tarjeta no se dibuja si no hay. */}
+        <PagosCard pagos={d.pagos} />
+
+        {/* Aviso de pedido listo: solo rubros que entregan (imprenta/tienda). */}
+        {d.puedeAvisarPedido && (
+          <AvisarPedido empleadoId={empleadoId!} chatId={d.chatId} />
+        )}
 
         <div className="tarjeta p-3.5">
           <Rotulo>Contexto</Rotulo>

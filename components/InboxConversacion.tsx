@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState, useTransition } from "react";
 import { responderComoHumano, cambiarModo } from "@/app/(portal)/conversaciones/acciones";
 import { Burbuja } from "@/components/inbox/Burbuja";
 import { Compositor } from "@/components/inbox/Compositor";
+import { Cobro } from "@/components/inbox/Cobro";
 import { useMensajesEnVivo } from "@/components/inbox/useMensajesEnVivo";
 import type { MensajeUI } from "@/components/inbox/tipos";
 
@@ -405,7 +406,15 @@ export default function InboxConversacion({
       )}
 
       <div className="mt-4">
-        <Compositor
+        {/*
+        COBRAR EN LA CONVERSACIÓN (26-ago-2026). Va acá y no dentro del
+        compositor para no engordar un componente que ya está memoizado por
+        rendimiento. El mensaje del cobro aparece en el chat por el stream.
+      */}
+      <div className="mb-2 flex justify-end">
+        <Cobro empleadoId={empleadoId} chatId={chatId} />
+      </div>
+      <Compositor
           enviarTexto={enviarTexto}
           enviarArchivo={enviarArchivo}
           ventana={ventana}
