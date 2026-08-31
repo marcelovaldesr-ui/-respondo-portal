@@ -132,6 +132,23 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ ok: false, error: "El cliente no tiene asistente activo" }, { status: 422 });
   }
 
+  /**
+   * ⚠️ IDEMPOTENCIA (auditoría 27-ago): los sistemas externos REINTENTAN — es
+   * la norma de los webhooks, no la excepción. Sin esto, cada reintento era
+   * otro «tu pedido está listo» al cliente final. Se responde ok para que el
+   * emisor deje de reintentar: para él no es un error.
+   */
+  const { data: enCola } = await supa
+    .from("ed_seguimientos")
+    .select("id")
+    .eq("empleado_id", tino.id as string)
+    .eq("chat_id", chatId)
+    .eq("tipo", tipo)
+    .is("enviado_en", null)
+    .limit(1)
+    .maybeSingle();
+  if (enCola) return NextResponse.json({ ok: true, omitido: "ya hay un aviso en cola" });
+
   const r = await programarSeguimiento({
     empleadoId: tino.id as string,
     chatId,

@@ -86,8 +86,11 @@ export async function estadoConexion(clienteId: string): Promise<EstadoConexion>
       .select("id", { count: "exact", head: true })
       .eq("cliente_id", clienteId)
       .then(
-        (r) => r.count ?? 0,
-        () => null, // migración 283 sin aplicar: no verificable, no rojo
+        // ⚠️ supabase-js NO rechaza en error de consulta: viene en r.error. Sin
+        // esta rama, una tabla inexistente se reportaba como «0 dispositivos» —
+        // un dato plausible y falso, la clase de mentira que ya nos mordió.
+        (r) => (r.error ? null : (r.count ?? 0)),
+        () => null,
       ),
   ]);
 

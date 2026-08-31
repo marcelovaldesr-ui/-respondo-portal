@@ -114,10 +114,31 @@ export async function generarSeguimientosCotizacion(
      * reduce en memoria, igual que se arregló el N+1 de `seguimientos.ts`.
      */
     const chatIds = contactos.map((c) => c.chat_id as string);
+
+    /**
+     * 🔴 BUG CAZADO EN AUDITORÍA (27-ago): acá decía `eq("empleado_id", betoId)`.
+     *
+     * La conversación de cotización vive en el hilo de TINO — el de Beto está
+     * vacío hasta que él manda algo. Leer solo su hilo dejaba `ultimoRol` en
+     * null para todos, y la protección «si el cliente habló último, no se le
+     * escribe» NUNCA se activaba: Beto podía insistirle a alguien que había
+     * respondido hace una hora. Los tests de la regla pura pasaban porque el
+     * bug estaba en la plomería, no en la regla.
+     *
+     * Se leen los mensajes de TODOS los empleados del cliente: para el cliente
+     * final es una sola conversación con el negocio, venga de quien venga.
+     */
+    const { data: empsTodos } = await supa
+      .from("ed_empleados")
+      .select("id")
+      .eq("cliente_id", clienteId)
+      .limit(20);
+    const empIds = (empsTodos ?? []).map((e) => e.id as string);
+
     const { data: mensajes } = await supa
       .from("ed_mensajes")
       .select("chat_id, rol, creado_en")
-      .eq("empleado_id", betoId)
+      .in("empleado_id", empIds.length ? empIds : [betoId])
       .in("chat_id", chatIds)
       .gte("creado_en", desde)
       .order("creado_en", { ascending: true })

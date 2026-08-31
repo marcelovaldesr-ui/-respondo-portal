@@ -103,6 +103,18 @@ export function decidirCotizacion(
     return { enviar: false, motivo: "el cliente habló último: le toca al negocio" };
   }
 
+  /**
+   * ⚠️ FAIL-CLOSED (auditoría 27-ago): sin dato de quién habló último, NO se
+   * envía. Este es un mensaje de MARKETING pagado; ante una anomalía de datos,
+   * el error barato es no mandar. El bug de plomería que dejaba esto en null
+   * para todos habría hecho que la regla anterior jamás se activara — con esta
+   * barrera, ese mismo bug habría resultado en CERO envíos en vez de envíos
+   * indebidos, que es exactamente el lado correcto donde fallar.
+   */
+  if (c.ultimoRol === null || c.ultimoRol === undefined) {
+    return { enviar: false, motivo: "sin dato de quién habló último: no se arriesga" };
+  }
+
   if (!c.ultimoMensajeEn) return { enviar: false, motivo: "sin fecha del último mensaje" };
   const t = new Date(c.ultimoMensajeEn).getTime();
   if (!Number.isFinite(t)) return { enviar: false, motivo: "fecha inválida" };

@@ -8,6 +8,7 @@ import { enviarTexto } from "@/lib/whatsapp";
 import { enviarTextoWaha } from "@/lib/waha";
 import { cuentaIgDeCliente, enviarTextoInstagram } from "@/lib/instagram";
 import { restaurarControl, tomarControlTemporal, transporteSalida } from "@/lib/controlChat";
+import { ventanaAbierta } from "@/lib/ventana24";
 import { mensajeDeCobro, validarCobro, type EstadoPago } from "@/lib/pagosCore";
 import { cambiarEstadoPago, crearPago, linkDePago } from "@/lib/pagos";
 import { programarSeguimiento } from "@/lib/seguimientos";
@@ -75,6 +76,34 @@ export async function cobrarEnChat(formData: FormData): Promise<{
   ]);
   if (!empleado || !contacto) return { ok: false, error: "Sin acceso a este chat" };
 
+  /**
+   * ⚠️ VENTANA DE 24 H ANTES DE CREAR NADA (auditoría 27-ago).
+   *
+   * El cobro sale como texto libre. En Cloud, fuera de la ventana Meta lo
+   * rechaza con el 131047 — el rollback ya funcionaba (fila borrada), pero la
+   * persona veía el error crudo del proveedor DESPUÉS de llenar el formulario.
+   * Chequear acá convierte eso en una explicación clara antes de tocar nada.
+   * Se usa `ventanaAbierta` (por NÚMERO, todos los empleados), no la regla por
+   * hilo — misma distinción que en el vigilante de abandonadas.
+   */
+  const esInstagram = chatId.startsWith("ig:");
+  let transporte: Awaited<ReturnType<typeof transporteSalida>> | null = null;
+  if (!esInstagram) {
+    transporte = await transporteSalida(usuario.clienteId);
+    if (transporte.tipo === "error") return { ok: false, error: transporte.error };
+    if (transporte.tipo === "cloud") {
+      const abierta = await ventanaAbierta({ clienteId: usuario.clienteId, chatId, supa });
+      if (!abierta) {
+        return {
+          ok: false,
+          error:
+            "La conversación está fuera de las 24 h de WhatsApp: el cobro no llegaría. " +
+            "Retómala primero con una plantilla y cobra cuando el cliente responda.",
+        };
+      }
+    }
+  }
+
   const creado = await crearPago({
     clienteId: usuario.clienteId,
     empleadoId,
@@ -104,8 +133,8 @@ export async function cobrarEnChat(formData: FormData): Promise<{
   }
 
   // Mismo ruteo de canal que responderComoHumano (incluido el bug de Instagram
-  // del 17-ago: un chat ig: mandado por WhatsApp muere en silencio).
-  const esInstagram = chatId.startsWith("ig:");
+  // del 17-ago: un chat ig: mandado por WhatsApp muere en silencio). El
+  // transporte ya se resolvió arriba, junto con el chequeo de ventana.
   let envio: { ok: boolean; waId?: string; error?: string };
   if (esInstagram) {
     const cuenta = await cuentaIgDeCliente(usuario.clienteId);
@@ -115,17 +144,10 @@ export async function cobrarEnChat(formData: FormData): Promise<{
       return { ok: false, error: "Este negocio no tiene Instagram conectado" };
     }
     envio = await enviarTextoInstagram(cuenta, chatId.slice(3), texto, { sinEspera: true });
+  } else if (transporte!.tipo === "cloud") {
+    envio = await enviarTexto(transporte!.config, chatId, texto, { sinEspera: true });
   } else {
-    const transporte = await transporteSalida(usuario.clienteId);
-    if (transporte.tipo === "error") {
-      await restaurarControl(supa, empleadoId, chatId, control);
-      await deshacer();
-      return { ok: false, error: transporte.error };
-    }
-    envio =
-      transporte.tipo === "cloud"
-        ? await enviarTexto(transporte.config, chatId, texto, { sinEspera: true })
-        : await enviarTextoWaha(chatId, texto, { clienteId: usuario.clienteId });
+    envio = await enviarTextoWaha(chatId, texto, { clienteId: usuario.clienteId });
   }
 
   if (!envio.ok) {
@@ -211,6 +233,23 @@ export async function avisarPedidoListo(formData: FormData): Promise<{
     .eq("chat_id", chatId)
     .maybeSingle();
   if (!contacto) return { ok: false, error: "Sin acceso a este chat" };
+
+  /**
+   * ⚠️ IDEMPOTENCIA (auditoría 27-ago): `programarSeguimiento` NO deduplica —
+   * el punto manual de clientes/acciones lo chequea aparte, y acá faltaba. Sin
+   * esto, tocar el botón dos veces (o volver al chat y repetir) = DOS «tu
+   * pedido está listo» al mismo cliente, con cinco minutos de diferencia.
+   */
+  const { data: enCola } = await supa
+    .from("ed_seguimientos")
+    .select("id")
+    .eq("empleado_id", empleadoId)
+    .eq("chat_id", chatId)
+    .eq("tipo", "pedido_listo")
+    .is("enviado_en", null)
+    .limit(1)
+    .maybeSingle();
+  if (enCola) return { ok: true }; // ya está en cola: repetirlo no aporta
 
   const r = await programarSeguimiento({
     empleadoId,

@@ -52,6 +52,15 @@ test("⭐⭐ si el CLIENTE habló último, no se le escribe", () => {
   assert.equal(v.enviar, false);
 });
 
+test("⭐⭐ FAIL-CLOSED: sin dato de quién habló último, NO se envía", () => {
+  // Es plata (marketing ~$85). Ante una anomalía de datos, el error barato es
+  // no mandar. Cazado en auditoría: un bug de plomería dejaba esto en null para
+  // todos y la protección anterior jamás se activaba.
+  for (const rol of [null, undefined]) {
+    assert.equal(decidirCotizacion({ ...BASE, ultimoRol: rol }, AHORA).enviar, false, String(rol));
+  }
+});
+
 test("no se persigue a quien ya compró ni a quien dijo que no", () => {
   for (const etapa of ["ganado", "perdido"]) {
     assert.equal(decidirCotizacion({ ...BASE, etapa }, AHORA).enviar, false, etapa);

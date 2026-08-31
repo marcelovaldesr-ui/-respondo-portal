@@ -196,7 +196,10 @@ export async function listarPagos(p: {
     estado: f.estado as EstadoPago,
     creadoEn: f.creado_en as string,
     pagadoEn: (f.pagado_en as string | null) ?? null,
-    contacto: nombreDe.get(f.chat_id as string) || `+${f.chat_id}`,
+    // Un chat de Instagram no es un teléfono: «+ig:1436…» confundiría.
+    contacto:
+      nombreDe.get(f.chat_id as string) ||
+      ((f.chat_id as string).startsWith("ig:") ? "Instagram" : `+${f.chat_id}`),
   }));
 }
 
