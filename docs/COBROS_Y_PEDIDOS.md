@@ -134,3 +134,9 @@ contra el estado REAL — cada ítem es una herida de agosto convertida en contr
 La consulta a Meta lleva timeout de 8 s: la página no puede quedarse pegada porque
 Graph ande lento. Con esto, el estado de las plantillas ya no requiere correr el
 script: se ve en pantalla, también para el cliente.
+
+**Página /cobros (misma noche).** La vista global del dinero, en el menú Vender: la
+tarjeta de Inicio dice CUÁNTO, esta dice QUIÉN. Filtro por defecto en pendientes —es
+la lista de trabajo—, marcar pagado/anular desde la fila, y «Ver chat →» salta a la
+conversación exacta. El nombre del contacto se resuelve con dos consultas y unión en
+memoria: ni join implícito de PostgREST (11 días de agenda vacía) ni N+1.

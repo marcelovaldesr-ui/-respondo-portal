@@ -20,6 +20,7 @@ const Icono = {
   ),
   analitica: <path d="M4 20V10m5 10V4m5 16v-7m5 7V8" />,
   embudo: <path d="M3 5h18l-7 8v6l-4 2v-8z" />,
+  cobros: <path d="M12 3v18M8 7.5C8 6 9.5 5 12 5s4 1 4 2.5S14.5 10 12 10s-4 1-4 2.5S9.5 15 12 15s4-1 4-2.5M8 16.5C8 18 9.5 19 12 19" />,
   clientes: <path d="M16 20v-1.5a3.5 3.5 0 0 0-3.5-3.5h-5A3.5 3.5 0 0 0 4 18.5V20M10 11.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7zM20 20v-1.5a3.5 3.5 0 0 0-2.6-3.4M15.5 4.8a3.5 3.5 0 0 1 0 6.4" />,
   informe: (
     <path d="M9 4h6a1 1 0 0 1 1 1v1h2a1 1 0 0 1 1 1v13a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h2V5a1 1 0 0 1 1-1zM9 12h6M9 16h4" />
@@ -69,6 +70,7 @@ const GRUPOS: { titulo: string; items: ItemMenu[] }[] = [
     items: [
       { href: "/embudo", label: "Embudo", icono: Icono.embudo, contador: "porCerrar" },
       { href: "/clientes", label: "Clientes", icono: Icono.clientes },
+      { href: "/cobros", label: "Cobros", icono: Icono.cobros },
     ],
   },
   {

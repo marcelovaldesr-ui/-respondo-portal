@@ -149,6 +149,57 @@ export async function pagosDeChat(p: {
   }));
 }
 
+/** Fila del listado global de /cobros: el pago más quién es la persona. */
+export type PagoListado = Pago & { empleadoId: string; contacto: string };
+
+/**
+ * Listado global de cobros del negocio, con el nombre del contacto resuelto.
+ *
+ * Dos consultas y una unión en memoria — nunca un join implícito de PostgREST
+ * (el join ambiguo de la agenda costó 11 días de pantalla vacía) ni una consulta
+ * por fila (el N+1 de seguimientos). `limit` explícito: PostgREST corta en 1.000
+ * sin avisar.
+ */
+export async function listarPagos(p: {
+  clienteId: string;
+  estado?: EstadoPago | "todos";
+  supa?: SupabaseClient;
+}): Promise<PagoListado[]> {
+  const supa = p.supa ?? db();
+  let q = supa
+    .from("ed_pagos")
+    .select("id, empleado_id, chat_id, referencia, monto, concepto, estado, creado_en, pagado_en")
+    .eq("cliente_id", p.clienteId)
+    .order("creado_en", { ascending: false })
+    .limit(200);
+  if (p.estado && p.estado !== "todos") q = q.eq("estado", p.estado);
+  const { data } = await q;
+  const filas = data ?? [];
+  if (!filas.length) return [];
+
+  const chatIds = [...new Set(filas.map((f) => f.chat_id as string))];
+  const { data: contactos } = await supa
+    .from("ed_contactos")
+    .select("chat_id, nombre")
+    .eq("cliente_id", p.clienteId)
+    .in("chat_id", chatIds)
+    .limit(500);
+  const nombreDe = new Map((contactos ?? []).map((c) => [c.chat_id as string, (c.nombre as string | null) ?? ""]));
+
+  return filas.map((f) => ({
+    id: f.id as string,
+    empleadoId: f.empleado_id as string,
+    chatId: f.chat_id as string,
+    referencia: f.referencia as string,
+    monto: f.monto as number,
+    concepto: f.concepto as string,
+    estado: f.estado as EstadoPago,
+    creadoEn: f.creado_en as string,
+    pagadoEn: (f.pagado_en as string | null) ?? null,
+    contacto: nombreDe.get(f.chat_id as string) || `+${f.chat_id}`,
+  }));
+}
+
 /**
  * Resumen para el panel de inicio: cuánto se cobró este mes y cuánto espera.
  * Con `count/head` y sumas acotadas — nunca el patrón de las 1.000 filas.
