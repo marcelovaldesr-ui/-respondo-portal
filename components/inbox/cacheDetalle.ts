@@ -35,7 +35,16 @@ const memoria = new Map<string, DetalleConversacion>();
 /** Peticiones en curso, para no pedir dos veces lo mismo al pasar el mouse. */
 const enVuelo = new Map<string, Promise<DetalleConversacion | null>>();
 
-const PREFIJO = "respondo:chat:";
+/**
+ * ⚠️ LA VERSIÓN EN EL PREFIJO INVALIDA EL CACHÉ VIEJO EN CADA CAMBIO DE FORMA.
+ *
+ * sessionStorage sobrevive al deploy. Cuando `DetalleConversacion` gana campos
+ * (pagos, rubro, puedeAvisarPedido…), lo guardado con la forma anterior queda
+ * incompleto y puede romper componentes que asumen el campo nuevo. Subir la
+ * versión acá hace que lo viejo simplemente no se encuentre y se vuelva a pedir.
+ * Súbela cada vez que cambies el tipo del detalle.
+ */
+const PREFIJO = "respondo:chat:v2:";
 /**
  * Cuánto se acepta de sessionStorage. Diez minutos: pasado eso, la conversación
  * pudo cambiar tanto que mostrarla completa antes de refrescar sería confuso.

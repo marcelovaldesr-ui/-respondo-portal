@@ -20,8 +20,15 @@ const ETIQUETA: Record<Pago["estado"], { txt: string; color: string; fondo: stri
   anulado: { txt: "anulado", color: "#6B7280", fondo: "#F3F4F6" },
 };
 
-export function PagosCard({ pagos: iniciales }: { pagos: Pago[] }) {
-  const [pagos, setPagos] = useState(iniciales);
+export function PagosCard({ pagos: iniciales }: { pagos: Pago[] | undefined }) {
+  /**
+   * ⚠️ `?? []` NO ES PARANOIA (auditoría 27-ago, 2ª pasada): el detalle de la
+   * conversación se cachea en sessionStorage por 10 minutos y SOBREVIVE AL
+   * DEPLOY. Un detalle guardado con la forma anterior no trae `pagos`, y
+   * `undefined.length` habría roto la pantalla justo después de desplegar —
+   * para todos los que tenían el portal abierto, que es cuando peor se ve.
+   */
+  const [pagos, setPagos] = useState(iniciales ?? []);
   const [error, setError] = useState<string | null>(null);
   const [ocupado, setOcupado] = useState<string | null>(null);
 
@@ -167,7 +174,8 @@ export function AvisarPedido({
       </div>
       {estado === "listo" ? (
         <p className="text-[12.5px]" style={{ color: "var(--ok, #15803D)" }}>
-          ✓ Aviso programado. Sale en los próximos minutos por el canal que corresponda.
+          ✓ Aviso programado. Sale en minutos dentro del horario hábil — si es de
+          noche o fin de semana, parte a primera hora.
         </p>
       ) : (
         <>

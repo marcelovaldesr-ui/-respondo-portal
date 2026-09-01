@@ -103,3 +103,42 @@ Cosmético pero confuso: un IGSID no es un teléfono. Fallback → «Instagram»
 5. **`pedido_listo` desde el webhook/botón mantiene un aviso en cola a la vez.** Para
    avisar dos pedidos distintos el mismo día al mismo cliente, el segundo sale cuando
    el primero ya se envió (minutos). Caso raro; si aparece, se afina.
+
+---
+
+## Segunda pasada (misma noche): los supuestos sobre código ajeno
+
+La primera pasada atacó lo construido; esta verificó **lo que se asumió** del código
+existente — donde viven los bugs que ninguna pasada sobre lo propio encuentra.
+
+### Verificado con evidencia (sin cambios)
+
+- **`programarSeguimiento` renderiza el texto desde el cuerpo de la plantilla** y lo
+  guarda en `variables.texto`; rechaza parámetros vacíos ANTES de insertar. El temor
+  de un «mensaje vacío con la ventana abierta» era infundado.
+- **El tope diario del motor es POR CLIENTE** (no global): las cotizaciones de un
+  cliente no pueden comerse el cupo de recordatorios de otro.
+- `tomarControlTemporal` devuelve el modo anterior; el flujo de cobro lo usa igual
+  que responder a mano. `exigirPermisoPortal` existe y entrega el clienteId.
+- Los tres injertos de JSX (Puesta en marcha, botón Cobrar, tarjetas del panel)
+  quedaron en la rama del árbol correcta; la idempotencia del botón usa el `supa` ya
+  definido.
+
+### Hallazgos arreglados en esta pasada
+
+- 🔴 **El caché del navegador sobrevive al deploy con la forma VIEJA del detalle.**
+  `sessionStorage` guarda `DetalleConversacion` por 10 minutos; un detalle cacheado
+  antes del deploy no trae `pagos`, y `undefined.length` en PagosCard habría roto la
+  pantalla **justo después de desplegar, para todos los que tenían el portal
+  abierto** — el peor momento posible. Doble arreglo: la clave del caché ahora lleva
+  versión (`v2`, lo viejo simplemente no se encuentra) y el componente tolera
+  `undefined`. Regla nueva: **cada cambio de forma del detalle sube la versión**.
+- 🟡 El éxito del aviso de pedido decía «sale en los próximos minutos» — de noche es
+  falso: el motor respeta horario hábil. Ahora lo dice.
+
+### Límite conocido nuevo (aceptado)
+
+6. **Dentro de un mismo cliente, cotizaciones, citas y pedidos comparten el tope
+   diario del motor (15).** Un cliente con agenda intensa + cotizaciones encendidas
+   podría desplazar recordatorios. Hoy nadie tiene ambas cosas activas; se afina con
+   datos reales, no con supuestos.
