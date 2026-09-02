@@ -3,6 +3,7 @@ import { obtenerUsuarioConPermiso } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { mediaDeMensajeWaha, reanclarUrlWaha } from "@/lib/waha";
 import { configPorCliente, resolverMediaMeta, hostDeMediaPermitido } from "@/lib/whatsapp";
+import { clienteDeFirmaExterna } from "@/lib/externo";
 
 export const dynamic = "force-dynamic";
 // La resolución bajo demanda puede requerir que WAHA descargue el archivo
@@ -37,11 +38,26 @@ export const maxDuration = 30;
  * podían ver** salvo en el único negocio que quedó en WAHA.
  */
 export async function GET(request: NextRequest) {
-  const usuario = await obtenerUsuarioConPermiso("operar_conversaciones");
-  if (!usuario) return new NextResponse("Sesión no válida", { status: 401 });
-
   const id = new URL(request.url).searchParams.get("id") ?? "";
   if (!id) return new NextResponse("Falta id", { status: 400 });
+
+  /**
+   * DOS PUERTAS DE ENTRADA, UN SOLO ARCHIVO.
+   *
+   * La de siempre es la sesión del portal. La segunda es para los negocios que
+   * miran sus conversaciones desde su propio sistema: su servidor firma la
+   * cadena `id=<id>` con el secreto del puente y manda el negocio en una
+   * cabecera. Sin esta segunda puerta, la persona vería en su app que el
+   * cliente mandó una imagen pero no podría abrirla — y en una imprenta la
+   * imagen ES el pedido, así que volvería al portal para cada diseño.
+   *
+   * Se prueba primero la firma porque no cuesta nada cuando no viene: si no hay
+   * cabecera, devuelve null de inmediato y se sigue por el camino normal.
+   */
+  const clienteExterno = await clienteDeFirmaExterna(request, `id=${id}`);
+  const usuario = clienteExterno ? null : await obtenerUsuarioConPermiso("operar_conversaciones");
+  const clienteId = clienteExterno ?? usuario?.clienteId ?? null;
+  if (!clienteId) return new NextResponse("Sesión no válida", { status: 401 });
 
   const supa = db();
 
@@ -56,7 +72,7 @@ export async function GET(request: NextRequest) {
 
   const clienteDelMensaje = (msg as { ed_empleados?: { cliente_id?: string } } | null)
     ?.ed_empleados?.cliente_id;
-  if (!msg || clienteDelMensaje !== usuario.clienteId) {
+  if (!msg || clienteDelMensaje !== clienteId) {
     return new NextResponse("No encontrado", { status: 404 });
   }
 
@@ -126,7 +142,7 @@ export async function GET(request: NextRequest) {
   if (guardado.startsWith("meta:")) {
     // ── Cloud API ────────────────────────────────────────────────────────────
     const mediaId = guardado.slice("meta:".length);
-    const cfg = await configPorCliente(usuario.clienteId);
+    const cfg = await configPorCliente(clienteId);
     if (!cfg) return new NextResponse("Sin WhatsApp configurado", { status: 409 });
 
     const res = await resolverMediaMeta(cfg, mediaId);
