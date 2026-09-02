@@ -15,6 +15,8 @@ import {
   actualizarEstadoEnvio,
 } from "@/lib/mensajes";
 import { modoDe, setModo, tocarVentanaEntrante } from "@/lib/estadoChat";
+import { cerrarEscalacionesPendientes } from "@/lib/escalaciones";
+import { idsEmpleadosDeCliente } from "@/lib/empleadosCache";
 import { responderSiBot } from "@/lib/responderBot";
 import { empleadoParaEntrante } from "@/lib/seguimientos";
 import { fechaLimiteModelo } from "@/lib/presupuesto";
@@ -106,7 +108,7 @@ export async function manejarEntranteMeta(
       resultados.push({ accion: "eco_sin_cliente", detalle: eco.phoneNumberId });
       continue;
     }
-    const { empleadoId } = ctx;
+    const { empleadoId, cfg: cfgEco } = ctx;
     const chatId = eco.para;
 
     // Eco de un envío propio (API o inbox del portal): id ya guardado o texto
@@ -157,6 +159,17 @@ export async function manejarEntranteMeta(
       canal: "whatsapp",
     });
     await setModo(empleadoId, chatId, "humano", supa);
+    /**
+     * Una PERSONA le escribió al cliente: eso ES atender. La escalación se
+     * cierra acá igual que cuando responde desde el portal; si no, "te
+     * espera" quedaba encendido para siempre (2-sep-2026, ver escalaciones.ts).
+     * Por chat, no por empleado: la derivación pudo abrirla Beto o Vera.
+     */
+    await cerrarEscalacionesPendientes(supa, {
+      empleadoIds: await idsEmpleadosDeCliente(cfgEco.clienteId),
+      chatId,
+      clienteId: cfgEco.clienteId,
+    });
     resultados.push({ accion: "toma_humana" });
   }
 

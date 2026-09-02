@@ -6,6 +6,7 @@ import { cuentaIgDeCliente, enviarTextoInstagram } from "@/lib/instagram";
 import { guardarMensaje } from "@/lib/mensajes";
 import { limitarDistribuido } from "@/lib/seguridad";
 import { restaurarControl, tomarControlTemporal, transporteSalida, type Modo } from "@/lib/controlChat";
+import { cerrarEscalacionesPendientes } from "@/lib/escalaciones";
 
 /**
  * RESPONDER Y TOMAR EL CONTROL DE UN CHAT — el núcleo, sin sesión.
@@ -90,12 +91,7 @@ export async function fijarModo(params: {
   // Devolverle el control al asistente cierra la escalación pendiente: si no,
   // la conversación seguiría apareciendo como "te espera" para siempre.
   if (modo === "bot") {
-    await supa
-      .from("ed_escalaciones")
-      .update({ atendida_en: new Date().toISOString() })
-      .eq("empleado_id", empleadoId)
-      .eq("chat_id", chatId)
-      .is("atendida_en", null);
+    await cerrarEscalacionesPendientes(supa, { empleadoIds: [empleadoId], chatId, clienteId });
   }
 
   return { ok: true };
@@ -197,12 +193,7 @@ export async function enviarComoHumano(params: {
   }
 
   // La escalación se cierra recién DESPUÉS de confirmar envío y persistencia.
-  await supa
-    .from("ed_escalaciones")
-    .update({ atendida_en: new Date().toISOString() })
-    .eq("empleado_id", empleadoId)
-    .eq("chat_id", chatId)
-    .is("atendida_en", null);
+  await cerrarEscalacionesPendientes(supa, { empleadoIds: [empleadoId], chatId, clienteId });
 
   return { ok: true };
 }

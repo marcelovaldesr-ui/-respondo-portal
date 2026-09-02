@@ -20,6 +20,13 @@ export const ETIQUETAS: Etiqueta[] = [
   { valor: "agendado", label: "Agendado", color: "#3730A3", fondo: "#E0E7FF", auto: true },
   { valor: "reclamo", label: "Reclamo", color: "#991B1B", fondo: "#FEE2E2", auto: true },
   { valor: "necesita_atencion", label: "Necesita atención", color: "#9A3412", fondo: "#FFEDD5", auto: true },
+  /**
+   * El cliente aprobó (precio, encargo) pero no hay evidencia de pago. En
+   * negocios que piden abono para empezar es la tarea que más se olvida:
+   * pedirlo. La pone el detector de cierres (lib/cierreVentas.ts) y se quita
+   * sola cuando aparece el pago o la conversación se cierra.
+   */
+  { valor: "pago_pendiente", label: "Falta pago", color: "#7C2D12", fondo: "#FFEDD5", auto: true },
   { valor: "cliente", label: "Cliente", color: "#166534", fondo: "#DCFCE7", auto: false },
   { valor: "resuelto", label: "Resuelto", color: "#475569", fondo: "#F1F5F9", auto: false },
 ];

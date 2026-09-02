@@ -16,6 +16,8 @@ import {
   enviosUltimoMinuto,
 } from "@/lib/mensajes";
 import { modoDe, setModo, tocarVentanaEntrante } from "@/lib/estadoChat";
+import { cerrarEscalacionesPendientes } from "@/lib/escalaciones";
+import { idsEmpleadosDeCliente } from "@/lib/empleadosCache";
 import { responderSiBot } from "@/lib/responderBot";
 import { empleadoParaEntrante } from "@/lib/seguimientos";
 import { notificarSistemaDelCliente } from "@/lib/puenteSalida";
@@ -146,6 +148,17 @@ export async function manejarEntranteWaha(
       canal: "whatsapp",
     });
     await setModo(empleadoId, chatId, "humano", supa);
+    /**
+     * Una PERSONA le escribió al cliente: eso ES atender. La escalación se
+     * cierra acá igual que cuando responde desde el portal; si no, "te
+     * espera" quedaba encendido para siempre (2-sep-2026, ver escalaciones.ts).
+     * Por chat, no por empleado: la derivación pudo abrirla Beto o Vera.
+     */
+    await cerrarEscalacionesPendientes(supa, {
+      empleadoIds: await idsEmpleadosDeCliente(clienteId),
+      chatId,
+      clienteId,
+    });
     return { accion: "toma_humana" };
   }
 

@@ -6,6 +6,7 @@ import { limitarDistribuido } from "@/lib/seguridad";
 import { PLANTILLAS, limpiarParam, plantillasParaRubro, render } from "@/lib/plantillas";
 import { enviarPlantilla } from "@/lib/whatsapp";
 import { restaurarControl, tomarControlTemporal, transporteSalida } from "@/lib/controlChat";
+import { cerrarEscalacionesPendientes } from "@/lib/escalaciones";
 
 export const dynamic = "force-dynamic";
 
@@ -181,12 +182,11 @@ export async function POST(request: NextRequest) {
     });
   }
 
-  await supa
-    .from("ed_escalaciones")
-    .update({ atendida_en: new Date().toISOString() })
-    .eq("empleado_id", empleadoId)
-    .eq("chat_id", chatId)
-    .is("atendida_en", null);
+  await cerrarEscalacionesPendientes(supa, {
+    empleadoIds: [empleadoId],
+    chatId,
+    clienteId: usuario.clienteId,
+  });
 
   return NextResponse.json({ ok: true, texto });
 }

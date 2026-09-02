@@ -13,6 +13,8 @@ import { renovarTokensIg } from "@/lib/instagram";
 import { reprocesarWebhooksPendientes } from "@/lib/webhookInbox";
 import { revisarCuposYAvisar } from "@/lib/avisosCupo";
 import { revisarAbandonadas } from "@/lib/reingresoTino";
+import { reconciliarEstados } from "@/lib/reconciliarEstados";
+import { detectarCierres } from "@/lib/cierreVentas";
 import { archivarPendientes } from "@/lib/archivarMedia";
 import { generarSeguimientosCotizacion } from "@/lib/generadorCotizacion";
 
@@ -219,6 +221,34 @@ export async function GET(request: NextRequest) {
   }
 
   /**
+   * QUE LAS ETIQUETAS DIGAN LA VERDAD (2-sep-2026).
+   *
+   * Dos pasos, en este orden:
+   *  1. reconciliarEstados — determinista, sin modelo: cierra las derivaciones
+   *     que una persona ya atendió (desde el teléfono, no solo desde el
+   *     portal) y limpia las etiquetas abiertas de conversaciones ganadas o
+   *     perdidas. Lo que Gestión muestra sale de acá, vía el puente.
+   *  2. detectarCierres — el modelo lee las conversaciones con pista de cierre
+   *     y decide: pagado (→ ganado), aprobado sin pago (→ "Falta pago") o
+   *     abierto. Con techo de tiempo, como el vigilante.
+   */
+  let reconciliado = { escalacionesCerradas: 0, contactosLimpiados: 0 };
+  try {
+    reconciliado = await reconciliarEstados(supa);
+  } catch (e) {
+    console.error("[cron] reconciliar estados falló (no afecta lo demás)", (e as Error).message);
+  }
+
+  let cierres = { revisados: 0, consultados: 0, pagados: 0, aprobados: 0 };
+  try {
+    const cc = await detectarCierres(supa, { fechaLimite: inicioCron + 50_000 });
+    cierres = { revisados: cc.revisados, consultados: cc.consultados, pagados: cc.pagados, aprobados: cc.aprobados };
+    if (cc.pagados || cc.aprobados) console.log("[cron] cierres:", cc.detalle.join(" | "));
+  } catch (e) {
+    console.error("[cron] detector de cierres falló (no afecta lo demás)", (e as Error).message);
+  }
+
+  /**
    * ARCHIVAR ADJUNTOS ANTES DE QUE META LOS BORRE (26-ago-2026).
    *
    * Meta elimina el archivo que llega por webhook a los **7 días**. El portal
@@ -280,6 +310,8 @@ export async function GET(request: NextRequest) {
     cupos: { revisados: cupos.revisados, avisados: cupos.avisados },
     // El detalle nombra conversaciones: va el conteo, no las líneas.
     reingresos,
+    reconciliado,
+    cierres,
     adjuntos,
     // El detalle nombra clientes y chats: va el conteo, no las líneas.
     cotizaciones,

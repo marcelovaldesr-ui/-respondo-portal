@@ -6,6 +6,7 @@ import { restaurarControl, tomarControlTemporal, transporteSalida } from "@/lib/
 import { enviarMediaWaha } from "@/lib/waha";
 import { enviarMediaMeta, subirMediaMeta } from "@/lib/whatsapp";
 import { limitarDistribuido } from "@/lib/seguridad";
+import { cerrarEscalacionesPendientes } from "@/lib/escalaciones";
 import type { ResultadoEnvio } from "@/lib/responderChat";
 
 /**
@@ -124,12 +125,7 @@ export async function enviarAdjuntoComoHumano(params: {
     };
   }
 
-  await supa
-    .from("ed_escalaciones")
-    .update({ atendida_en: new Date().toISOString() })
-    .eq("empleado_id", empleadoId)
-    .eq("chat_id", chatId)
-    .is("atendida_en", null);
+  await cerrarEscalacionesPendientes(supa, { empleadoIds: [empleadoId], chatId, clienteId });
 
   return { ok: true };
 }

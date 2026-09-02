@@ -9,6 +9,8 @@ import {
 import { tinoDe } from "@/lib/whatsapp";
 import { guardarMensaje, yaProcesado, esEcoReciente } from "@/lib/mensajes";
 import { setModo, tocarVentanaEntrante } from "@/lib/estadoChat";
+import { cerrarEscalacionesPendientes } from "@/lib/escalaciones";
+import { idsEmpleadosDeCliente } from "@/lib/empleadosCache";
 import { responderSiBot } from "@/lib/responderBot";
 import { empleadoParaEntrante } from "@/lib/seguimientos";
 import { notificarSistemaDelCliente } from "@/lib/puenteSalida";
@@ -116,6 +118,17 @@ export async function manejarEntranteInstagram(
         canal: "instagram",
       });
       await setModo(empleadoId, chatId, "humano", supa);
+      /**
+       * Una PERSONA le escribió al cliente: eso ES atender. La escalación se
+       * cierra acá igual que cuando responde desde el portal; si no, "te
+       * espera" quedaba encendido para siempre (2-sep-2026, ver escalaciones.ts).
+       * Por chat, no por empleado: la derivación pudo abrirla Beto o Vera.
+       */
+      await cerrarEscalacionesPendientes(supa, {
+        empleadoIds: await idsEmpleadosDeCliente(ctx.clienteId),
+        chatId,
+        clienteId: ctx.clienteId,
+      });
       resultados.push({ accion: "toma_humana" });
       continue;
     }
