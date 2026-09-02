@@ -330,6 +330,70 @@ async function chequearTokensClientes(): Promise<Chequeo> {
  * Se pone en ROJO si hay adjuntos con puntero de Meta más viejos que el margen
  * del barrido: significa que el archivador no los alcanzó y están por vencer.
  */
+/**
+ * PUENTES HACIA LOS SISTEMAS DE LOS CLIENTES — la falla más silenciosa de todas.
+ *
+ * Cuando un cliente tiene su propia app conectada (`ed_integraciones`), sus
+ * leads y reportes se llenan desde acá. Si el puente deja de entregar, en el
+ * portal NO se nota nada: Tino sigue conversando igual de bien. El cliente solo
+ * ve que su tablero dejó de moverse, y lo atribuye a que "no ha llegado nadie".
+ *
+ * PASÓ DE VERDAD: el puente de Impresora Color quedó mudo el 26-ago-2026 a las
+ * 19:13 —la hora exacta de su migración a Cloud API, porque inboundMeta.ts no
+ * tenía el gancho— y estuvo 7 días caído sin una sola alarma. Se perdieron 72
+ * leads nuevos. Esto es lo que habría avisado el mismo día.
+ *
+ * CÓMO SE MIDE: no basta con mirar `ultimo_error`. Un puente que dejó de ser
+ * llamado nunca falla; simplemente enmudece. Por eso se compara la última
+ * entrega OK contra el tráfico real del cliente: si entraron mensajes bastante
+ * después de la última entrega, el puente no está haciendo su trabajo.
+ */
+const GRACIA_PUENTE_MS = 30 * 60_000;
+
+async function chequearPuentes(): Promise<Chequeo> {
+  const { data, error } = await db()
+    .from("ed_integraciones")
+    .select("cliente_id, nombre, ultimo_ok_en, ultimo_error")
+    .eq("activo", true);
+  if (error) return { ok: false, detalle: `no se pudo leer ed_integraciones: ${error.message}` };
+
+  const puentes = data ?? [];
+  if (puentes.length === 0) return { ok: true, detalle: "sin puentes configurados" };
+
+  const rotos: string[] = [];
+  for (const puente of puentes) {
+    // Último mensaje del cliente, sea de quien sea: es lo que el puente
+    // tendría que haber entregado.
+    const { data: ultimo } = await db()
+      .from("ed_contactos")
+      .select("ultimo_mensaje_en")
+      .eq("cliente_id", puente.cliente_id)
+      .not("ultimo_mensaje_en", "is", null)
+      .order("ultimo_mensaje_en", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    const trafico = ultimo?.ultimo_mensaje_en ? Date.parse(ultimo.ultimo_mensaje_en) : 0;
+    // Sin conversaciones no hay nada que entregar: no es un puente roto.
+    if (!trafico) continue;
+
+    const entregado = puente.ultimo_ok_en ? Date.parse(puente.ultimo_ok_en) : 0;
+    if (trafico - entregado > GRACIA_PUENTE_MS) {
+      const horas = Math.round((trafico - entregado) / 3_600_000);
+      const quien = puente.nombre ?? puente.cliente_id;
+      const causa = puente.ultimo_error ? ` (último error: ${puente.ultimo_error})` : "";
+      rotos.push(
+        entregado === 0
+          ? `${quien}: nunca ha entregado${causa}`
+          : `${quien}: sin entregar hace ${horas} h${causa}`,
+      );
+    }
+  }
+
+  if (rotos.length > 0) return { ok: false, detalle: rotos.join(" · ") };
+  return { ok: true, detalle: `${puentes.length} puente(s) al día` };
+}
+
 async function chequearArchivado(): Promise<Chequeo> {
   const supa = db();
 
@@ -497,6 +561,7 @@ export async function GET(request: NextRequest) {
   // sin secreto porque haría una llamada a Meta por cliente en cada visita.
   if (autorizado) {
     chequeos.tokens_clientes = await medir(chequearTokensClientes);
+    chequeos.puentes_clientes = await medir(chequearPuentes);
     chequeos.waha_un_solo_cliente = await medir(chequearWahaUnCliente);
     chequeos.adjuntos_archivados = await medir(chequearArchivado);
   }

@@ -20,6 +20,7 @@ import { empleadoParaEntrante } from "@/lib/seguimientos";
 import { fechaLimiteModelo } from "@/lib/presupuesto";
 import { transporteDe } from "@/lib/transporte";
 import { ventanaDeEspera } from "@/lib/ritmoHumano";
+import { notificarSistemaDelCliente } from "@/lib/puenteSalida";
 
 export type ResultadoMeta = { accion: string; detalle?: string };
 
@@ -217,18 +218,31 @@ export async function manejarEntranteMeta(
       continue;
     }
 
-    if (m.nombre) {
-      await supa.from("ed_contactos").upsert(
+    /**
+     * Contacto. El upsert dejó de estar condicionado a que Meta mandara el
+     * nombre: se hace SIEMPRE, igual que en el camino de WAHA. Dos razones —
+     * el contacto tiene que existir aunque el nombre no venga, y el puente
+     * hacia el sistema del cliente necesita su etapa y etiquetas.
+     *
+     * Se piden de vuelta con `.select()` porque ya estamos haciendo este viaje
+     * a la base: pedirlas acá evita una consulta extra en plena conversación.
+     */
+    const { data: contactoGuardado } = await supa
+      .from("ed_contactos")
+      .upsert(
         {
           cliente_id: cfg.clienteId,
           chat_id: chatId,
-          nombre: m.nombre,
+          nombre: m.nombre ?? undefined,
           telefono: `+${chatId}`,
           etiqueta: "lead",
         },
         { onConflict: "cliente_id,chat_id" },
-      );
-    }
+      )
+      .select(
+        "nombre, telefono, etiquetas, etapa, etapa_manual, ultimo_mensaje_en, ultimo_mensaje_rol",
+      )
+      .maybeSingle();
 
     /**
      * ATRIBUCIÓN DE CAMPAÑA. Meta manda el anuncio de origen SOLO en el primer
@@ -270,6 +284,48 @@ export async function manejarEntranteMeta(
     }
 
     await tocarVentanaEntrante(empleadoId, chatId, supa);
+
+    /**
+     * PUENTE HACIA EL SISTEMA DEL CLIENTE.
+     *
+     * FALTABA EN ESTE ARCHIVO, y por eso el puente de Impresora Color quedó
+     * mudo el 26-ago-2026 a las 19:13: es la hora exacta en que ese número se
+     * migró de WAHA a Cloud API. Los ganchos se habían instalado en
+     * inboundWaha.ts e inboundInstagram.ts (11-ago), cuando Cloud API todavía
+     * no atendía a nadie con app propia. Al migrar, TODO el tráfico pasó por
+     * acá y su app de gestión dejó de recibir: 72 leads nuevos y 1.272
+     * mensajes de clientes que nunca llegaron, sin un solo error a la vista.
+     *
+     * LECCIÓN: los tres caminos de entrada (WAHA, Meta, Instagram) tienen que
+     * hacer lo mismo. Si se agrega algo a uno, hay que preguntarse por los
+     * otros dos — y ya pasó igual con el debounce adaptativo (G1) y con los
+     * adjuntos (G4), las dos veces perjudicando a Cloud API.
+     *
+     * Va ACÁ y no más abajo a propósito: antes del debounce. Las entregas que
+     * se retiran por debounce igual guardaron su mensaje, así que también
+     * tienen que avisarlo; si no, se pierden los fragmentos intermedios de
+     * quien escribe a pedazos.
+     *
+     * Fire-and-forget: NO se hace await. Que la app del cliente esté caída no
+     * puede frenar la respuesta a alguien que está escribiendo.
+     */
+    notificarSistemaDelCliente({
+      evento: "mensaje",
+      clienteId: cfg.clienteId,
+      contacto: {
+        chatId,
+        telefono: (contactoGuardado?.telefono as string | null) ?? `+${chatId}`,
+        nombre: (contactoGuardado?.nombre as string | null) ?? m.nombre ?? null,
+        canal: "whatsapp",
+        etapa: (contactoGuardado?.etapa as string | null) ?? null,
+        etapaManual: Boolean(contactoGuardado?.etapa_manual),
+        etiquetas: (contactoGuardado?.etiquetas as string[] | null) ?? null,
+        ultimoMensajeEn: (contactoGuardado?.ultimo_mensaje_en as string | null) ?? null,
+        ultimoMensajeRol: (contactoGuardado?.ultimo_mensaje_rol as string | null) ?? null,
+      },
+      mensaje: { waId: m.waId, rol: "cliente", texto: m.texto ?? "" },
+      supa,
+    });
 
     /**
      * DEBOUNCE: si el cliente manda varios mensajes seguidos, responde solo la
