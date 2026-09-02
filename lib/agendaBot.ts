@@ -16,7 +16,11 @@ import {
   programarSeguimientosCita,
   anularSeguimientosDeCita,
   confirmacionPendiente,
+  encuestaPendiente,
 } from "@/lib/agendaSeguimientos";
+import { detectarNota, esNotaMala, textoRespuestaEncuesta } from "@/lib/encuestaCore";
+import { avisarACliente, resumirParaAviso } from "@/lib/push";
+import { setModo } from "@/lib/estadoChat";
 
 /**
  * PUENTE ENTRE LOS EMPLEADOS IA Y LA AGENDA (F2).
@@ -448,6 +452,101 @@ export async function confirmacionRapida(
     const r = await cambiarEstado(clienteId, pend.citaId, "confirmada", supa);
     if (!r.ok) return null;
     return `¡Perfecto! Tu hora del ${formatearSlot(pend.inicio)} quedó confirmada ✅ Te esperamos 🙌`;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Si Vera tiene una encuesta postventa pendiente en este chat y el cliente
+ * contestó con una nota clara de 1 a 5, cierra el círculo POR CÓDIGO — el
+ * modelo no participa. Devuelve null si no aplica (nada cambia respecto a hoy;
+ * Vera sigue la conversación normal).
+ *
+ * Tres efectos, en este orden:
+ *  1. Escribe `ed_resultados` (tipo "encuesta_respondida") — es la fila que
+ *     hoy simplemente no existe (bloqueo 3 de la auditoría del 26-ago).
+ *  2. Cierra la cita como "completada" — es EL cierre real del bloqueo 1: solo
+ *     pasa cuando el cliente confirma que lo atendieron, nunca porque la hora
+ *     ya pasó (eso infla el retorno y esconde la inasistencia real).
+ *  3. Si la nota es mala (1-3), deriva a una persona de inmediato: silencia a
+ *     Vera en ese chat, registra la escalación y avisa al teléfono del equipo
+ *     — igual que cualquier otra escalación, pero garantizado en vez de
+ *     depender de que el modelo recuerde la regla.
+ *
+ * Best-effort en cada paso: si uno falla, los demás igual se intentan y el
+ * cliente de todas formas recibe una respuesta humana. Nunca deja al cliente
+ * sin nada por un error de base de datos.
+ */
+export async function encuestaRapida(
+  clienteId: string,
+  empleadoId: string,
+  chatId: string,
+  textoEntrante: string,
+  supa: SupabaseClient = db(),
+): Promise<string | null> {
+  try {
+    const nota = detectarNota(textoEntrante);
+    if (nota === null) return null;
+    const pend = await encuestaPendiente(clienteId, chatId, supa);
+    if (!pend) return null;
+
+    await supa
+      .from("ed_resultados")
+      .insert({
+        empleado_id: empleadoId,
+        chat_id: chatId,
+        tipo: "encuesta_respondida",
+        nota: { puntaje: nota, cita_id: pend.citaId },
+        detectado_por: "bot",
+      })
+      .then(() => undefined, () => undefined);
+
+    await cambiarEstado(clienteId, pend.citaId, "completada", supa).catch(() => ({ ok: false as const }));
+
+    if (esNotaMala(nota)) {
+      await setModo(empleadoId, chatId, "humano", supa).catch(() => undefined);
+      await supa
+        .from("ed_escalaciones")
+        .insert({
+          empleado_id: empleadoId,
+          chat_id: chatId,
+          trigger: "sentimiento_negativo",
+          resumen: `Contestó la encuesta postventa con nota ${nota}/5. Conviene llamarlo.`,
+          notificado_a: [],
+        })
+        .then(() => undefined, () => undefined);
+      // Mismo tipo que usa el choke point de responderBot.ts para cualquier
+      // escalación con trigger "sentimiento_negativo" — este camino no pasa
+      // por ahí (es un atajo por código, sin modelo), así que se escribe acá.
+      await supa
+        .from("ed_resultados")
+        .insert({
+          empleado_id: empleadoId,
+          chat_id: chatId,
+          tipo: "cliente_molesto",
+          nota: { resumen: `Encuesta postventa con nota ${nota}/5` },
+          detectado_por: "bot",
+        })
+        .then(() => undefined, () => undefined);
+      void (async () => {
+        const { data: c } = await supa
+          .from("ed_contactos")
+          .select("nombre")
+          .eq("cliente_id", clienteId)
+          .eq("chat_id", chatId)
+          .maybeSingle();
+        const quien = (c?.nombre as string | null) || `+${chatId}`;
+        await avisarACliente(clienteId, {
+          titulo: `${quien} quedó insatisfecho (nota ${nota}/5)`,
+          cuerpo: resumirParaAviso("Contestó la encuesta postventa con una nota baja. Conviene llamarlo."),
+          url: `/conversaciones?emp=${encodeURIComponent(empleadoId)}&chat=${encodeURIComponent(chatId)}`,
+          tag: `chat:${chatId}`,
+        });
+      })().catch(() => undefined);
+    }
+
+    return textoRespuestaEncuesta(nota);
   } catch {
     return null;
   }

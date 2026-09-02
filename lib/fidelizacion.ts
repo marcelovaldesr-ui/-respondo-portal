@@ -1,7 +1,10 @@
 import { db } from "@/lib/db";
 import { idsEmpleadosDeCliente } from "@/lib/empleadosCache";
+import { configPorCliente, enviarTexto } from "@/lib/whatsapp";
+import { enviarTextoWaha } from "@/lib/waha";
 import {
   resumirFidelizacion,
+  textoInformeFidelizacion,
   type CitaMinima,
   type Fidelizacion,
   type SeguimientoMinimo,
@@ -65,15 +68,23 @@ type FilaCita = {
  * Devuelve null cuando el negocio no usa la agenda ni los seguimientos: no hay
  * nada que medir y el panel no debe mostrar una fila de ceros, que se lee como
  * "esto no funciona" en vez de "esto no lo tienes contratado".
+ *
+ * `hastaParam` (1-sep-2026): por defecto es ahora, igual que siempre. Se abrió
+ * para poder pedir el MISMO cálculo con un corte en el pasado —el informe
+ * mensual lo usa para comparar el período contra el anterior sin duplicar
+ * ninguna de las reglas de acá— y ningún llamado existente cambia, porque el
+ * valor por defecto es exactamente el de antes.
  */
 export async function calcularFidelizacion(
   clienteId: string,
   dias = 30,
+  hastaParam?: Date,
 ): Promise<Fidelizacion | null> {
   const supa = db();
-  const hasta = new Date();
+  const hasta = hastaParam ?? new Date();
   const desdePeriodo = new Date(hasta.getTime() - dias * 86400_000).toISOString();
   const desdeAnio = new Date(hasta.getTime() - DIAS_ANIO * 86400_000).toISOString();
+  const hastaIso = hasta.toISOString();
 
   const columnas = "chat_id, telefono, estado, origen, empleado_id, creado_en, inicio";
 
@@ -90,11 +101,12 @@ export async function calcularFidelizacion(
       .select(columnas)
       .eq("cliente_id", clienteId)
       .gte("inicio", desdeAnio)
+      .lte("inicio", hastaIso)
       .order("inicio", { ascending: true })
       .range(a, b),
   );
 
-  const seguimientos = await leerSeguimientos(clienteId, desdePeriodo);
+  const seguimientos = await leerSeguimientos(clienteId, desdePeriodo, hastaIso);
 
   if (!anio.length && !seguimientos.length) return null;
 
@@ -113,7 +125,9 @@ export async function calcularFidelizacion(
    * "cuántas horas caen esta semana". Se filtra en memoria para no hacer una
    * segunda consulta con los mismos datos.
    */
-  const citasPeriodo = anio.filter((f) => f.creado_en >= desdePeriodo).map(aCita);
+  const citasPeriodo = anio
+    .filter((f) => f.creado_en >= desdePeriodo && f.creado_en <= hastaIso)
+    .map(aCita);
 
   return resumirFidelizacion({
     citasPeriodo,
@@ -132,6 +146,7 @@ export async function calcularFidelizacion(
 async function leerSeguimientos(
   clienteId: string,
   desde: string,
+  hasta?: string,
 ): Promise<SeguimientoMinimo[]> {
   const supa = db();
   const ids = await idsEmpleadosDeCliente(clienteId);
@@ -142,16 +157,18 @@ async function leerSeguimientos(
     tipo: string;
     enviado_en: string | null;
     respuesta_recibida: boolean | null;
-  }>((a, b) =>
-    supa
+  }>((a, b) => {
+    let q = supa
       .from("ed_seguimientos")
       .select("chat_id, tipo, enviado_en, respuesta_recibida")
       .in("empleado_id", ids)
-      .not("enviado_en", "is", null)
+      .not("enviado_en", "is", null);
+    if (hasta) q = q.lte("enviado_en", hasta);
+    return q
       .gte("enviado_en", desde)
       .order("enviado_en", { ascending: true })
-      .range(a, b),
-  );
+      .range(a, b);
+  });
 
   return filas.map((f) => ({
     chatId: f.chat_id,
@@ -159,4 +176,73 @@ async function leerSeguimientos(
     enviadoEn: f.enviado_en,
     respuestaRecibida: f.respuesta_recibida === true,
   }));
+}
+
+/**
+ * EL INFORME REENVIABLE — punto 2 del "orden acordado" de la auditoría de
+ * agosto (circuitos-abiertos-cita-y-resultados). Compone el texto (comparando
+ * contra los 30 días anteriores) y lo manda por WhatsApp al teléfono del
+ * dueño, con el MISMO mecanismo que ya usan los avisos de cupo — nada nuevo
+ * que aprender a mantener.
+ *
+ * ⚠️ "Últimos 30 días", no "el mes de agosto": es una ventana móvil, no un mes
+ * calendario, y decir otra cosa sería prometer un corte que este número no
+ * tiene. Es la misma regla de honestidad que rige el resto del archivo.
+ */
+export async function enviarInformeFidelizacion(
+  clienteId: string,
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  const supa = db();
+  const { data: cli } = await supa
+    .from("ed_clientes")
+    .select("nombre, transporte, telefono_escalacion, canal_escalacion")
+    .eq("id", clienteId)
+    .maybeSingle();
+  if (!cli) return { ok: false, error: "Cliente no encontrado." };
+
+  const destino = (cli.telefono_escalacion as string | null)?.trim();
+  const canal = ((cli.canal_escalacion as string | null) ?? "whatsapp").toLowerCase();
+  if (!destino || canal !== "whatsapp") {
+    return {
+      ok: false,
+      error:
+        "No hay un WhatsApp configurado para avisos del negocio. Se define en Información.",
+    };
+  }
+
+  const ahora = new Date();
+  const haceUnMes = new Date(ahora.getTime() - 30 * 86_400_000);
+  const [actual, anterior] = await Promise.all([
+    calcularFidelizacion(clienteId, 30, ahora),
+    calcularFidelizacion(clienteId, 30, haceUnMes),
+  ]);
+  if (!actual) {
+    return {
+      ok: false,
+      error: "Todavía no hay suficientes citas o seguimientos para armar un informe.",
+    };
+  }
+
+  const texto = textoInformeFidelizacion({
+    nombreNegocio: (cli.nombre as string) || "tu negocio",
+    etiquetaPeriodo: "últimos 30 días",
+    actual,
+    anterior,
+  });
+
+  const transporte = ((cli.transporte as string | null) ?? "waha").toLowerCase();
+  const envio =
+    transporte === "cloud"
+      ? await (async () => {
+          const cfg = await configPorCliente(clienteId);
+          // `sinEspera`: es un mensaje operativo al propio negocio, no una
+          // conversación con un cliente — no debe respetar el debounce humano.
+          return cfg
+            ? enviarTexto(cfg, destino, texto, { sinEspera: true })
+            : { ok: false as const, error: "cliente cloud sin credenciales" };
+        })()
+      : await enviarTextoWaha(destino, texto, { clienteId });
+
+  if (!envio.ok) return { ok: false, error: envio.error ?? "No se pudo enviar." };
+  return { ok: true };
 }

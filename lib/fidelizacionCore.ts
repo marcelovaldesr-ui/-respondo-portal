@@ -222,3 +222,68 @@ export function resumirFidelizacion(e: EntradaFidelizacion): Fidelizacion {
     ventanaReactivacionDias: ventana,
   };
 }
+
+/**
+ * EL INFORME REENVIABLE — texto para el WhatsApp del dueño, con comparación
+ * al período anterior.
+ *
+ * POR QUÉ (1-sep-2026): el punto 2 del "orden acordado" de la auditoría de
+ * agosto. Cuando la decisión de RS-Shop subió de Gaspar a gerencia, él no
+ * tenía UN SOLO número que reenviar — la pantalla más completa del mundo no
+ * sirve si el dueño no puede sacarla del portal para mostrarla. Este texto es
+ * justo eso: algo que se copia y pega, o que llega solo al WhatsApp.
+ *
+ * Sigue la MISMA regla de honestidad que el resto del archivo: si no hay
+ * período anterior con datos, no se inventa una comparación — se omite la
+ * flecha entera en vez de mostrar un "+100%" que en realidad es "de cero a
+ * algo" y no dice nada.
+ */
+
+/** "+8" / "-3" / "" (sin cambio o sin período anterior) — para conteos. */
+function deltaCantidad(actual: number, anterior: number | null): string {
+  if (anterior === null) return "";
+  const d = actual - anterior;
+  if (d === 0) return " (igual que el período anterior)";
+  return ` (${d > 0 ? "+" : ""}${d} vs. período anterior)`;
+}
+
+/** Igual que arriba, pero en puntos porcentuales — para tasas. */
+function deltaPuntos(actual: number, anterior: number | null): string {
+  if (anterior === null) return "";
+  const d = actual - anterior;
+  if (d === 0) return " (igual que el período anterior)";
+  return ` (${d > 0 ? "+" : ""}${d} pts vs. período anterior)`;
+}
+
+export function textoInformeFidelizacion(p: {
+  nombreNegocio: string;
+  etiquetaPeriodo: string;
+  actual: Fidelizacion;
+  /** null = sin datos suficientes en el período anterior; se omite la comparación. */
+  anterior: Fidelizacion | null;
+}): string {
+  const { actual, anterior } = p;
+  const lineas = [
+    `📊 Resumen de ${p.nombreNegocio} — ${p.etiquetaPeriodo}`,
+    "",
+    `Horas agendadas: ${actual.citas}${deltaCantidad(actual.citas, anterior?.citas ?? null)}`,
+    `Clientes que volvieron: ${actual.tasaRetorno}%${deltaPuntos(actual.tasaRetorno, anterior?.tasaRetorno ?? null)}`,
+  ];
+
+  // La inasistencia solo dice algo si hubo horas cerradas — mostrar "0%" sobre
+  // cero citas cerradas sería el mismo error que ya se corrigió en el panel.
+  if (actual.completadas + actual.noShow > 0) {
+    lineas.push(
+      `Inasistencia: ${actual.porcentajeNoShow}%${deltaPuntos(actual.porcentajeNoShow, anterior && anterior.completadas + anterior.noShow > 0 ? anterior.porcentajeNoShow : null)}`,
+    );
+  }
+
+  if (actual.seguimientosEnviados > 0) {
+    lineas.push(
+      `Reactivados por seguimiento: ${actual.reactivados}${deltaCantidad(actual.reactivados, anterior && anterior.seguimientosEnviados > 0 ? anterior.reactivados : null)}`,
+    );
+  }
+
+  lineas.push("", "Datos reales de tu WhatsApp — nada estimado.");
+  return lineas.join("\n");
+}

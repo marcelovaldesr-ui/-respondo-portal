@@ -9,6 +9,7 @@ import {
 } from "@/lib/analitica";
 import { calcularFidelizacion } from "@/lib/fidelizacion";
 import type { Fidelizacion } from "@/lib/fidelizacionCore";
+import EnviarInforme from "@/components/analitica/EnviarInforme";
 
 export const dynamic = "force-dynamic";
 
@@ -121,9 +122,14 @@ function SeccionFidelizacion({ f }: { f: Fidelizacion }) {
   const cerradas = f.completadas + f.noShow;
   return (
     <div className="mt-8">
-      <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
-        <h2 className="h-pagina">¿Vuelve la gente?</h2>
-        <span className="sub-titulo">La agenda y los seguimientos, en números</span>
+      <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-2">
+        <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+          <h2 className="h-pagina">¿Vuelve la gente?</h2>
+          <span className="sub-titulo">La agenda y los seguimientos, en números</span>
+        </div>
+        {/* Últimos 30 días, comparado contra los 30 anteriores — lo que le
+            faltó a Gaspar cuando la decisión de RS-Shop subió a gerencia. */}
+        <EnviarInforme />
       </div>
 
       <div className="mt-5 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">

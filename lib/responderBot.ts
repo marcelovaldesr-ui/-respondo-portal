@@ -12,6 +12,7 @@ import {
   contextoAgenda,
   ejecutarAccionAgenda,
   confirmacionRapida,
+  encuestaRapida,
   type CitaDelMotor,
 } from "@/lib/agendaBot";
 
@@ -195,10 +196,11 @@ export async function responderSiBot(params: {
   // `agenda` es null y TODO este flujo queda idéntico al de siempre.
   const agenda = await contextoAgenda(clienteId, chatId).catch(() => null);
 
+  const ultimo = hist[hist.length - 1];
+
   // Confirmación rápida de cita: si el último mensaje es un "SÍ" inequívoco y
   // hay una confirmación pendiente, se confirma POR CÓDIGO (sin modelo).
   if (agenda) {
-    const ultimo = hist[hist.length - 1];
     if (ultimo?.rol === "cliente") {
       const rapida = await confirmacionRapida(clienteId, chatId, ultimo.texto);
       if (rapida) {
@@ -239,6 +241,51 @@ export async function responderSiBot(params: {
           detalle: "enviado",
         };
       }
+    }
+  }
+
+  // Encuesta postventa de Vera: si el último mensaje es una nota clara de 1 a
+  // 5 y hay una encuesta pendiente, se cierra el círculo POR CÓDIGO (sin
+  // modelo) — escribe el resultado, cierra la cita como "completada" y, si la
+  // nota es mala, deriva a una persona de inmediato. Ver lib/agendaBot.ts.
+  // Independiente de `agenda`: no necesita el bloque de cupos, solo que exista
+  // una encuesta enviada para este chat.
+  if (ultimo?.rol === "cliente") {
+    const rapidaEncuesta = await encuestaRapida(clienteId, empleadoId, chatId, ultimo.texto);
+    if (rapidaEncuesta) {
+      const supaE = db();
+      const envioE = params.enviar
+        ? await params.enviar(chatId, rapidaEncuesta)
+        : cfg
+          ? await enviarTexto(cfg, chatId, rapidaEncuesta)
+          : { ok: false as const, error: "sin transporte" };
+      if (!envioE.ok) {
+        await derivarPorFalloDeEnvio(supaE, {
+          clienteId,
+          empleadoId,
+          chatId,
+          detalle: envioE.error ?? "sin transporte",
+        });
+        return { accion: "error_envio_derivado", detalle: envioE.error ?? "sin transporte" };
+      }
+      const guardadoE = await guardarMensaje(supaE, {
+        empleadoId,
+        chatId,
+        rol: "empleado",
+        texto: rapidaEncuesta,
+        waId: "waId" in envioE ? (envioE as { waId?: string }).waId : undefined,
+        canal,
+      });
+      if (!guardadoE.ok) {
+        await derivarPorFalloDeEnvio(supaE, {
+          clienteId,
+          empleadoId,
+          chatId,
+          detalle: "respuesta de encuesta enviada pero no registrada",
+        });
+        return { accion: "envio_sin_registro_derivado" };
+      }
+      return { accion: "encuesta_cerro_cita", detalle: "enviado" };
     }
   }
 
@@ -407,6 +454,38 @@ export async function responderSiBot(params: {
       resumen: datos.resumen_para_humano ?? "El asistente derivó la conversación.",
       notificado_a: [],
     });
+
+    /**
+     * COMPLETAR EL MOTOR DE RESULTADOS (1-sep-2026) — punto único.
+     *
+     * `ed_resultados` tiene diez tipos declarados desde la migración 201 y en
+     * producción se escribía solo uno ("agendamiento"). `cliente_molesto` es
+     * el más seguro de sumar acá: el trigger "sentimiento_negativo" ya es una
+     * señal explícita y bien definida que CUALQUIER empleado (Tino, Rita,
+     * Vera) puede emitir, así que conectarla en este único choke point la
+     * cubre para los tres sin tocar cada rol por separado. Best-effort: si
+     * falla, la escalación ya quedó registrada y es lo que de verdad importa.
+     *
+     * Los demás tipos (venta_confirmada, cliente_reactivado...) quedan fuera
+     * a propósito: la propia auditoría de agosto advierte que "reactivado" ya
+     * tiene DOS fuentes de verdad en el portal (este motor y el cálculo de
+     * /analitica desde citas+seguimientos) y hay que decidir cuál manda ANTES
+     * de sumar una tercera, o dos pantallas del mismo portal mostrarán
+     * números distintos.
+     */
+    if (datos.trigger === "sentimiento_negativo") {
+      await supa
+        .from("ed_resultados")
+        .insert({
+          empleado_id: empleadoId,
+          chat_id: chatId,
+          tipo: "cliente_molesto",
+          nota: { resumen: datos.resumen_para_humano ?? null },
+          detectado_por: "bot",
+        })
+        .then(() => undefined, () => undefined);
+    }
+
     /**
      * AVISAR AL TELÉFONO DE LA PERSONA (24-ago-2026).
      *

@@ -218,6 +218,26 @@ export default async function Agenda() {
 
   const porRevisar = activas.filter((c) => c.estado === "agendada" && Date.parse(c.inicio) >= ahoraMs).length;
 
+  /**
+   * FRANJA "POR CERRAR" (1-sep-2026) — el fallback manual del cierre de citas.
+   *
+   * Vera cierra la cita SOLA cuando el cliente contesta su encuesta postventa
+   * con una nota (lib/agendaBot.ts, encuestaRapida). Pero mucha gente no
+   * contesta encuestas — y sin este cierre manual, esas horas se quedaban en
+   * "confirmada" PARA SIEMPRE (la cita del 4-ago de Impresora seguía así tres
+   * semanas después). Eso deja "clientes que vuelven" en 0% y la inasistencia
+   * en "—" en el panel de fidelización de /analitica, que es la métrica que
+   * más vende (el caso publicado de OdontoAndrauss es "−38% de horas perdidas
+   * por inasistencia").
+   *
+   * ⛔ A propósito NO se cierra sola por el solo paso del tiempo: eso infla el
+   * retorno y esconde la inasistencia real. Necesita que alguien mire y
+   * confirme qué pasó de verdad — es exactamente el trabajo de esta franja.
+   */
+  const porCerrar = activas
+    .filter((c) => Date.parse(c.fin) < ahoraMs)
+    .sort((a, b) => Date.parse(a.fin) - Date.parse(b.fin));
+
   const bloqueoTapando = listaBloqueos.find(
     (b) => !b.profesional_id && Date.parse(b.desde) <= ahoraMs && Date.parse(b.hasta) > ahoraMs,
   );
@@ -324,6 +344,67 @@ export default async function Agenda() {
           <Link href="/agenda/configuracion" className="btn-primario mt-3 inline-block px-4 py-2 text-[13.5px]">
             Ir a configuración
           </Link>
+        </div>
+      )}
+
+      {/* ── Por cerrar ───────────────────────────────────────────────── */}
+      {porCerrar.length > 0 && (
+        <div className="tarjeta mt-5 p-5">
+          <div className="flex items-baseline justify-between gap-2">
+            <p className="text-[14.5px] font-bold">
+              <span className="pildora-indigo mr-1.5">{porCerrar.length}</span>
+              {porCerrar.length === 1 ? "hora por cerrar" : "horas por cerrar"}
+            </p>
+          </div>
+          <p className="mt-1 text-[13px]" style={{ color: "var(--muted)" }}>
+            Ya pasó la hora y nadie contestó la encuesta. Confirma qué pasó de verdad —
+            así &ldquo;clientes que vuelven&rdquo; e inasistencia en Analítica quedan bien.
+          </p>
+          <div className="mt-3 space-y-2">
+            {porCerrar.slice(0, 20).map((c) => (
+              <div
+                key={c.id}
+                className="flex flex-wrap items-center justify-between gap-2 rounded-lg border p-2.5"
+                style={{ borderColor: "var(--borde)" }}
+              >
+                <div className="min-w-0">
+                  <p className="truncate text-[13.5px] font-semibold">{c.nombre_contacto}</p>
+                  <p className="truncate text-[12px]" style={{ color: "var(--muted)" }}>
+                    {c.ed_servicios?.nombre ?? "Servicio"} · {etiquetaProxima(c.inicio, claveHoy)}
+                  </p>
+                </div>
+                <div className="flex shrink-0 gap-1.5">
+                  <form action={cambiarEstadoCita}>
+                    <input type="hidden" name="id" value={c.id} />
+                    <input type="hidden" name="estado" value="completada" />
+                    <button
+                      type="submit"
+                      className="rounded px-2.5 py-1 text-[12px] font-semibold"
+                      style={{ background: "#DCFCE7", color: "#166534" }}
+                    >
+                      Sí, se atendió
+                    </button>
+                  </form>
+                  <form action={cambiarEstadoCita}>
+                    <input type="hidden" name="id" value={c.id} />
+                    <input type="hidden" name="estado" value="no_show" />
+                    <button
+                      type="submit"
+                      className="rounded px-2.5 py-1 text-[12px]"
+                      style={{ background: "#FDE9EA", color: "#B33A3A" }}
+                    >
+                      No llegó
+                    </button>
+                  </form>
+                </div>
+              </div>
+            ))}
+          </div>
+          {porCerrar.length > 20 && (
+            <p className="mt-2 text-[12px]" style={{ color: "var(--muted-2)" }}>
+              Y {porCerrar.length - 20} más — ciérralas y las siguientes van apareciendo.
+            </p>
+          )}
         </div>
       )}
 

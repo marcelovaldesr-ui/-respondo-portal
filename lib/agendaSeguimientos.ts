@@ -297,6 +297,53 @@ export async function confirmacionPendiente(
   }
 }
 
+/**
+ * ¿Hay una encuesta postventa de Vera esperando respuesta en este chat?
+ * Devuelve la cita asociada (para poder cerrarla) o null.
+ *
+ * Mismo patrón que `confirmacionPendiente`, con una ventana más larga: la
+ * encuesta sale recién a T+2h del término del servicio, y la gente contesta
+ * cuando puede, no al instante. 72h coincide con la regla ya documentada en
+ * `empleadoParaEntrante` (lib/seguimientos.ts): pasado eso, la respuesta ya no
+ * cuenta como "respondió", así que tampoco tiene sentido seguir esperando acá.
+ */
+export async function encuestaPendiente(
+  clienteId: string,
+  chatId: string,
+  supa: SupabaseClient = db(),
+): Promise<{ citaId: string } | null> {
+  try {
+    const desde = new Date(Date.now() - 72 * 3600_000).toISOString();
+    const { data: segs } = await supa
+      .from("ed_seguimientos")
+      .select("variables, enviado_en, ed_empleados!inner(cliente_id)")
+      .eq("chat_id", chatId)
+      .eq("tipo", "encuesta_postventa")
+      .eq("ed_empleados.cliente_id", clienteId)
+      .not("enviado_en", "is", null)
+      .gte("enviado_en", desde)
+      .order("enviado_en", { ascending: false })
+      .limit(3);
+    for (const s of segs ?? []) {
+      const citaId = (s.variables as { cita_id?: string } | null)?.cita_id;
+      if (!citaId) continue;
+      // La cita tiene que seguir abierta: si alguien ya la cerró a mano
+      // (franja "Por cerrar") o se canceló, un "5" tardío no debe reabrirla.
+      const { data: cita } = await supa
+        .from("ed_citas")
+        .select("id")
+        .eq("id", citaId)
+        .eq("cliente_id", clienteId)
+        .in("estado", ["agendada", "confirmada", "reagendada"])
+        .maybeSingle();
+      if (cita) return { citaId: cita.id as string };
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
 /** Día chileno (YYYY-M-D) de un ISO — útil para agrupar citas por día. */
 export function claveDiaChile(iso: string): string {
   const f = fechaChileDe(new Date(iso));
