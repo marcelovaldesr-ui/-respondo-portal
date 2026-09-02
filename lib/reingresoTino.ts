@@ -6,12 +6,13 @@ import { avisarACliente, resumirParaAviso } from "@/lib/push";
 import { configPorCliente, enviarTexto } from "@/lib/whatsapp";
 import { enviarTextoWaha } from "@/lib/waha";
 import { ventanaAbierta } from "@/lib/ventana24";
+import { ultimaSalidaPorChat } from "@/lib/ultimaSalida";
 import {
   elegible,
   filtrar,
   habilitadasPara,
+  interpretar,
   type Decision,
-  type Propuesta,
 } from "@/lib/reingresoDecision";
 
 /**
@@ -28,11 +29,25 @@ import {
  * webhooks, se procesa un puñado y el resto queda para el siguiente latido: es
  * preferible ir lento a arriesgar el timeout del cron, que es compartido con los
  * seguimientos, los informes y los cupos.
+ *
+ * ⚠️ Y ADEMÁS UN PRESUPUESTO DE TIEMPO (2-sep-2026). Medido contra chats reales
+ * de Impresora Color, una decisión del modelo tarda entre 2 y 17 s. Cinco
+ * seguidas pueden pasar de los 60 s de la función de Vercel, y el vigilante
+ * corre al FINAL del cron, después de todo lo demás. Sin techo, el día que
+ * funcionara de verdad iba a tumbar el latido y los envíos que vienen después.
+ * Por eso recibe `fechaLimite` y deja de empezar revisiones cuando ya no queda
+ * tiempo útil; lo que no alcanzó, lo toma el siguiente latido.
  */
 const MAX_POR_PASADA = 5;
 
 /** Cuánto historial lee para decidir. Suficiente para entender qué se pidió. */
 const MENSAJES_CONTEXTO = 20;
+
+/**
+ * Cuánto tiempo hace falta, como mínimo, para empezar una revisión: una llamada
+ * al modelo (hasta ~17 s medidos) más el envío y las escrituras.
+ */
+const MINIMO_POR_REVISION_MS = 22_000;
 
 export type ResumenReingreso = {
   revisados: number;
@@ -43,8 +58,13 @@ export type ResumenReingreso = {
 
 export async function revisarAbandonadas(
   supa = db(),
+  opts: {
+    /** `Date.now()` después del cual no se empieza ninguna revisión más. */
+    fechaLimite?: number;
+  } = {},
 ): Promise<ResumenReingreso> {
   const out: ResumenReingreso = { revisados: 0, reingresados: 0, callados: 0, detalle: [] };
+  const fechaLimite = opts.fechaLimite ?? Date.now() + 5 * 60_000;
 
   /**
    * Puerta 1: ¿hay algún cliente con esto encendido? Si no, se corta acá sin
@@ -77,8 +97,13 @@ export async function revisarAbandonadas(
     if (!empIds.length) continue;
 
     /**
-     * Candidatos: modo humano, nunca reingresado, no bloqueado, y con el cliente
-     * esperando desde hace más del umbral pero menos de 24 h.
+     * Candidatos: modo humano, no bloqueado, y con el cliente esperando desde
+     * hace más del umbral pero menos de 24 h.
+     *
+     * Ya NO se filtra por `reingreso_en is null` en la consulta (2-sep-2026):
+     * la marca se interpreta más abajo, por episodio. Una conversación revisada
+     * hace una semana, atendida después por una persona y botada otra vez hoy,
+     * tiene que poder entrar de nuevo — antes quedaba fuera para siempre.
      *
      * El límite es explícito: PostgREST corta en 1.000 filas **sin avisar**, y
      * este repositorio ya pagó ese error una vez (analítica, 31-jul).
@@ -88,11 +113,10 @@ export async function revisarAbandonadas(
 
     const { data: candidatos } = await supa
       .from("ed_chat_estado")
-      .select("empleado_id, chat_id, ultimo_entrante_en")
+      .select("empleado_id, chat_id, ultimo_entrante_en, reingreso_en")
       .in("empleado_id", empIds)
       .eq("modo", "humano")
       .eq("reingreso_bloqueado", false)
-      .is("reingreso_en", null)
       .gte("ultimo_entrante_en", desde)
       .lte("ultimo_entrante_en", hasta)
       .order("ultimo_entrante_en", { ascending: true })
@@ -102,42 +126,56 @@ export async function revisarAbandonadas(
     out.revisados += candidatos.length;
 
     /**
-     * ¿Alguien contestó después? UNA sola consulta para todos los candidatos, no
-     * una por chat. Con 3 clientes la diferencia no se nota; con 30 son decenas
-     * de viajes en serie dentro de un cron con techo de tiempo.
+     * ¿Alguien contestó después? Se lee por CHAT (no por empleado digital): si
+     * Beto le escribió, el cliente ya tiene respuesta aunque el estado de Tino
+     * diga otra cosa. Paginado en `lib/ultimaSalida.ts` para que el tope de
+     * 1.000 filas de PostgREST no vuelva a esconder respuestas.
+     *
+     * `desde`: lo más antiguo que importa. Para "¿contestaron después del
+     * cliente?" bastan las últimas 24 h; para "¿una persona ya gastó la marca
+     * anterior?" hay que llegar hasta la marca más vieja entre los candidatos.
      */
     const chatIds = candidatos.map((c) => c.chat_id as string);
-    const { data: salientes } = await supa
-      .from("ed_mensajes")
-      .select("chat_id, empleado_id, creado_en")
-      .in("empleado_id", empIds)
-      .in("chat_id", chatIds)
-      .neq("rol", "cliente")
-      .gte("creado_en", desde)
-      .limit(1000);
-
-    /** Última respuesta del negocio por conversación. */
-    const ultimaSalida = new Map<string, string>();
-    for (const m of salientes ?? []) {
-      const k = `${m.empleado_id}|${m.chat_id}`;
-      const prev = ultimaSalida.get(k);
-      const cur = m.creado_en as string;
-      if (!prev || cur > prev) ultimaSalida.set(k, cur);
-    }
+    const marcas = candidatos
+      .map((c) => c.reingreso_en as string | null)
+      .filter((m): m is string => Boolean(m));
+    const desdeSalidas = new Date(
+      Math.min(new Date(desde).getTime(), ...marcas.map((m) => new Date(m).getTime())),
+    ).toISOString();
+    const ultimaSalida = await ultimaSalidaPorChat({
+      supa,
+      empleadoIds: empIds,
+      chatIds,
+      desde: desdeSalidas,
+    });
 
     let procesados = 0;
     for (const c of candidatos) {
       if (procesados >= MAX_POR_PASADA) break;
+      if (fechaLimite - Date.now() < MINIMO_POR_REVISION_MS) {
+        out.detalle.push("sin tiempo: el resto queda para el siguiente latido");
+        break;
+      }
 
       const empleadoId = c.empleado_id as string;
       const chatId = c.chat_id as string;
       const entranteEn = c.ultimo_entrante_en as string;
-      const k = `${empleadoId}|${chatId}`;
+      const reingresoEn = (c.reingreso_en as string | null) ?? null;
 
       // Si el negocio respondió DESPUÉS del último mensaje del cliente, no hay
       // nada abandonado. Es el caso normal y se descarta sin gastar modelo.
-      const salida = ultimaSalida.get(k);
+      const salida = ultimaSalida.get(chatId)?.cualquiera ?? null;
       if (salida && salida > entranteEn) continue;
+
+      /**
+       * ¿Ya revisó en ESTE episodio? Sí, si hay marca y desde esa marca ninguna
+       * PERSONA le escribió al cliente. Si una persona sí retomó después de la
+       * marca (y aun así el cliente volvió a quedar esperando), es un episodio
+       * nuevo. Los mensajes del propio Tino no cuentan: si contara su propio
+       * reingreso, podría encadenar dos seguidos, que es justo lo que se evita.
+       */
+      const humanoEn = ultimaSalida.get(chatId)?.humano ?? null;
+      const yaReingreso = Boolean(reingresoEn) && !(humanoEn && reingresoEn && humanoEn > reingresoEn);
 
       const minutos = Math.floor((ahora - new Date(entranteEn).getTime()) / 60_000);
 
@@ -164,7 +202,7 @@ export async function revisarAbandonadas(
         umbralMinutos: umbral,
         clienteEsperando: true,
         ventanaAbierta: hayVentana,
-        yaReingreso: false,
+        yaReingreso,
         bloqueado: false,
         activo: true,
       });
@@ -180,6 +218,7 @@ export async function revisarAbandonadas(
           transporte,
           habilitadas,
           minutos,
+          fechaLimite,
         });
         if (r.accion === "callar") {
           out.callados++;
@@ -215,8 +254,9 @@ async function reingresarEn(p: {
   transporte: string;
   habilitadas: readonly string[];
   minutos: number;
+  fechaLimite: number;
 }): Promise<Decision> {
-  const { supa, clienteId, empleadoId, chatId, transporte, habilitadas, minutos } = p;
+  const { supa, clienteId, empleadoId, chatId, transporte, habilitadas, minutos, fechaLimite } = p;
 
   const { data: filas } = await supa
     .from("ed_mensajes")
@@ -232,17 +272,30 @@ async function reingresarEn(p: {
 
   if (!historial.length) {
     await marcarRevisado(supa, empleadoId, chatId);
-    return { accion: "callar", motivo: "sin historial" };
+    return await anotar(supa, p, { accion: "callar", motivo: "sin historial" });
   }
 
-  const prompt = await armarPrompt(clienteId, empleadoId, historial, bloqueReingreso(habilitadas, minutos));
-  if (!prompt) {
+  /**
+   * ⚠️ EL BLOQUE DE REINGRESO VA AL FINAL, NO COMO `bloqueExtra`.
+   *
+   * `armarPrompt` inserta `bloqueExtra` en el medio y cierra SIEMPRE con la
+   * instrucción del chat en vivo: «Responde SOLO con este JSON {"respuesta",
+   * "escalar", ...}». Con el bloque en el medio, el modelo tenía dos formatos
+   * contradictorios y la última palabra era la del motor. Al final, y diciendo
+   * explícitamente que reemplaza al anterior, la última palabra es la nuestra.
+   */
+  const base = await armarPrompt(clienteId, empleadoId, historial);
+  if (!base) {
     await marcarRevisado(supa, empleadoId, chatId);
-    return { accion: "callar", motivo: "no se pudo armar el prompt" };
+    return await anotar(supa, p, { accion: "callar", motivo: "no se pudo armar el prompt" });
   }
+  const prompt = `${base}\n\n${bloqueReingreso(habilitadas, minutos)}`;
 
-  const bruto = await generarJSON(prompt);
-  const propuesta = normalizar(bruto);
+  // Si el modelo falla o se acaba el tiempo, se lanza: el chat NO se marca y
+  // el siguiente latido lo vuelve a intentar. Marcarlo acá sería darlo por
+  // revisado sin haberlo mirado.
+  const crudo = await generarJSON(prompt, { fechaLimite });
+  const propuesta = interpretar(crudo);
   const decision = filtrar(propuesta, habilitadas);
 
   await marcarRevisado(supa, empleadoId, chatId);
@@ -256,12 +309,15 @@ async function reingresarEn(p: {
      * problema pasa a ser del equipo, y para eso está el aviso.
      */
     await avisarAbandono(supa, clienteId, chatId, minutos);
-    return decision;
+    return await anotar(supa, p, decision, propuesta);
   }
 
   const texto = decision.texto;
   const enviado = await mandar({ clienteId, chatId, texto, transporte });
-  if (!enviado) return { accion: "callar", motivo: "no se pudo enviar" };
+  if (!enviado) {
+    return await anotar(supa, p, { accion: "callar", motivo: "no se pudo enviar" }, propuesta);
+  }
+  await anotar(supa, p, decision, propuesta);
 
   await guardarMensaje(supa, {
     empleadoId,
@@ -346,19 +402,43 @@ async function mandar(p: {
   return Boolean(r?.ok);
 }
 
-/** Lo que el modelo devuelve puede venir con cualquier forma. Se normaliza. */
-function normalizar(bruto: unknown): Propuesta {
-  const o = (bruto ?? {}) as Record<string, unknown>;
-  const accion = String(o.accion ?? "nada");
-  return {
-    accion: accion === "responder" || accion === "preguntar" ? accion : "nada",
-    categoria: typeof o.categoria === "string" ? o.categoria : undefined,
-    texto: typeof o.texto === "string" ? o.texto : undefined,
-  };
+/**
+ * BITÁCORA: qué miró el vigilante y qué decidió, chat por chat.
+ *
+ * Hasta el 2-sep-2026 la única huella de una revisión era `reingreso_en` y un
+ * conteo en la respuesta del cron que nadie guarda. Por eso el vigilante pudo
+ * estar 94 revisiones callando por un bug sin que nadie lo notara: no había
+ * dónde mirar. Ahora cada decisión —incluido "callar" y su motivo— queda en
+ * `ed_reingresos` (migración 290).
+ *
+ * Best-effort a propósito: si la migración no está aplicada todavía, se avisa
+ * por consola y el vigilante sigue. Una bitácora que falta no puede impedir
+ * que se conteste a un cliente.
+ */
+async function anotar(
+  supa: ReturnType<typeof db>,
+  p: { clienteId: string; empleadoId: string; chatId: string; minutos: number },
+  decision: Decision,
+  propuesta?: { accion: string; categoria?: string; texto?: string },
+): Promise<Decision> {
+  const { error } = await supa.from("ed_reingresos").insert({
+    cliente_id: p.clienteId,
+    empleado_id: p.empleadoId,
+    chat_id: p.chatId,
+    minutos_esperando: p.minutos,
+    accion: decision.accion,
+    categoria:
+      decision.accion === "responder" ? decision.categoria : (propuesta?.categoria ?? null),
+    motivo: decision.accion === "callar" ? decision.motivo : null,
+    texto: decision.accion === "callar" ? (propuesta?.texto ?? null) : decision.texto,
+  });
+  if (error) console.warn("[reingreso] sin bitácora (¿migración 290 aplicada?):", error.message);
+  return decision;
 }
 
 /**
- * Las instrucciones del reingreso, que se agregan al prompt normal del empleado.
+ * Las instrucciones del reingreso. Van AL FINAL del prompt normal del empleado
+ * (ver `reingresarEn`), reemplazando el formato de salida del chat en vivo.
  *
  * El énfasis está puesto donde duele: **prohibido el mensaje de relleno**. Un
  * segundo «déjame confirmarlo» le confirma al cliente que lo tienen olvidado, y
@@ -374,7 +454,9 @@ El cliente lleva ${Math.floor(minutos / 60)} horas esperando.
 Tu trabajo NO es contestar todo. Es evitar que esta conversación se muera, sin
 decir nada que no sepas con certeza.
 
-Responde SOLO con este JSON:
+⚠️ IGNORA el formato de JSON indicado más arriba ("respuesta", "escalar",
+"lead"...). En esta situación especial responde ÚNICAMENTE con este otro JSON,
+sin nada más:
 
 {"accion":"responder"|"preguntar"|"nada","categoria":"<categoría>","texto":"<mensaje>"}
 
@@ -385,20 +467,31 @@ Si la categoría no está en esa lista, NO uses "responder" aunque creas saberla
 
 **"preguntar"** — si no puedes responder pero falta un dato que de todas formas
 se va a necesitar para atenderlo (modelo del equipo, cantidad, urgencia, si es
-retiro o despacho). Pregunta ESO, una sola cosa, breve.
+retiro o despacho). Pregunta ESO, una sola cosa, breve. Solo vale si el cliente
+dejó algo PENDIENTE de nuestro lado (una consulta, un pedido, una cotización
+que espera). NO es "preguntar" un "¿pudiste pasar?", "¿sigues interesado?" o
+"¿necesitas algo más?": eso es relleno.
 
-**"nada"** — si no puedes responder y no hay ningún dato útil que pedir.
+**"nada"** — si no puedes responder y no hay ningún dato útil que pedir. También
+si el último mensaje del cliente no pide nada: un "gracias", un "ok", un "sí"
+que contesta a una persona del equipo, un sticker, un archivo o comprobante sin
+pregunta. Ahí no hay nada que retomar.
 
 REGLAS QUE NO PUEDES ROMPER:
 1. PROHIBIDO mandar un mensaje que solo diga que siguen revisando, que no se han
-   olvidado, que confirmas a la brevedad o que agradeces la paciencia. Si no
-   tienes nada que aportar, usa "nada". El silencio es mejor que un mensaje
-   vacío.
+   olvidado, que confirmas a la brevedad, que "ya le avisaste al equipo" o que
+   agradeces la paciencia. Si no tienes nada que aportar, usa "nada". El
+   silencio es mejor que un mensaje vacío.
 2. No pidas disculpas por la demora ni menciones que nadie respondió. No lo
    señales: resuélvelo.
 3. Nunca inventes precios, stock, disponibilidad ni plazos.
 4. Una persona pudo haber hablado con este cliente por teléfono o en el local.
    No des por hecho lo que se acordó ni contradigas nada.
 5. Un solo mensaje, corto, en el tono de siempre.
+6. NO pidas abono ni entregues datos de transferencia si en esta conversación
+   una persona del equipo todavía no dio el precio o la cotización. Sin precio
+   no hay nada que abonar.
+7. Habla solo del producto que el cliente pidió en ESTA conversación. Si no
+   está claro cuál es, no lo nombres.
 `.trim();
 }

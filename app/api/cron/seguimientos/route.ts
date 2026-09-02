@@ -47,6 +47,9 @@ export async function GET(request: NextRequest) {
   if (!secreto) return new NextResponse("Cron no configurado", { status: 503 });
   if (!secretoValido(k, secreto)) return new NextResponse("Forbidden", { status: 403 });
 
+  // Desde cuándo corre esta invocación: los pasos que llaman al modelo (el
+  // vigilante) reciben un techo derivado de acá para no pasarse de maxDuration.
+  const inicioCron = Date.now();
   const supa = db();
 
   /**
@@ -201,8 +204,16 @@ export async function GET(request: NextRequest) {
    */
   let reingresos = { revisados: 0, reingresados: 0, callados: 0 };
   try {
-    const rr = await revisarAbandonadas(supa);
+    /**
+     * Techo de tiempo: la función muere a los 60 s (`maxDuration`) y después
+     * de esto todavía corren el archivado, las cotizaciones y el latido. Cada
+     * decisión del modelo tarda de 2 a 17 s medidos; sin techo, el vigilante
+     * podía llevarse la función entera. Lo que no alcance queda para el
+     * siguiente latido, que llega en 5 minutos.
+     */
+    const rr = await revisarAbandonadas(supa, { fechaLimite: inicioCron + 45_000 });
     reingresos = { revisados: rr.revisados, reingresados: rr.reingresados, callados: rr.callados };
+    if (rr.detalle.length) console.log("[cron] vigilante:", rr.detalle.join(" | "));
   } catch (e) {
     console.error("[cron] vigilante de abandonadas falló (no afecta lo demás)", (e as Error).message);
   }

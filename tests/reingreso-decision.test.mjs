@@ -7,6 +7,7 @@ import {
   esRelleno,
   filtrar,
   habilitadasPara,
+  interpretar,
 } from "../lib/reingresoDecision.ts";
 
 /**
@@ -39,10 +40,47 @@ test("apagado por cliente = el vigilante es INERTE", () => {
   assert.equal(elegible({ ...base, activo: false }).ok, false);
 });
 
-test("NUNCA reingresa dos veces en la misma conversación", () => {
+test("NUNCA reingresa dos veces en la misma espera", () => {
   // Es la regla que evita lo que más molesta: el asistente insistiendo. Si ya
-  // entró y sigue sin respuesta, el problema es del equipo.
+  // entró y sigue sin respuesta, el problema es del equipo. (Quién decide si
+  // la espera es "la misma" o una nueva es reingresoTino.ts: una persona tiene
+  // que haber escrito después de la marca.)
   assert.equal(elegible({ ...base, yaReingreso: true }).ok, false);
+});
+
+// ── Del texto crudo del modelo a una propuesta ──────────────────────────────
+//
+// ⭐ Acá vivió el bug del "0 de 94" (2-sep-2026): generarJSON devuelve un
+// STRING y el vigilante lo trataba como objeto. Todo caía en "nada".
+
+test("⭐ interpreta el JSON que devuelve el modelo (viene como string)", () => {
+  const p = interpretar('{"accion":"responder","categoria":"horario","texto":"Abrimos a las 9."}');
+  assert.equal(p.accion, "responder");
+  assert.equal(p.categoria, "horario");
+  assert.equal(p.texto, "Abrimos a las 9.");
+});
+
+test("tolera cercas de markdown alrededor del JSON", () => {
+  const p = interpretar('```json\n{"accion":"preguntar","texto":"¿Cuántas necesitas?"}\n```');
+  assert.equal(p.accion, "preguntar");
+  assert.equal(p.texto, "¿Cuántas necesitas?");
+});
+
+test("si el modelo contestó con el formato del chat en vivo, es «nada»", () => {
+  // Sin categoría no hay reja posible; mejor callar que mandar algo sin filtro.
+  const p = interpretar('{"respuesta":"Sí, hacemos stickers","escalar":false,"accion":null}');
+  assert.equal(p.accion, "nada");
+});
+
+test("basura del modelo = «nada», nunca una excepción", () => {
+  assert.equal(interpretar("no soy json").accion, "nada");
+  assert.equal(interpretar("").accion, "nada");
+  assert.equal(interpretar(null).accion, "nada");
+  assert.equal(interpretar("[1,2]").accion, "nada");
+});
+
+test("una acción inventada por el modelo cae en «nada»", () => {
+  assert.equal(interpretar('{"accion":"escalar","texto":"x"}').accion, "nada");
 });
 
 test("respeta el interruptor de «acá Tino no entra»", () => {

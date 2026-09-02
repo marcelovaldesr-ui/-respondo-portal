@@ -1,5 +1,6 @@
 import { db } from "@/lib/db";
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { ultimaSalidaPorChat } from "@/lib/ultimaSalida";
 
 /**
  * CONVERSACIONES QUE UNA PERSONA TOMÓ Y EL CLIENTE QUEDÓ ESPERANDO.
@@ -20,10 +21,22 @@ import type { SupabaseClient } from "@supabase/supabase-js";
  * ventana de tiempo, que un sistema del negocio (Gestión) puede pedir cuando
  * quiera para mostrar TODO lo que sigue esperando, sin importar hace cuánto.
  *
+ * QUÉ CUENTA COMO "ESPERANDO" (ampliado el 2-sep-2026)
+ * ----------------------------------------------------
+ *  a) `sin_respuesta`: el último mensaje es del cliente y nadie del negocio
+ *     —ni persona ni Tino— contestó después.
+ *  b) `derivada_sin_atender`: Tino derivó al equipo («le aviso al equipo para
+ *     que te responda») y desde entonces ninguna PERSONA le escribió al
+ *     cliente. El último mensaje es de Tino, así que (a) no lo ve — pero el
+ *     cliente está igual de esperando. En Impresora Color había 234
+ *     derivaciones sin atender y esta lista no mostraba ninguna.
+ *
  * SOLO LECTURA. No toca `ed_chat_estado`, no cambia `modo`, no le escribe al
  * cliente. Es exactamente lo que el puente externo ya hace para leer una
  * conversación (`app/api/externo/conversacion`), pero para muchas a la vez.
  */
+
+export type MotivoEspera = "sin_respuesta" | "derivada_sin_atender";
 
 export type ConversacionEsperando = {
   chatId: string;
@@ -34,15 +47,16 @@ export type ConversacionEsperando = {
   /** Si el vigilante ya la revisó al menos una vez (y, si no pudo resolverla, ya avisó por push). */
   yaRevisadaPorVigilante: boolean;
   horasEsperando: number;
+  motivo: MotivoEspera;
 };
 
 const LIMITE_CANDIDATOS = 500;
 
 /**
- * Conversaciones en modo "humano" donde el ÚLTIMO mensaje es del cliente: nadie
- * —ni una persona, ni Tino— le contestó después. Es la señal dura de "esto se
- * quedó sin seguimiento", sin opinar de si la persona ya lo tenía controlado
- * por fuera (llamada, WhatsApp personal, etc.) — eso lo decide quien lo mire.
+ * Conversaciones en modo "humano" donde el cliente sigue esperando a alguien
+ * del negocio (ver los dos motivos arriba). Es la señal dura de "esto se quedó
+ * sin seguimiento", sin opinar de si la persona ya lo tenía controlado por
+ * fuera (llamada, WhatsApp personal, etc.) — eso lo decide quien lo mire.
  */
 export async function seguimientoPendiente(
   clienteId: string,
@@ -70,24 +84,42 @@ export async function seguimientoPendiente(
 
   if (!candidatos?.length) return [];
 
-  // Última respuesta del negocio (Tino o una persona), la más reciente por
-  // chat_id — no importa cuál de los empleados de este cliente la mandó, solo
-  // si YA se le contestó al cliente después de su último mensaje.
+  /**
+   * Última respuesta del negocio por chat. Paginado (`lib/ultimaSalida.ts`):
+   * la versión anterior hacía una sola consulta con `.limit(2000)`, PostgREST
+   * la cortaba en 1.000 filas sin avisar, y 92 conversaciones que SÍ tenían
+   * respuesta salían acá como "sin responder". Un tercio de la alerta era
+   * falso (medido el 2-sep-2026).
+   *
+   * `desde`: nada anterior al entrante más antiguo puede cambiar el veredicto
+   * de ningún candidato (vienen ordenados ascendente, así que es el primero).
+   */
   const chatIds = candidatos.map((c) => c.chat_id as string);
-  const { data: salientes } = await supa
-    .from("ed_mensajes")
+  const ultimaSalida = await ultimaSalidaPorChat({
+    supa,
+    empleadoIds: empIds,
+    chatIds,
+    desde: candidatos[0].ultimo_entrante_en as string,
+  });
+
+  /**
+   * Derivaciones que nadie marcó como atendidas. `atendida_en` casi nunca se
+   * marca (solo al «Devolver a Tino»), así que NO se confía en ese campo para
+   * decir que ya la vieron: lo que la cierra es que una persona haya escrito
+   * después de la derivación.
+   */
+  const { data: escalaciones } = await supa
+    .from("ed_escalaciones")
     .select("chat_id, creado_en")
     .in("empleado_id", empIds)
     .in("chat_id", chatIds)
-    .neq("rol", "cliente")
-    .limit(2000);
-
-  const ultimaSalida = new Map<string, string>();
-  for (const m of salientes ?? []) {
-    const chatId = m.chat_id as string;
-    const cur = m.creado_en as string;
-    const prev = ultimaSalida.get(chatId);
-    if (!prev || cur > prev) ultimaSalida.set(chatId, cur);
+    .is("atendida_en", null)
+    .order("creado_en", { ascending: false })
+    .limit(1000);
+  const ultimaDerivacion = new Map<string, string>();
+  for (const e of escalaciones ?? []) {
+    const chatId = e.chat_id as string;
+    if (!ultimaDerivacion.has(chatId)) ultimaDerivacion.set(chatId, e.creado_en as string);
   }
 
   const ahora = Date.now();
@@ -95,8 +127,21 @@ export async function seguimientoPendiente(
   for (const c of candidatos) {
     const chatId = c.chat_id as string;
     const entranteEn = c.ultimo_entrante_en as string;
-    const salida = ultimaSalida.get(chatId);
-    if (salida && salida > entranteEn) continue; // ya le contestaron despues
+    const salida = ultimaSalida.get(chatId) ?? { cualquiera: null, humano: null };
+
+    let motivo: MotivoEspera | null = null;
+    if (!salida.cualquiera || salida.cualquiera <= entranteEn) {
+      motivo = "sin_respuesta";
+    } else {
+      // Alguien contestó después del cliente. ¿Fue solo Tino derivando, y
+      // ninguna persona lo siguió? La derivación tiene que ser de este mismo
+      // episodio (posterior al último mensaje del cliente).
+      const derivadaEn = ultimaDerivacion.get(chatId);
+      if (derivadaEn && derivadaEn >= entranteEn && (!salida.humano || salida.humano < derivadaEn)) {
+        motivo = "derivada_sin_atender";
+      }
+    }
+    if (!motivo) continue;
 
     out.push({
       chatId,
@@ -104,6 +149,7 @@ export async function seguimientoPendiente(
       actualizadoEn: (c.actualizado_en as string | null) ?? null,
       yaRevisadaPorVigilante: Boolean(c.reingreso_en),
       horasEsperando: (ahora - new Date(entranteEn).getTime()) / 3_600_000,
+      motivo,
     });
   }
 

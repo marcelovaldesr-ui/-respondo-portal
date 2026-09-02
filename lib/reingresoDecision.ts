@@ -76,6 +76,47 @@ export type Decision =
   | { accion: "preguntar"; texto: string }
   | { accion: "callar"; motivo: string };
 
+/**
+ * DEL TEXTO CRUDO DEL MODELO A UNA PROPUESTA.
+ *
+ * ⚠️ LA CAUSA DEL "0 DE 94" (2-sep-2026). `generarJSON` devuelve el JSON como
+ * **string**, igual que en `responderBot.ts` e `insights.ts`, que le hacen
+ * `JSON.parse`. El vigilante no lo hacía: le pasaba el string a `normalizar`,
+ * que leía `.accion` de un string (undefined) y caía en "nada". Resultado:
+ * desde que se encendió, el vigilante revisó 94 conversaciones de Impresora
+ * Color y decidió callar en las 94 — incluidas preguntas de horario y de
+ * "¿hacen stickers?" que tenían la respuesta en la ficha del negocio. Y como
+ * cada revisión se marca "hecha", no volvió a mirarlas nunca.
+ *
+ * Por eso esto vive acá y no en `reingresoTino.ts`: es puro, sin base ni red,
+ * y `tests/reingreso-decision.test.mjs` lo cubre con el caso exacto que falló.
+ *
+ * Tolerante a lo que suele venir: cercas de markdown (```json), un objeto ya
+ * parseado, o el formato del motor de chat ({"respuesta": ...}) si el modelo
+ * ignoró la instrucción especial — ese último caso se trata como "nada",
+ * porque una respuesta sin categoría no puede pasar por la reja.
+ */
+export function interpretar(crudo: unknown): Propuesta {
+  let o: Record<string, unknown> = {};
+  if (typeof crudo === "string") {
+    const limpio = crudo.replace(/^\s*```(?:json)?\s*/i, "").replace(/\s*```\s*$/, "").trim();
+    try {
+      const parsed = JSON.parse(limpio);
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) o = parsed;
+    } catch {
+      o = {};
+    }
+  } else if (crudo && typeof crudo === "object" && !Array.isArray(crudo)) {
+    o = crudo as Record<string, unknown>;
+  }
+  const accion = String(o.accion ?? "nada");
+  return {
+    accion: accion === "responder" || accion === "preguntar" ? accion : "nada",
+    categoria: typeof o.categoria === "string" ? o.categoria : undefined,
+    texto: typeof o.texto === "string" ? o.texto : undefined,
+  };
+}
+
 /** Estado de la conversación, ya resuelto por quien llama. */
 export type Situacion = {
   /** Minutos desde el último mensaje del cliente sin que nadie conteste. */
@@ -86,7 +127,12 @@ export type Situacion = {
   clienteEsperando: boolean;
   /** ¿Se puede mandar texto libre? En Cloud, fuera de las 24 h no se puede. */
   ventanaAbierta: boolean;
-  /** ¿Ya reingresó antes en esta conversación? */
+  /**
+   * ¿Ya reingresó en ESTE episodio de espera? Es decir: ya revisó, y desde
+   * entonces nadie del negocio le ha vuelto a escribir al cliente. Si después
+   * de la revisión una persona retomó y la conversación volvió a quedar
+   * botada, es un episodio nuevo y cuenta como `false` (ver reingresoTino.ts).
+   */
   yaReingreso: boolean;
   /** Interruptor por conversación: «acá Tino no vuelve a entrar». */
   bloqueado: boolean;
@@ -106,12 +152,17 @@ export function elegible(s: Situacion): { ok: boolean; motivo: string } {
   if (!s.clienteEsperando) return { ok: false, motivo: "el último mensaje no es del cliente" };
   if (s.yaReingreso) {
     /**
-     * UNA SOLA VEZ POR CONVERSACIÓN. Es la regla que evita lo que más molesta:
+     * UNA SOLA VEZ POR EPISODIO. Es la regla que evita lo que más molesta:
      * el asistente insistiendo con lo mismo. Si ya entró y sigue sin respuesta,
      * el problema es del equipo y se resuelve avisándole al equipo, no
      * escribiéndole otra vez al cliente.
+     *
+     * Antes era "una sola vez por conversación, para siempre" (2-sep-2026): un
+     * cliente que preguntaba de nuevo una semana después, tras haber sido
+     * atendido, quedaba fuera del vigilante de por vida. Ahora la marca se
+     * "gasta" solo hasta que una persona vuelve a escribirle.
      */
-    return { ok: false, motivo: "ya reingresó una vez" };
+    return { ok: false, motivo: "ya reingresó en esta espera" };
   }
   if (s.minutosSinRespuesta < s.umbralMinutos) {
     return { ok: false, motivo: "todavía no pasa el tiempo de espera" };
