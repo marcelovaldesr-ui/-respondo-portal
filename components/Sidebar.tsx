@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import type { ReactElement } from "react";
+import { useEffect, useState, type ReactElement } from "react";
 
 /* Iconos line-art, en línea con la identidad de la web (nada de emojis). */
 const Icono = {
@@ -25,7 +25,17 @@ const Icono = {
   informe: (
     <path d="M9 4h6a1 1 0 0 1 1 1v1h2a1 1 0 0 1 1 1v13a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h2V5a1 1 0 0 1 1-1zM9 12h6M9 16h4" />
   ),
+  /* Plegar / desplegar la barra (solo escritorio). */
+  plegar: <path d="M11 17l-5-5 5-5M18 17l-5-5 5-5" />,
+  desplegar: <path d="M13 17l5-5-5-5M6 17l5-5-5-5" />,
 };
+
+/**
+ * Recuerdo de "barra plegada" entre visitas, por dispositivo. Misma idea que
+ * `ic_sidebar_colapsado` en Gestión: quien pliega el menú para ganar ancho no
+ * quiere volver a plegarlo cada vez que entra.
+ */
+const CLAVE_PLEGADA = "respondo_sidebar_plegada";
 
 /**
  * Menú agrupado por VERBO, no por funcionalidad.
@@ -108,11 +118,18 @@ function ItemNav({
   item,
   activo,
   valor,
+  plegado = false,
 }: {
   item: ItemMenu;
   activo: boolean;
   /** Número a la derecha. 0 o undefined = no se pinta nada. */
   valor?: number;
+  /**
+   * Barra plegada (escritorio): solo el icono, centrado, con el nombre en el
+   * tooltip y el contador como puntito en la esquina, para que "te esperan"
+   * no desaparezca junto con la etiqueta.
+   */
+  plegado?: boolean;
 }) {
   /**
    * El contador de "te esperan" va en coral y el resto en índigo tenue.
@@ -127,7 +144,10 @@ function ItemNav({
     <Link
       href={item.href}
       aria-current={activo ? "page" : undefined}
-      className="flex shrink-0 items-center gap-2.5 whitespace-nowrap px-3 py-[7px] transition-colors duration-100"
+      title={plegado ? (valor ? `${item.label} · ${valor}` : item.label) : undefined}
+      className={`relative flex shrink-0 items-center whitespace-nowrap py-[7px] transition-colors duration-100 ${
+        plegado ? "justify-center px-0" : "gap-2.5 px-3"
+      }`}
       style={{
         borderRadius: "var(--r-input)",
         fontSize: "var(--t-fila)",
@@ -166,8 +186,18 @@ function ItemNav({
       >
         {item.icono}
       </svg>
-      <span className="flex-1">{item.label}</span>
-      {valor ? (
+      {plegado ? (
+        valor ? (
+          <span
+            aria-hidden="true"
+            className="absolute right-2 top-1.5 h-2 w-2 rounded-full"
+            style={{ background: urgente ? "var(--coral)" : "var(--indigo)" }}
+          />
+        ) : null
+      ) : (
+        <span className="flex-1">{item.label}</span>
+      )}
+      {!plegado && valor ? (
         <span
           className="cifra shrink-0 px-1.5 py-[1px] font-semibold"
           style={{
@@ -215,6 +245,36 @@ export default function Sidebar({
   porCerrar?: number;
 }) {
   const ruta = usePathname();
+
+  /**
+   * PLEGAR LA BARRA (escritorio).
+   *
+   * Conversaciones es lista + chat + contexto: tres columnas que compiten con
+   * estos 248px. En vez de angostarlas para siempre, la persona decide: pliega
+   * la barra a solo iconos cuando necesita el ancho, y la despliega cuando
+   * quiere leer las etiquetas. Se recuerda entre visitas. Bajo `lg` no aplica:
+   * ahí el menú es la fila de arriba y no compite por ancho.
+   */
+  const [plegada, setPlegada] = useState(false);
+  useEffect(() => {
+    try {
+      setPlegada(localStorage.getItem(CLAVE_PLEGADA) === "1");
+    } catch {
+      // Sin localStorage (privado/bloqueado): queda desplegada, como siempre.
+    }
+  }, []);
+  function alternarPlegada() {
+    setPlegada((prev) => {
+      const next = !prev;
+      try {
+        localStorage.setItem(CLAVE_PLEGADA, next ? "1" : "0");
+      } catch {
+        // Se pierde el recuerdo entre visitas; el botón sigue funcionando.
+      }
+      return next;
+    });
+  }
+
   const visible = (it: ItemMenu) =>
     rol === "dueno" || !["/informacion", "/whatsapp"].includes(it.href);
   const contadores = { esperando, porCerrar } as const;
@@ -222,15 +282,17 @@ export default function Sidebar({
 
   return (
     <aside
-      className="flex shrink-0 flex-col px-3 py-3 lg:min-h-screen lg:w-[248px] lg:py-4"
+      className={`flex shrink-0 flex-col py-3 transition-[width] duration-150 lg:min-h-screen lg:py-4 ${
+        plegada ? "px-3 lg:w-[64px] lg:px-2" : "px-3 lg:w-[248px]"
+      }`}
       style={{ background: "var(--nav-bg)", borderRight: "1px solid var(--nav-borde)" }}
     >
       {/* Marca */}
-      <div className="flex items-center justify-between gap-3 px-1">
+      <div className={`flex items-center justify-between gap-3 px-1 ${plegada ? "lg:flex-col lg:gap-2 lg:px-0" : ""}`}>
         <div className="flex items-center gap-2.5">
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img src="/brand/isotipo.svg" alt="" width={30} height={30} className="shrink-0" />
-          <div className="leading-tight">
+          <div className={`leading-tight ${plegada ? "lg:hidden" : ""}`}>
             <div className="font-semibold tracking-tight" style={{ fontSize: "var(--t-titulo)" }}>
               Respondo
             </div>
@@ -239,6 +301,39 @@ export default function Sidebar({
             </div>
           </div>
         </div>
+
+        {/* Plegar/desplegar: solo escritorio. En móvil el menú es la fila de
+            arriba y no hay nada que plegar. */}
+        <button
+          type="button"
+          onClick={alternarPlegada}
+          title={plegada ? "Desplegar menú" : "Plegar menú"}
+          aria-label={plegada ? "Desplegar menú" : "Plegar menú"}
+          aria-expanded={!plegada}
+          className="hidden shrink-0 rounded-md p-1.5 transition-colors lg:block"
+          style={{ color: "var(--nav-texto)" }}
+          onMouseEnter={(e) => {
+            e.currentTarget.style.background = "var(--nav-hover)";
+            e.currentTarget.style.color = "var(--nav-texto-activo)";
+          }}
+          onMouseLeave={(e) => {
+            e.currentTarget.style.background = "transparent";
+            e.currentTarget.style.color = "var(--nav-texto)";
+          }}
+        >
+          <svg
+            width="16"
+            height="16"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.8"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          >
+            {plegada ? Icono.desplegar : Icono.plegar}
+          </svg>
+        </button>
 
         {/* En móvil la salida va aquí, para no gastar una fila entera */}
         <form action="/auth/salir" method="post" className="lg:hidden">
@@ -253,7 +348,7 @@ export default function Sidebar({
       </div>
 
       {/* Negocio — tarjeta blanca sobre el lienzo, igual que el ítem activo */}
-      <div className="tarjeta mt-3 hidden px-2.5 py-2 lg:block">
+      <div className={`tarjeta mt-3 hidden px-2.5 py-2 ${plegada ? "" : "lg:block"}`}>
         <div className="flex items-center gap-2">
           <span className="punto-vivo" aria-hidden="true" />
           <div className="truncate font-semibold" style={{ fontSize: "var(--t-fila)" }}>
@@ -287,9 +382,9 @@ export default function Sidebar({
         {GRUPOS.map((g) => ({ ...g, items: g.items.filter(visible) }))
           .filter((g) => g.items.length > 0)
           .map((g, i) => (
-          <div key={g.titulo} className={i ? "mt-4" : ""}>
+          <div key={g.titulo} className={i ? (plegada ? "mt-3" : "mt-4") : ""}>
             <div
-              className="px-3 pb-1 font-semibold uppercase"
+              className={`px-3 pb-1 font-semibold uppercase ${plegada ? "hidden" : ""}`}
               style={{
                 fontSize: "var(--t-columna)",
                 color: "var(--nav-grupo)",
@@ -298,6 +393,10 @@ export default function Sidebar({
             >
               {g.titulo}
             </div>
+            {/* Plegada: una línea fina separa los grupos en vez del rótulo */}
+            {plegada && i > 0 && (
+              <div className="mx-2 mb-2" style={{ borderTop: "1px solid var(--nav-borde)" }} />
+            )}
             <div className="flex flex-col gap-0.5">
               {g.items.map((it) => (
                 <ItemNav
@@ -305,6 +404,7 @@ export default function Sidebar({
                   item={it}
                   activo={ruta.startsWith(it.href)}
                   valor={valorDe(it)}
+                  plegado={plegada}
                 />
               ))}
             </div>
@@ -318,19 +418,36 @@ export default function Sidebar({
         style={{ borderTop: "1px solid var(--nav-borde)" }}
       >
         <div
-          className="truncate px-1"
+          className={`truncate px-1 ${plegada ? "hidden" : ""}`}
           style={{ fontSize: "var(--t-micro)", color: "var(--muted-2)" }}
           title={email}
         >
           {email}
         </div>
-        <form action="/auth/salir" method="post">
+        <form action="/auth/salir" method="post" className={plegada ? "flex justify-center" : ""}>
           <button
             type="submit"
-            className="mt-1 px-1 font-medium"
+            className={plegada ? "rounded-md p-1.5" : "mt-1 px-1 font-medium"}
             style={{ fontSize: "var(--t-menor)", color: "var(--muted)" }}
+            title={plegada ? `Cerrar sesión (${email})` : undefined}
+            aria-label="Cerrar sesión"
           >
-            Cerrar sesión
+            {plegada ? (
+              <svg
+                width="18"
+                height="18"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.6"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              >
+                <path d="M10 4H5a1 1 0 0 0-1 1v14a1 1 0 0 0 1 1h5M15 8l4 4-4 4M19 12H9" />
+              </svg>
+            ) : (
+              "Cerrar sesión"
+            )}
           </button>
         </form>
       </div>
