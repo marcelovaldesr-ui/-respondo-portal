@@ -8,7 +8,14 @@
  * significa perder mensajes en silencio.
  *
  * Mismo patrón que agendaCore.ts, generadorCore.ts y cupoConversaciones.ts.
- * REGLA: acá no entra nada que toque red ni base de datos.
+ * REGLA: acá no entra nada que toque red ni base de datos — ni siquiera un
+ * import relativo a otro .ts: `node --test` (sin loader) no le adivina la
+ * extensión, y agregarla acá rompería a `tsc` (moduleResolution "bundler" no
+ * acepta imports con ".ts" explícito sin `allowImportingTsExtensions`). Por
+ * eso el marcador de audio queda escrito literal acá, en vez de importado
+ * desde lib/marcadorAudio.ts — pero tiene que ser BYTE A BYTE igual: lo prueba
+ * tests/parser-meta.test.mjs ("el marcador de audio coincide con
+ * lib/marcadorAudio.ts").
  */
 
 export type EntranteNormalizado = {

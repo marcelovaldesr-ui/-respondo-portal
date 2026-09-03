@@ -1,5 +1,6 @@
 import { db } from "@/lib/db";
 import { cifrar, descifrar } from "@/lib/cifrado";
+import { MARCADOR_AUDIO } from "@/lib/marcadorAudio";
 
 /**
  * INSTAGRAM DIRECT — transporte.
@@ -126,7 +127,7 @@ export function textoDeAdjuntoIg(tipo: string): string {
   const t = (tipo || "").toLowerCase();
   if (t.includes("image")) return "[el cliente envió una imagen]";
   if (t.includes("video")) return "[el cliente envió un video]";
-  if (t.includes("audio")) return "[el cliente envió un audio]";
+  if (t.includes("audio")) return MARCADOR_AUDIO;
   if (t.includes("share")) return "[el cliente compartió una publicación]";
   if (t.includes("story")) return "[el cliente respondió a una historia]";
   if (t.includes("file")) return "[el cliente envió un archivo]";

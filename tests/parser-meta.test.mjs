@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { parsearWebhook } from "../lib/parserMeta.ts";
+import { MARCADOR_AUDIO } from "../lib/marcadorAudio.ts";
 
 /**
  * Dos cosas que se agregaron el 21-ago-2026 y conviene que no se caigan solas:
@@ -161,6 +162,26 @@ test("audio y sticker se traducen a nuestro vocabulario, el mismo que WAHA", () 
     sobre({ id: "w.14", from: "56900000000", type: "sticker", sticker: { id: "s1", mime_type: "image/webp" } }),
   )[0];
   assert.equal(sticker.adjunto?.tipo, "sticker");
+});
+
+/**
+ * lib/promptEmpleado.ts no puede importar `@/lib/marcadorAudio` sin romper
+ * `tsc`/`node --test` (ver el comentario de cabecera de parserMeta.ts), así
+ * que el marcador queda escrito LITERAL ahí adentro, duplicado a mano. Esta
+ * prueba es la que evita que ese literal se desincronice en silencio de
+ * lib/marcadorAudio.ts — que es lo que usa lib/responderBot.ts para decidir
+ * si deriva la conversación a una persona sin pasar por el modelo.
+ */
+test("el marcador de audio de Meta coincide EXACTO con lib/marcadorAudio.ts", () => {
+  const audio = parsearWebhook(
+    sobre({ id: "w.15", from: "56900000000", type: "audio", audio: { id: "a2", mime_type: "audio/ogg" } }),
+  )[0];
+  assert.equal(audio.texto, MARCADOR_AUDIO);
+
+  const voz = parsearWebhook(
+    sobre({ id: "w.16", from: "56900000000", type: "voice", voice: { id: "a3", mime_type: "audio/ogg" } }),
+  )[0];
+  assert.equal(voz.texto, MARCADOR_AUDIO);
 });
 
 test("un adjunto SIN id no inventa un adjunto vacío", () => {

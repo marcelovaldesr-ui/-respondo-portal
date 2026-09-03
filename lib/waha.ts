@@ -1,5 +1,6 @@
 import { delayHumano } from "@/lib/ritmoHumano";
 import { db } from "@/lib/db";
+import { MARCADOR_AUDIO } from "@/lib/marcadorAudio";
 
 /**
  * Integración con WAHA (WhatsApp NO oficial / Opción A — motor GOWS/whatsmeow).
@@ -84,7 +85,7 @@ export function textoDeAdjunto(a: NonNullable<EntranteWaha["adjunto"]>): string 
     case "documento":
       return `[el cliente envió un archivo${nombre}]`;
     case "audio":
-      return "[el cliente envió un audio]";
+      return MARCADOR_AUDIO;
     case "video":
       return "[el cliente envió un video]";
     case "sticker":

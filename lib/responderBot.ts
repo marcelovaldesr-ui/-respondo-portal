@@ -8,6 +8,7 @@ import { guardarMensaje } from "@/lib/mensajes";
 import { avisarACliente, resumirParaAviso } from "@/lib/push";
 import { modoDe, setModo } from "@/lib/estadoChat";
 import { notificarHQ } from "@/lib/hqBridge";
+import { esAudioSinTexto } from "@/lib/marcadorAudio";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import {
   contextoAgenda,
@@ -286,6 +287,45 @@ export async function responderSiBot(params: {
   const agenda = await contextoAgenda(clienteId, chatId).catch(() => null);
 
   const ultimo = hist[hist.length - 1];
+
+  /**
+   * AUDIO SIN TRANSCRIBIR (auditoría de Conversaciones, 3-sep-2026).
+   *
+   * Tino no escucha audios — no hay transcripción en NINGÚN canal, se
+   * investigó a fondo antes de este cambio. Antes se le pedía al modelo que
+   * pidiera el mensaje por texto (CASOS BORDE en promptEmpleado.ts), pero esa
+   * instrucción competía con otras dos reglas del mismo prompt ("no
+   * repreguntes", "si el adjunto respondía tu pregunta, dalo por resuelto") y
+   * el resultado era inconsistente: a veces pedía texto, a veces inventaba
+   * una respuesta como si hubiera entendido el audio.
+   *
+   * Decisión de Marcelo (3-sep-2026): ni siquiera pedir texto es buena idea —
+   * a un cliente que ya se tomó el trabajo de mandar un audio, que le digan
+   * "no te entendí, escríbelo" le puede sonar peor que no decir nada. Mejor:
+   * Tino se queda en silencio ESTE turno y deriva a una persona, que puede
+   * escuchar el audio de verdad desde el panel (el archivo se sigue guardando
+   * igual, ver lib/mensajes.ts / lib/archivarMediaCore.ts) y responder con
+   * contexto real.
+   *
+   * Va ANTES que confirmación/encuesta rápida y agenda a propósito: un audio
+   * como respuesta a "¿confirmas tu hora?" tampoco se puede leer por código,
+   * así que tiene que ganarle a esos atajos también.
+   */
+  if (ultimo?.rol === "cliente" && esAudioSinTexto(ultimo.texto)) {
+    const supaAudio = db();
+    await setModo(empleadoId, chatId, "humano", supaAudio);
+    const resumenAudio =
+      "El cliente mandó un audio. Tino todavía no puede escucharlos: la conversación quedó esperando a una persona.";
+    await registrarEscalacion(supaAudio, {
+      clienteId,
+      empleadoId,
+      chatId,
+      trigger: "incertidumbre",
+      resumen: resumenAudio,
+    });
+    await avisarDerivacion(supaAudio, { clienteId, empleadoId, chatId, resumen: resumenAudio });
+    return { accion: "audio_derivado", detalle: "sin transcripción — queda a la espera de una persona" };
+  }
 
   // Confirmación rápida de cita: si el último mensaje es un "SÍ" inequívoco y
   // hay una confirmación pendiente, se confirma POR CÓDIGO (sin modelo).
