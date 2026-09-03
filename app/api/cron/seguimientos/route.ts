@@ -232,18 +232,29 @@ export async function GET(request: NextRequest) {
    *     y decide: pagado (→ ganado), aprobado sin pago (→ "Falta pago") o
    *     abierto. Con techo de tiempo, como el vigilante.
    */
-  let reconciliado = { escalacionesCerradas: 0, contactosLimpiados: 0 };
+  let reconciliado = {
+    escalacionesCerradas: 0,
+    contactosLimpiados: 0,
+    contactosReabiertos: 0,
+    agendadosCorregidos: 0,
+  };
   try {
     reconciliado = await reconciliarEstados(supa);
   } catch (e) {
     console.error("[cron] reconciliar estados falló (no afecta lo demás)", (e as Error).message);
   }
 
-  let cierres = { revisados: 0, consultados: 0, pagados: 0, aprobados: 0 };
+  let cierres = { revisados: 0, consultados: 0, pagados: 0, aprobados: 0, cotizados: 0 };
   try {
     const cc = await detectarCierres(supa, { fechaLimite: inicioCron + 50_000 });
-    cierres = { revisados: cc.revisados, consultados: cc.consultados, pagados: cc.pagados, aprobados: cc.aprobados };
-    if (cc.pagados || cc.aprobados) console.log("[cron] cierres:", cc.detalle.join(" | "));
+    cierres = {
+      revisados: cc.revisados,
+      consultados: cc.consultados,
+      pagados: cc.pagados,
+      aprobados: cc.aprobados,
+      cotizados: cc.cotizados,
+    };
+    if (cc.pagados || cc.aprobados || cc.cotizados) console.log("[cron] cierres:", cc.detalle.join(" | "));
   } catch (e) {
     console.error("[cron] detector de cierres falló (no afecta lo demás)", (e as Error).message);
   }

@@ -3,6 +3,7 @@ import { armarPrompt, type MensajePrueba } from "@/lib/promptEmpleado";
 import { generarJSON } from "@/lib/gemini";
 import { enviarTexto, type ConfigWhatsApp } from "@/lib/whatsapp";
 import { etiquetasDesdeMotor } from "@/lib/etiquetas";
+import { alAgregar } from "@/lib/etiquetasCiclo";
 import { guardarMensaje } from "@/lib/mensajes";
 import { avisarACliente, resumirParaAviso } from "@/lib/push";
 import { modoDe, setModo } from "@/lib/estadoChat";
@@ -93,7 +94,9 @@ async function autoEtiquetar(
       .maybeSingle();
     if (error) return; // 211 no aplicada
     const actuales = (data?.etiquetas as string[] | null) ?? [];
-    const union = Array.from(new Set([...actuales, ...nuevas]));
+    // Con exclusiones: un reclamo nuevo saca "resuelto", etc. (etiquetasCiclo).
+    const union = alAgregar(actuales, nuevas);
+    if (union === actuales) return;
     await supa
       .from("ed_contactos")
       .upsert(

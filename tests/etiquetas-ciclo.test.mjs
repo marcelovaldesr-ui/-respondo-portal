@@ -3,6 +3,7 @@ import test from "node:test";
 
 import {
   ETIQUETAS_ABIERTAS,
+  alAgregar,
   conEtiqueta,
   etiquetasTrasAtencion,
   etiquetasTrasCierre,
@@ -17,12 +18,28 @@ import {
  */
 
 test("ganado: se van las abiertas y aparece «cliente»", () => {
-  const r = etiquetasTrasCierre(["cotizacion", "posible_comprador", "cliente_nuevo"], "ganado");
-  assert.deepEqual(r, ["cliente_nuevo", "cliente"]);
+  const r = etiquetasTrasCierre(["cotizacion", "posible_comprador", "agendado"], "ganado");
+  assert.deepEqual(r, ["agendado", "cliente"]);
 });
 
 test("ganado: «Falta pago» también se va (ya pagó)", () => {
   assert.deepEqual(etiquetasTrasCierre(["pago_pendiente"], "ganado"), ["cliente"]);
+});
+
+test("ganado: «cliente_nuevo» se convierte en «cliente»", () => {
+  assert.deepEqual(etiquetasTrasCierre(["cliente_nuevo", "cotizacion"], "ganado"), ["cliente"]);
+});
+
+test("alAgregar: un reclamo nuevo borra «resuelto»; «resuelto» cierra el reclamo", () => {
+  assert.deepEqual(alAgregar(["resuelto", "cliente"], ["reclamo"]), ["cliente", "reclamo"]);
+  assert.deepEqual(alAgregar(["reclamo", "necesita_atencion"], ["resuelto"]), ["resuelto"]);
+});
+
+test("alAgregar: «cliente» reemplaza a «cliente_nuevo»; sin cambios = misma referencia", () => {
+  assert.deepEqual(alAgregar(["cliente_nuevo"], ["cliente"]), ["cliente"]);
+  const e = ["cotizacion"];
+  assert.equal(alAgregar(e, ["cotizacion"]), e);
+  assert.equal(alAgregar(e, []), e);
 });
 
 test("ganado: no duplica «cliente» si ya estaba", () => {

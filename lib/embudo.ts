@@ -100,7 +100,7 @@ export function enSilencio(
 }
 
 /** Orden del embudo: se usa para no retroceder de etapa automáticamente. */
-const ORDEN: Record<Etapa, number> = {
+export const ORDEN_ETAPA: Record<Etapa, number> = {
   nuevo: 0,
   interesado: 1,
   cotizado: 2,
@@ -248,7 +248,7 @@ export async function cargarEmbudo(
         tieneVenta: conVenta.has(chatId),
       });
       // Solo avanza; nunca retrocede sola.
-      if (ORDEN[sugerida] > ORDEN[guardada]) {
+      if (ORDEN_ETAPA[sugerida] > ORDEN_ETAPA[guardada]) {
         etapa = sugerida;
         motivo = null;
         cambios.push({ chat_id: chatId, etapa, motivo });

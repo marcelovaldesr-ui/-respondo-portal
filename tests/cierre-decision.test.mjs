@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   decidirCierre,
   hayPistaDeCierre,
+  hayPistaDeCotizacion,
   interpretarCierre,
   promptCierre,
 } from "../lib/cierreDecision.ts";
@@ -44,6 +45,19 @@ test("lo que dice el ASISTENTE no es pista (él siempre habla de abono)", () => 
 test("«ya transferí» y «abono listo» son pista", () => {
   assert.equal(hayPistaDeCierre([{ rol: "cliente", texto: "Ya transferí, me confirma?" }]), true);
   assert.equal(hayPistaDeCierre([{ rol: "cliente", texto: "Abono ok" }]), true);
+});
+
+test("una PERSONA dando un precio es pista de cotización; el cliente preguntándolo no", () => {
+  assert.equal(hayPistaDeCotizacion([{ rol: "humano", texto: "Pendón 160x120 $ 22.000, 2 días hábiles" }]), true);
+  assert.equal(hayPistaDeCotizacion([{ rol: "humano", texto: "[el equipo envió un archivo (Presupuesto #5279.pdf)]" }]), true);
+  assert.equal(hayPistaDeCotizacion([{ rol: "cliente", texto: "cuánto sale el pendón de 160x120?" }]), false);
+  assert.equal(hayPistaDeCotizacion([{ rol: "empleado", texto: "200 unidades $22.000" }]), false);
+});
+
+test("«cotizado» pasa la reja con la cita del precio", () => {
+  const c = [{ rol: "humano", texto: "Pendon de 160x 120 $ 22.000 Plazo de entrega 2 día hábiles" }];
+  const d = decidirCierre(interpretarCierre('{"estado":"cotizado","evidencia":"Pendon de 160x 120 $ 22.000"}'), c);
+  assert.equal(d.estado, "cotizado");
 });
 
 // ── Del texto crudo a la propuesta ──────────────────────────────────────────
@@ -108,6 +122,6 @@ test("el prompt distingue persona, asistente y cliente, y pide SOLO el JSON", ()
   const p = promptCierre({ negocio: "Impresora Color", rubro: "imprenta", mensajes: conv });
   assert.match(p, /Persona del negocio: 300 stickers/);
   assert.match(p, /Cliente: Hola, necesito/);
-  assert.match(p, /"pagado"\|"aprobado_sin_pago"\|"abierto"/);
+  assert.match(p, /"pagado"\|"aprobado_sin_pago"\|"cotizado"\|"abierto"/);
   assert.match(p, /SOLO el JSON\.$/);
 });

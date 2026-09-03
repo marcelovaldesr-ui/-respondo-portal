@@ -40,7 +40,21 @@ abiertas: posible_comprador · cotizacion · necesita_atencion · pago_pendiente
 hechos:   cliente_nuevo · agendado · reclamo · cliente · resuelto
 ```
 
-Ganado → se van las abiertas y aparece `cliente`. Perdido → se van las abiertas.
+Ganado → se van las abiertas, `cliente_nuevo` pasa a `cliente`. Perdido → se
+van las abiertas.
+
+Y tres pares que se excluyen al agregar (`alAgregar`, usado por el motor y por
+el botón de etiquetas del portal): un `reclamo` nuevo saca `resuelto`;
+`resuelto` saca `reclamo` y `necesita_atencion`; `cliente` saca `cliente_nuevo`.
+
+El barrido también:
+
+- **Reabre los perdidos** cuando el cliente vuelve a escribir después del
+  cierre: pasan a `nuevo` (motivo `volvio_a_escribir`) y de ahí avanzan solos.
+  Antes "perdido" era para siempre.
+- **Sincroniza `agendado` con las citas reales** (`ed_citas`): se pone si hay
+  una cita activa por venir, se quita si no la hay — cita completada,
+  cancelada o pasada. En las dos direcciones.
 
 ### 3. `lib/cierreVentas.ts` — la IA detecta el cierre en la conversación
 
@@ -51,8 +65,8 @@ En el cron, con techo de tiempo. Para cada conversación con actividad en los
    transferí, abono, dale, aprobado…). Si no, se anota "revisado" y no gasta
    modelo. Y si nunca habló una persona ni hay intención detectada, tampoco:
    es la barrera contra las notificaciones del banco.
-2. El modelo lee la conversación y propone `pagado`, `aprobado_sin_pago` o
-   `abierto`, **con una cita literal** como evidencia.
+2. El modelo lee la conversación y propone `pagado`, `aprobado_sin_pago`,
+   `cotizado` o `abierto`, **con una cita literal** como evidencia.
 3. La reja (`decidirCierre`) solo acepta si la cita existe en la conversación,
    tiene al menos dos palabras y no es el marcador de un adjunto sin nombre.
 
@@ -61,11 +75,19 @@ Resultado:
 | Estado | Qué pasa |
 |---|---|
 | `pagado` | `ed_resultados` (`venta_confirmada`), contacto → **ganado**, etiquetas limpias + `cliente`, puente a Gestión, push. |
-| `aprobado_sin_pago` | Etiqueta **"Falta pago"** (`pago_pendiente`). En Impresora Color es la tarea que se olvida: pedir el 50 %. Push la primera vez. |
+| `aprobado_sin_pago` | Etiqueta **"Falta pago"** (`pago_pendiente`), etapa al menos `cotizado`. En Impresora Color es la tarea que se olvida: pedir el 50 %. Push la primera vez. |
+| `cotizado` | Una **persona** dio precio o mandó presupuesto: etiqueta `cotizacion`, etapa `cotizado`, `ed_resultados` (`cotizacion_enviada`). Antes solo contaba cuando cotizaba Tino; cuando cotiza Cecilia desde el teléfono —lo normal— la conversación se quedaba en "nuevo". |
 | `abierto` | Nada. Se anota hasta qué mensaje se revisó. |
 
 Todo queda en `ed_cierres_detectados` (migración 291), con la propuesta del
 modelo y lo que decidió la reja.
+
+**Cliente que repite.** Un contacto `ganado` al que el cliente le vuelve a
+escribir después del cierre entra también al detector. Si el detector ve
+cotización, aprobación o pago, es un **ciclo nuevo** (`etapa_motivo =
+nuevo_ciclo`): la etapa vuelve a `cotizado` —o a `ganado` con otra
+`venta_confirmada`— y conserva `cliente`. Es la única forma fechada de saber
+que un cliente compró de nuevo.
 
 ## Prueba en seco antes de desplegar (12 conversaciones reales)
 
@@ -79,6 +101,10 @@ modelo y lo que decidió la reja.
 | Cliente mandó una imagen sin descripción | pagado | **abierto** | ✓ la reja lo paró |
 | Evidencia «15» | aprobado_sin_pago | **abierto** | ✓ la reja lo paró |
 | Cecilia pidió el 50 % y el cliente no ha pagado | abierto | abierto | – (conservador; el próximo mensaje lo reabre) |
+
+Y para `cotizado`, 8 de 8 conversaciones donde una persona dio precio o mandó
+un "Presupuesto #NNNN.pdf" — dos de ellas en "nuevo" y sin ninguna etiqueta,
+que es exactamente el hueco.
 
 ## Cómo saber si está funcionando
 
@@ -96,8 +122,10 @@ select chat_id, nombre from ed_contactos where 'pago_pendiente' = any(etiquetas)
 
 ## Lo que NO hace, a propósito
 
-- No pisa una etapa movida a mano (`etapa_manual`).
-- No baja una etapa: si algo está en ganado, un mensaje nuevo no lo devuelve.
+- No pisa una etapa movida a mano (`etapa_manual`), ni para reabrirla.
+- No baja una etapa por un mensaje cualquiera. Las dos únicas bajadas son
+  explícitas y fechadas: perdido → nuevo cuando el cliente vuelve a escribir, y
+  ganado → cotizado cuando el detector ve un ciclo nuevo con evidencia.
 - No le escribe al cliente. Detectar "Falta pago" y que Tino pida el abono
   solo sería el paso siguiente (vigilante, categoría `medios_pago`), y se
   decide aparte.

@@ -21,6 +21,14 @@
  *   abiertas: posible_comprador · cotizacion · necesita_atencion · pago_pendiente
  *   hechos:   cliente_nuevo · agendado · reclamo · cliente · resuelto (manuales)
  *
+ * Y tres pares que se EXCLUYEN: un hecho nuevo borra al que contradice.
+ *
+ *   cliente_nuevo → cliente     (compró: ya no es nuevo)
+ *   reclamo       ↔ resuelto    (un reclamo nuevo reabre; "resuelto" lo cierra)
+ *   necesita_atencion → resuelto
+ *
+ * "agendado" se sincroniza aparte contra las citas reales (reconciliarEstados).
+ *
  * ⚠️ ESTE ARCHIVO NO IMPORTA NADA A PROPÓSITO: es puro y `node --test` lo
  * carga sin base ni Next (tests/etiquetas-ciclo.test.mjs).
  */
@@ -44,7 +52,8 @@ export function tieneAbiertas(etiquetas: readonly string[]): boolean {
  * Etiquetas que quedan cuando la conversación llega a una etapa terminal.
  *
  *  - ganado: se retiran las abiertas y se agrega "cliente" (compró: ese es
- *    exactamente el significado de la etiqueta manual "Cliente").
+ *    exactamente el significado de la etiqueta manual "Cliente"). Y se va
+ *    "cliente_nuevo": ya no es nuevo, es cliente.
  *  - perdido: se retiran las abiertas. Que cotizó queda registrado en el
  *    embudo como Perdido; la etiqueta "Cotización" vuelve a significar
  *    "cotización abierta", que es lo útil para trabajar.
@@ -56,10 +65,30 @@ export function tieneAbiertas(etiquetas: readonly string[]): boolean {
 export function etiquetasTrasCierre(etiquetas: readonly string[], etapa: string): string[] {
   if (etapa !== "ganado" && etapa !== "perdido") return etiquetas as string[];
   const sinAbiertas = etiquetas.filter((e) => !ABIERTAS.has(e));
-  const out = etapa === "ganado" && !sinAbiertas.includes("cliente")
-    ? [...sinAbiertas, "cliente"]
-    : sinAbiertas;
+  let out = sinAbiertas;
+  if (etapa === "ganado") {
+    out = out.filter((e) => e !== "cliente_nuevo");
+    if (!out.includes("cliente")) out = [...out, "cliente"];
+  }
   return iguales(out, etiquetas) ? (etiquetas as string[]) : out;
+}
+
+/**
+ * Agregar etiquetas (del motor o de una persona) respetando las exclusiones.
+ * Es la única forma correcta de hacer la unión: `[...actuales, ...nuevas]` a
+ * secas dejaba "reclamo" y "resuelto" conviviendo, y "cliente_nuevo" al lado
+ * de "cliente". Devuelve la misma referencia si no cambia nada.
+ */
+export function alAgregar(actuales: readonly string[], nuevas: readonly string[]): string[] {
+  if (!nuevas.length) return actuales as string[];
+  let out = [...actuales];
+  for (const n of nuevas) {
+    if (n === "reclamo" || n === "necesita_atencion") out = out.filter((e) => e !== "resuelto");
+    if (n === "resuelto") out = out.filter((e) => e !== "reclamo" && e !== "necesita_atencion");
+    if (n === "cliente") out = out.filter((e) => e !== "cliente_nuevo");
+    if (!out.includes(n)) out.push(n);
+  }
+  return iguales(out, actuales) ? (actuales as string[]) : out;
 }
 
 /**

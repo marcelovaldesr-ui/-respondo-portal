@@ -5,6 +5,7 @@ import { db } from "@/lib/db";
 import { obtenerUsuarioConPermiso } from "@/lib/auth";
 import { MODOS, type Modo } from "@/lib/controlChat";
 import { enviarComoHumano, fijarModo } from "@/lib/responderChat";
+import { alAgregar } from "@/lib/etiquetasCiclo";
 
 /**
  * Control del cliente sobre una conversación: pausar al asistente, tomar el
@@ -111,9 +112,11 @@ export async function cambiarEtiqueta(formData: FormData): Promise<void> {
     .maybeSingle();
 
   const actuales: string[] = (contacto?.etiquetas as string[] | null) ?? [];
+  // Agregar respeta las exclusiones (etiquetasCiclo): marcar "resuelto" cierra
+  // el reclamo y la derivación; "cliente" reemplaza a "cliente_nuevo".
   const nuevas =
     accion === "agregar"
-      ? Array.from(new Set([...actuales, etiqueta]))
+      ? alAgregar(actuales, [etiqueta])
       : actuales.filter((e) => e !== etiqueta);
 
   await supa

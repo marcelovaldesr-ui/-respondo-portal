@@ -14,14 +14,19 @@
  * comprobante. Ahí el motor no corre. Por eso esto es un detector aparte, que
  * mira la conversación completa desde afuera (lib/cierreVentas.ts, en el cron).
  *
- * TRES ESTADOS, Y POR QUÉ EL DEL MEDIO IMPORTA
- * --------------------------------------------
+ * CUATRO ESTADOS, EN ORDEN DE AVANCE
+ * ----------------------------------
  *  - pagado: hay evidencia de pago (comprobante, "ya transferí", el negocio
  *    acusa recibo del abono). La venta se cerró.
  *  - aprobado_sin_pago: el cliente dijo que sí — aceptó el precio, pidió que
  *    lo hagan — pero no hay evidencia de pago. En negocios que piden abono
  *    para empezar (Impresora Color: 50%), esto es una tarea pendiente para la
  *    persona: pedir el abono. Y es justo lo que se le olvida.
+ *  - cotizado: una PERSONA del negocio dio un precio o mandó un presupuesto y
+ *    el cliente todavía no dijo que sí. El motor de chat solo etiqueta
+ *    "cotización" cuando Tino cotiza; cuando cotiza Cecilia desde el
+ *    teléfono —que es lo normal— nadie lo anotaba y la conversación seguía
+ *    en "nuevo".
  *  - abierto: nada de lo anterior.
  *
  * REGLA: el modelo PROPONE y este código DISPONE, igual que en el vigilante.
@@ -32,7 +37,7 @@
  * carga sin base ni Next (tests/cierre-decision.test.mjs).
  */
 
-export type EstadoCierre = "pagado" | "aprobado_sin_pago" | "abierto";
+export type EstadoCierre = "pagado" | "aprobado_sin_pago" | "cotizado" | "abierto";
 
 export type PropuestaCierre = {
   estado: EstadoCierre;
@@ -81,6 +86,27 @@ export function hayPistaDeCierre(mensajes: readonly MensajeCierre[]): boolean {
 }
 
 /**
+ * Pistas de que una PERSONA cotizó: un monto, la palabra presupuesto o
+ * cotización, un PDF de presupuesto. Solo mensajes de rol "humano": lo que
+ * cotiza el asistente ya lo etiqueta el motor, y lo que dice el cliente
+ * ("¿cuánto sale?") es una pregunta, no una cotización.
+ */
+const PISTAS_COTIZACION = [
+  /\$\s?\d/,
+  /\d[\d.]*\s?(mil|pesos|clp|lucas)\b/i,
+  /presupuesto/i,
+  /cotizaci[oó]n/i,
+  /\b(sale|salen|vale|valen|cuesta|cuestan)\b.*\d/i,
+  /\bvalor\b.*\d/i,
+];
+
+export function hayPistaDeCotizacion(mensajes: readonly MensajeCierre[]): boolean {
+  return mensajes.some(
+    (m) => m.rol === "humano" && PISTAS_COTIZACION.some((r) => r.test(m.texto ?? "")),
+  );
+}
+
+/**
  * Del texto crudo del modelo a una propuesta. Tolera cercas de markdown y
  * basura: cualquier cosa que no se entienda es "abierto", nunca una excepción
  * — misma disciplina que `interpretar` en reingresoDecision.ts.
@@ -101,7 +127,9 @@ export function interpretarCierre(crudo: unknown): PropuestaCierre {
   const estado = String(o.estado ?? "abierto");
   return {
     estado:
-      estado === "pagado" || estado === "aprobado_sin_pago" ? estado : "abierto",
+      estado === "pagado" || estado === "aprobado_sin_pago" || estado === "cotizado"
+        ? estado
+        : "abierto",
     evidencia: typeof o.evidencia === "string" ? o.evidencia.slice(0, 200) : "",
   };
 }
@@ -190,17 +218,21 @@ export function promptCierre(p: {
   } y decides en qué estado quedó la venta. Solo con lo que dice la conversación: nada de suponer.
 
 Responde SOLO con este JSON:
-{"estado":"pagado"|"aprobado_sin_pago"|"abierto","evidencia":"<cita corta y literal de la conversación>"}
+{"estado":"pagado"|"aprobado_sin_pago"|"cotizado"|"abierto","evidencia":"<cita corta y literal de la conversación>"}
 
 "pagado": hay evidencia de que el cliente PAGÓ o ABONÓ: dice que transfirió o pagó, manda un comprobante o una transferencia (un archivo o imagen cuyo nombre o descripción lo indique), o la persona del negocio acusa recibo del pago/abono.
 
 "aprobado_sin_pago": el cliente ACEPTÓ seguir adelante con un pedido o cotización concreta —aprobó el precio, dijo que lo hagan, confirmó el encargo— pero NO hay evidencia de pago todavía. Un "gracias", un "lo veo" o una pregunta más NO es aprobación.
 
+"cotizado": la persona del negocio DIO UN PRECIO concreto o mandó un presupuesto/cotización, y el cliente todavía no aceptó ni pagó. La evidencia tiene que ser el mensaje de la persona del negocio con el precio o el presupuesto.
+
 "abierto": cualquier otra cosa. Ante la duda, "abierto".
+
+Los estados van en orden: si hay pago es "pagado" aunque también haya aprobación y precio; si hay aprobación es "aprobado_sin_pago" aunque haya precio.
 
 Reglas:
 1. La evidencia tiene que ser una cita literal y corta (máx. 20 palabras) de un mensaje del cliente o de la persona del negocio. Lo que dice el asistente automático no es evidencia.
-2. Si hay pago Y aprobación, es "pagado".
+2. Si hay pago Y aprobación, es "pagado". Si hay aprobación Y precio, es "aprobado_sin_pago".
 3. Un comprobante de un pedido anterior, ya entregado, no cuenta: mira si el pago corresponde a lo que se está hablando ahora.
 4. Si la persona del negocio dice que el pago NO llegó o que falta, NO es "pagado".
 5. Una imagen o archivo SIN nombre ni descripción no es evidencia de pago. Solo cuenta si el nombre del archivo o su descripción hablan de comprobante, transferencia, pago o abono, o si alguien lo confirma con palabras.
