@@ -147,7 +147,7 @@ Responde SOLO con este JSON, sin texto alrededor:
  */
 export async function generarInsight(
   clienteId: string,
-  opts?: { semanasAtras?: number },
+  opts?: { semanasAtras?: number; fechaLimite?: number },
 ): Promise<{ ok: boolean; motivo?: string; insight?: Insight }> {
   const supa = db();
   const { desde, hasta } = semanaDe(new Date(), opts?.semanasAtras ?? 0);
@@ -236,6 +236,7 @@ export async function generarInsight(
     const crudo = await generarJSON(prompt, {
       timeoutMs: 50_000,
       intentosPorModelo: 1,
+      fechaLimite: opts?.fechaLimite,
       // Ver el comentario de thinkingBudget en gemini.ts: sin tope esta llamada
       // es impredecible (25 s a +43 s) y puede pasarse del límite de Vercel.
       thinkingBudget: 2048,

@@ -33,6 +33,13 @@ export async function generarInformesPendientes(opts?: {
   ahora?: Date;
   maxClientes?: number;
   forzar?: boolean;
+  /**
+   * Techo absoluto (`Date.now()`) que el cron le pasa (auditoría 3-sep-2026):
+   * un informe tarda 25-50 s de modelo, y dos seguidos sin techo se llevaban
+   * la función del cron entera los lunes (sin vigilante ni latido). Lo que no
+   * alcanza sale en el siguiente latido, 5 minutos después.
+   */
+  fechaLimite?: number;
 }): Promise<{ generados: number; detalle: string[] }> {
   const ahora = opts?.ahora ?? new Date();
   const detalle: string[] = [];
@@ -62,10 +69,14 @@ export async function generarInformesPendientes(opts?: {
   if (!pendientes.length) return { generados: 0, detalle: ["todos_al_dia"] };
 
   let generados = 0;
-  const tope = opts?.maxClientes ?? 2;
+  const tope = opts?.maxClientes ?? 1;
   for (const c of pendientes.slice(0, tope)) {
+    if (opts?.fechaLimite && opts.fechaLimite - Date.now() < 20_000) {
+      detalle.push("sin tiempo: el resto sale en el siguiente latido");
+      break;
+    }
     try {
-      const r = await generarInsight(c.id as string, { semanasAtras: 1 });
+      const r = await generarInsight(c.id as string, { semanasAtras: 1, fechaLimite: opts?.fechaLimite });
       if (r.ok) {
         generados += 1;
         detalle.push(`${c.nombre}: informe generado`);

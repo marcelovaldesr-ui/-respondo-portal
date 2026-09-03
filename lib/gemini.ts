@@ -101,7 +101,9 @@ export async function generarJSON(
   const maxIntentos = opciones?.intentosPorModelo ?? 2;
   // Por debajo de esto una llamada no alcanza ni a completarse: intentarla solo
   // consume el tiempo que necesita la red de seguridad.
-  const MINIMO_UTIL_MS = 3_000;
+  // 8 s, no 3: una llamada medida tarda 5-17 s, así que con 3 s de techo casi
+  // nunca terminaba y solo gastaba el margen de la red de seguridad.
+  const MINIMO_UTIL_MS = 8_000;
 
   let ultimoError = "";
   let sinTiempo = false;

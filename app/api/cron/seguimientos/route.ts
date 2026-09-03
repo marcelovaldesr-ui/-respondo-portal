@@ -145,7 +145,7 @@ export async function GET(request: NextRequest) {
    */
   let informes = { generados: 0, detalle: ["no_ejecutado"] as string[] };
   try {
-    informes = await generarInformesPendientes();
+    informes = await generarInformesPendientes({ fechaLimite: inicioCron + 45_000 });
   } catch (e) {
     console.error("[cron] informe semanal falló (no afecta los seguimientos)", e);
     informes = { generados: 0, detalle: ["error"] };
@@ -188,7 +188,7 @@ export async function GET(request: NextRequest) {
   try {
     // Acotado porque cada entrante puede invocar IA; el siguiente latido toma
     // los restantes sin arriesgar el timeout del cron principal.
-    webhooks = await reprocesarWebhooksPendientes(2);
+    webhooks = await reprocesarWebhooksPendientes(2, { fechaLimite: inicioCron + 30_000 });
   } catch (e) {
     console.error("[cron] reintento de webhooks falló", (e as Error).message);
   }

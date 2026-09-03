@@ -102,7 +102,18 @@ export async function procesarConInbox<T>(params: {
 }
 
 /** Reintenta errores y vacía payloads antiguos conservando la idempotencia. */
-export async function reprocesarWebhooksPendientes(limite = 10): Promise<{
+export async function reprocesarWebhooksPendientes(
+  limite = 10,
+  opts: {
+    /**
+     * Techo absoluto para el reproceso (auditoría 3-sep-2026). Desde el cron
+     * cada evento reintentado corría con su propio presupuesto (~42 s de
+     * modelo + hasta 20 s de debounce): dos eventos se llevaban la función
+     * entera. Con techo, lo que no alcanza queda para el siguiente latido.
+     */
+    fechaLimite?: number;
+  } = {},
+): Promise<{
   reintentados: number;
   fallidos: number;
   /** Payloads vaciados (fila conservada) a partir de los 7 días. */
@@ -141,12 +152,19 @@ export async function reprocesarWebhooksPendientes(limite = 10): Promise<{
   let fallidos = 0;
   for (const fila of pendientes) {
     const proveedor = fila.proveedor as ProveedorWebhook;
+    if (opts.fechaLimite && opts.fechaLimite - Date.now() < 12_000) break; // sin tiempo útil
     try {
       const r = await procesarConInbox({
         proveedor,
         eventoId: fila.evento_id as string,
         payload: fila.payload,
         requestId: `cron-${(fila.evento_id as string).slice(0, 12)}`,
+        // Meta: sin debounce (el mensaje ya tiene minutos) y con el techo del cron.
+        manejar:
+          proveedor === "meta_whatsapp"
+            ? (payload) =>
+                manejarEntranteMeta(payload, { fechaLimite: opts.fechaLimite, sinDebounce: true })
+            : undefined,
       });
       if (!r.duplicado) reintentados++;
     } catch {

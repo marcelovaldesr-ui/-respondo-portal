@@ -157,14 +157,24 @@ const RANGO_ESTADO: Record<string, number> = {
 
 export async function actualizarEstadoEnvio(
   supa: SupabaseClient,
-  empleadoId: string,
+  /**
+   * Uno o VARIOS empleados (auditoría 3-sep-2026). Antes se buscaba solo bajo
+   * Tino: los mensajes que la persona manda desde el portal se guardan bajo
+   * `ultimo_empleado_id` (Beto/Vera tras un seguimiento) y las plantillas de
+   * Beto bajo el suyo, así que sus acks —incluido el `failed` de una ventana
+   * cerrada— se descartaban como "ajenos" y el ✓ nunca cambiaba.
+   */
+  empleadoId: string | string[],
   waId: string,
   estado: "pendiente" | "server_ack" | "entregado" | "leido" | "error",
+  /** Solo con `error`: código y texto de Meta, para mostrar por qué. */
+  detalle?: string | null,
 ): Promise<{ ok: boolean; encontrado?: boolean }> {
+  const ids = Array.isArray(empleadoId) ? empleadoId : [empleadoId];
   const { data, error } = await supa
     .from("ed_mensajes")
     .select("id, estado_envio")
-    .eq("empleado_id", empleadoId)
+    .in("empleado_id", ids)
     .eq("wa_message_id", waId)
     .limit(1)
     .maybeSingle();
@@ -182,10 +192,17 @@ export async function actualizarEstadoEnvio(
     return { ok: true, encontrado: true }; // no retroceder
   }
 
-  const { error: e2 } = await supa
-    .from("ed_mensajes")
-    .update({ estado_envio: estado, estado_envio_en: new Date().toISOString() })
-    .eq("id", data.id);
+  const cambios: Record<string, unknown> = {
+    estado_envio: estado,
+    estado_envio_en: new Date().toISOString(),
+  };
+  if (estado === "error" && detalle) cambios.estado_envio_detalle = detalle.slice(0, 300);
+  let { error: e2 } = await supa.from("ed_mensajes").update(cambios).eq("id", data.id);
+  // Sin la migración 292 no existe `estado_envio_detalle`: se guarda el estado igual.
+  if (e2 && (e2.code === "42703" || e2.code === "PGRST204") && "estado_envio_detalle" in cambios) {
+    delete cambios.estado_envio_detalle;
+    ({ error: e2 } = await supa.from("ed_mensajes").update(cambios).eq("id", data.id));
+  }
   if (e2) {
     if (e2.code !== "42703" && e2.code !== "PGRST204") {
       console.error("[actualizarEstadoEnvio] update error:", e2.code, e2.message);

@@ -178,20 +178,42 @@ export function parsearWebhook(payload: unknown): EntranteNormalizado[] {
     }[];
   };
 
-  // Tipos que sí acarrean intención del cliente y deben registrarse. Se dejan
-  // fuera solo los eventos de sistema/no accionables (reaction, system, order,
-  // button/interactive se procesarán en su propia fase si hace falta).
-  const IGNORADOS = new Set(["reaction", "system", "unsupported", "ephemeral"]);
+  /**
+   * Tipos que NO acarrean un mensaje nuevo del cliente y se dejan fuera.
+   *
+   * ⚠️ `edit` y `revoke` FALTABAN (auditoría 3-sep-2026). Cuando el cliente
+   * editaba o borraba un mensaje, el evento caía en la rama de adjuntos y se
+   * registraba como «[el cliente envió un archivo]»: Tino respondía «¡me llegó
+   * tu archivo! se lo paso al equipo» y derivaba. Medido en Impresora Color: 32
+   * marcadores sin adjunto, todos `edit`/`revoke`. `request_welcome` (chat
+   * abierto desde un anuncio, sin texto) y `order` (carrito de catálogo, que
+   * no atendemos) tampoco son un mensaje que responder.
+   */
+  const IGNORADOS = new Set([
+    "reaction",
+    "system",
+    "unsupported",
+    "ephemeral",
+    "edit",
+    "revoke",
+    "request_welcome",
+    "order",
+  ]);
 
   for (const entry of p.entry ?? []) {
     for (const change of entry.changes ?? []) {
       const value = change.value;
       const phoneNumberId = value?.metadata?.phone_number_id;
       if (!phoneNumberId || !value?.messages?.length) continue;
-      const nombre = value.contacts?.[0]?.profile?.name;
       for (const m of value.messages) {
         const tipo = m.type ?? "";
         if (!m.from || !tipo || IGNORADOS.has(tipo)) continue;
+        // El nombre del remitente de ESTE mensaje: Meta agrupa mensajes de
+        // varios contactos en un mismo `value`, y tomar siempre contacts[0]
+        // le ponía el nombre del primero a todos.
+        const nombre =
+          value.contacts?.find((c) => c.wa_id === m.from)?.profile?.name ??
+          (value.contacts?.length === 1 ? value.contacts[0]?.profile?.name : undefined);
 
         let texto: string;
         if (tipo === "text") {

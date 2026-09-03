@@ -31,11 +31,15 @@ export const MAX_FUNCION_MS = 60_000;
 
 /**
  * Tiempo que se aparta para lo que va DESPUÉS del modelo y no se puede saltar:
- * envío del mensaje (con la espera de tipeo, hasta 6 s), guardado, y la red de
- * seguridad completa (aviso al cliente + escalación) si el modelo falló.
- * Medido con holgura: el envío por WAHA tiene timeout de 15 s.
+ * envío del mensaje (indicador de escritura hasta 5 s + pausa humana hasta
+ * 6 s + POST a Meta con timeout de 15 s), guardado, y la red de seguridad
+ * completa (aviso al cliente + escalación) si el modelo falló.
+ *
+ * Subió de 16 a 22 s (auditoría 3-sep-2026): con 16 s, el peor caso del envío
+ * (26 s) podía sacar el mensaje y morir antes de `guardarMensaje`, y el turno
+ * siguiente Tino repetía lo que ya había dicho. Al modelo le quedan 36 s.
  */
-export const RESERVA_RESPUESTA_MS = 16_000;
+export const RESERVA_RESPUESTA_MS = 22_000;
 
 /** Margen para el arranque de la función y el parseo del webhook. */
 const MARGEN_ARRANQUE_MS = 2_000;

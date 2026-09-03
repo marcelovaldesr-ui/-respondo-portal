@@ -18,6 +18,7 @@ import {
 import { modoDe, setModo, tocarVentanaEntrante } from "@/lib/estadoChat";
 import { cerrarEscalacionesPendientes } from "@/lib/escalaciones";
 import { idsEmpleadosDeCliente } from "@/lib/empleadosCache";
+import { asegurarContacto } from "@/lib/contactoEntrante";
 import { responderSiBot } from "@/lib/responderBot";
 import { empleadoParaEntrante } from "@/lib/seguimientos";
 import { notificarSistemaDelCliente } from "@/lib/puenteSalida";
@@ -196,20 +197,13 @@ export async function manejarEntranteWaha(
   // Se piden de vuelta etiquetas y etapa (`.select()`) porque el puente hacia el
   // sistema del cliente las necesita y ya estamos haciendo este viaje a la base:
   // pedirlas acá evita una consulta extra en el camino de una conversación real.
-  const { data: contactoGuardado } = await supa
-    .from("ed_contactos")
-    .upsert(
-      {
-        cliente_id: clienteId,
-        chat_id: chatId,
-        nombre: nombre ?? undefined,
-        telefono: contacto.telefono ?? undefined,
-        etiqueta: "lead",
-      },
-      { onConflict: "cliente_id,chat_id" },
-    )
-    .select("nombre, telefono, etiquetas, etapa, etapa_manual, ultimo_mensaje_en, ultimo_mensaje_rol")
-    .maybeSingle();
+  // Sin pisar el nombre que una persona editó (ver contactoEntrante.ts).
+  const contactoGuardado = await asegurarContacto(supa, {
+    clienteId,
+    chatId,
+    nombre: nombre ?? null,
+    telefono: contacto.telefono ?? null,
+  });
 
   await tocarVentanaEntrante(empleadoId, chatId, supa);
 
@@ -234,8 +228,8 @@ export async function manejarEntranteWaha(
     clienteId,
     contacto: {
       chatId,
-      telefono: contactoGuardado?.telefono ?? contacto.telefono ?? null,
-      nombre: contactoGuardado?.nombre ?? nombre ?? null,
+      telefono: (contactoGuardado?.telefono as string | null) ?? contacto.telefono ?? null,
+      nombre: (contactoGuardado?.nombre as string | null) ?? nombre ?? null,
       canal: "whatsapp",
       etapa: (contactoGuardado?.etapa as string | null) ?? null,
       etapaManual: Boolean(contactoGuardado?.etapa_manual),

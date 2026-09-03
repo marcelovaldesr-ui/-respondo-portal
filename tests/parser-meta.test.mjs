@@ -179,3 +179,29 @@ test("un mensaje de texto no arrastra adjunto", () => {
   );
   assert.equal(m.adjunto, undefined);
 });
+
+// ── Editar y borrar NO son mensajes nuevos (auditoría 3-sep-2026) ──────────
+
+test("⭐ editar o borrar un mensaje no se registra como «archivo»", () => {
+  // Antes caían en la rama de adjuntos: Tino decía «¡me llegó tu archivo!» y
+  // derivaba. 32 casos reales en Impresora Color.
+  for (const type of ["edit", "revoke", "request_welcome", "order"]) {
+    const r = parsearWebhook(sobre({ id: "wamid.x", from: "56900000000", type }));
+    assert.equal(r.length, 0, `tipo ${type} debía ignorarse`);
+  }
+});
+
+test("cada mensaje toma el nombre de SU remitente cuando el payload trae varios contactos", () => {
+  const r = parsearWebhook(
+    sobre(
+      { id: "wamid.a", from: "56900000001", type: "text", text: { body: "hola" } },
+      {
+        contacts: [
+          { profile: { name: "Ana" }, wa_id: "56900000000" },
+          { profile: { name: "Beto" }, wa_id: "56900000001" },
+        ],
+      },
+    ),
+  );
+  assert.equal(r[0].nombre, "Beto");
+});

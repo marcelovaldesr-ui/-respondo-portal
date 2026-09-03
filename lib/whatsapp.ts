@@ -586,7 +586,7 @@ export function parsearAcksMeta(payload: unknown): AckMeta[] {
           statuses?: {
             id?: string;
             status?: string;
-            errors?: { title?: string; message?: string }[];
+            errors?: { code?: number; title?: string; message?: string }[];
           }[];
         };
       }[];
@@ -602,11 +602,16 @@ export function parsearAcksMeta(payload: unknown): AckMeta[] {
         const estado = s.status ? MAPA_STATUS_META[s.status] : undefined;
         if (!s.id || !estado) continue;
         const err = s.errors?.[0];
+        // El CÓDIGO es lo que dice qué hacer (131047 = fuera de las 24 h → usa
+        // plantilla; 131026 = el número no puede recibir). Antes se tiraba y
+        // quedaba solo "error" (auditoría 3-sep-2026).
         out.push({
           phoneNumberId,
           waId: s.id,
           estado,
-          errorDetalle: err ? (err.message ?? err.title) : undefined,
+          errorDetalle: err
+            ? `${err.code ? `${err.code}: ` : ""}${err.message ?? err.title ?? ""}`.trim() || undefined
+            : undefined,
         });
       }
     }

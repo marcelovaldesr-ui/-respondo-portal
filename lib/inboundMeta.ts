@@ -23,6 +23,7 @@ import { fechaLimiteModelo } from "@/lib/presupuesto";
 import { transporteDe } from "@/lib/transporte";
 import { ventanaDeEspera } from "@/lib/ritmoHumano";
 import { notificarSistemaDelCliente } from "@/lib/puenteSalida";
+import { asegurarContacto } from "@/lib/contactoEntrante";
 
 export type ResultadoMeta = { accion: string; detalle?: string };
 
@@ -48,11 +49,20 @@ export async function manejarEntranteMeta(
       chatId: string,
       texto: string,
     ) => Promise<{ ok: boolean; waId?: string; error?: string }>;
+    /**
+     * Techo absoluto (`Date.now()`) cuando se reprocesa desde el cron
+     * (auditoría 3-sep-2026): sin esto, cada evento reintentado calculaba su
+     * propio presupuesto de ~42 s + debounce de hasta 20 s, y dos eventos se
+     * comían los 60 s de la función del cron antes del vigilante y del latido.
+     */
+    fechaLimite?: number;
+    /** Reproceso: los mensajes ya tienen minutos; esperar el debounce no aporta. */
+    sinDebounce?: boolean;
   },
 ): Promise<ResultadoMeta[]> {
   // Presupuesto de tiempo de ESTA invocación (ver lib/presupuesto.ts): el
   // modelo no puede consumir el margen que necesita la red de seguridad.
-  const fechaLimite = fechaLimiteModelo(Date.now());
+  const fechaLimite = opts?.fechaLimite ?? fechaLimiteModelo(Date.now());
   const resultados: ResultadoMeta[] = [];
   const supa = db();
 
@@ -89,10 +99,18 @@ export async function manejarEntranteMeta(
       resultados.push({ accion: "ack_sin_cliente", detalle: ack.phoneNumberId });
       continue;
     }
-    const r = await actualizarEstadoEnvio(supa, ctx.empleadoId, ack.waId, ack.estado);
+    // Por CLIENTE, no solo bajo Tino: el mensaje pudo salir del portal bajo
+    // Beto/Vera (auditoría 3-sep-2026, ver actualizarEstadoEnvio).
+    const r = await actualizarEstadoEnvio(
+      supa,
+      await idsEmpleadosDeCliente(ctx.cfg.clienteId),
+      ack.waId,
+      ack.estado,
+      ack.errorDetalle ?? null,
+    );
     if (ack.estado === "error") {
       console.error("[meta ack] envío no entregado", {
-        codigo: ack.errorDetalle?.slice(0, 80) ?? "sin_detalle",
+        detalle: ack.errorDetalle?.slice(0, 120) ?? "sin_detalle",
       });
     }
     resultados.push({
@@ -190,45 +208,61 @@ export async function manejarEntranteMeta(
     // IDEMPOTENCIA: Meta reintenta el webhook si el 200 tarda → sin esto, Tino
     // respondería DOS veces al mismo mensaje.
     if (m.waId && (await yaProcesado(supa, empleadoId, m.waId))) {
-      resultados.push({ accion: "duplicado" });
-      continue;
-    }
-
-    const guardado = await guardarMensaje(supa, {
-      empleadoId,
-      chatId,
-      rol: "cliente",
-      texto: m.texto,
-      waId: m.waId,
       /**
-       * ADJUNTO (arreglado el 21-ago-2026 — brecha G4).
+       * RED DE SEGURIDAD DEL "DUPLICADO" (auditoría 3-sep-2026).
        *
-       * Este camino NUNCA guardaba los metadatos del adjunto, así que
-       * `media_tipo` quedaba en NULL y el inbox no dibujaba nada: la persona
-       * veía «[el cliente envió una imagen]» y no podía abrirla. Y como todo
-       * cliente nuevo entra por Cloud API, era el comportamiento por defecto.
-       *
-       * El `id` de Meta se guarda con prefijo `meta:` en `media_url`. No es una
-       * URL y a propósito: las URL de Meta **expiran en minutos**, así que
-       * guardar una sería guardar basura. El prefijo le dice al proxy por dónde
-       * resolver, sin necesidad de una columna nueva ni de otra migración.
+       * Si la invocación original murió DESPUÉS de guardar el mensaje (timeout
+       * de Vercel, excepción), el reintento de Meta o del cron llegaba acá,
+       * decía "duplicado" y nadie respondía nunca: el cliente quedaba mudo en
+       * modo bot, donde el vigilante no mira. Ahora, si ese mensaje sigue
+       * siendo el último del chat, el chat está en modo bot y el original ya
+       * no puede estar corriendo (más de 90 s: la función vive 60), se
+       * responde acá. Con menos de 90 s se sigue tratando como duplicado, que
+       * es lo que evita la doble respuesta.
        */
-      media: m.adjunto
-        ? {
-            url: `meta:${m.adjunto.id}`,
-            tipo: m.adjunto.tipo,
-            mime: m.adjunto.mime ?? null,
-            nombre: m.adjunto.nombre ?? null,
-          }
-        : null,
-      canal: "whatsapp",
-    });
-    // ANTI-DOBLE-RESPUESTA: si el índice único rechazó el insert, es una entrega
-    // duplicada del mismo mensaje (Meta reintenta el webhook). La que sí guardó
-    // responde; ésta se retira para no generar una segunda respuesta.
-    if (guardado.dup) {
-      resultados.push({ accion: "duplicado_carrera" });
-      continue;
+      const huerfano = await mensajeSinRespuesta(supa, empleadoId, chatId, m.waId);
+      if (!huerfano) {
+        resultados.push({ accion: "duplicado" });
+        continue;
+      }
+      resultados.push({ accion: "duplicado_huerfano" });
+    } else {
+      const guardado = await guardarMensaje(supa, {
+        empleadoId,
+        chatId,
+        rol: "cliente",
+        texto: m.texto,
+        waId: m.waId,
+        /**
+         * ADJUNTO (arreglado el 21-ago-2026 — brecha G4).
+         *
+         * Este camino NUNCA guardaba los metadatos del adjunto, así que
+         * `media_tipo` quedaba en NULL y el inbox no dibujaba nada: la persona
+         * veía «[el cliente envió una imagen]» y no podía abrirla. Y como todo
+         * cliente nuevo entra por Cloud API, era el comportamiento por defecto.
+         *
+         * El `id` de Meta se guarda con prefijo `meta:` en `media_url`. No es una
+         * URL y a propósito: las URL de Meta **expiran en minutos**, así que
+         * guardar una sería guardar basura. El prefijo le dice al proxy por dónde
+         * resolver, sin necesidad de una columna nueva ni de otra migración.
+         */
+        media: m.adjunto
+          ? {
+              url: `meta:${m.adjunto.id}`,
+              tipo: m.adjunto.tipo,
+              mime: m.adjunto.mime ?? null,
+              nombre: m.adjunto.nombre ?? null,
+            }
+          : null,
+        canal: "whatsapp",
+      });
+      // ANTI-DOBLE-RESPUESTA: si el índice único rechazó el insert, es una entrega
+      // duplicada del mismo mensaje (Meta reintenta el webhook). La que sí guardó
+      // responde; ésta se retira para no generar una segunda respuesta.
+      if (guardado.dup) {
+        resultados.push({ accion: "duplicado_carrera" });
+        continue;
+      }
     }
 
     /**
@@ -240,22 +274,11 @@ export async function manejarEntranteMeta(
      * Se piden de vuelta con `.select()` porque ya estamos haciendo este viaje
      * a la base: pedirlas acá evita una consulta extra en plena conversación.
      */
-    const { data: contactoGuardado } = await supa
-      .from("ed_contactos")
-      .upsert(
-        {
-          cliente_id: cfg.clienteId,
-          chat_id: chatId,
-          nombre: m.nombre ?? undefined,
-          telefono: `+${chatId}`,
-          etiqueta: "lead",
-        },
-        { onConflict: "cliente_id,chat_id" },
-      )
-      .select(
-        "nombre, telefono, etiquetas, etapa, etapa_manual, ultimo_mensaje_en, ultimo_mensaje_rol",
-      )
-      .maybeSingle();
+    const contactoGuardado = await asegurarContacto(supa, {
+      clienteId: cfg.clienteId,
+      chatId,
+      nombre: m.nombre ?? null,
+    });
 
     /**
      * ATRIBUCIÓN DE CAMPAÑA. Meta manda el anuncio de origen SOLO en el primer
@@ -353,9 +376,9 @@ export async function manejarEntranteMeta(
      * WAHA, o sea al número de Impresora Color, y Cloud API —por donde entra
      * TODO cliente nuevo— se quedó con el bug.
      */
-    const DEBOUNCE_MS = ventanaDeEspera(m.texto ?? "");
+    const DEBOUNCE_MS = opts?.sinDebounce ? 0 : ventanaDeEspera(m.texto ?? "");
     if (m.waId) {
-      await new Promise((r) => setTimeout(r, DEBOUNCE_MS));
+      if (DEBOUNCE_MS > 0) await new Promise((r) => setTimeout(r, DEBOUNCE_MS));
       const { data: ultimo } = await supa
         .from("ed_mensajes")
         .select("wa_message_id")
@@ -428,4 +451,38 @@ export async function manejarEntranteMeta(
 
   if (resultados.length === 0) resultados.push({ accion: "ignorado" });
   return resultados;
+}
+
+
+/**
+ * ¿Este mensaje del cliente quedó sin respuesta del negocio y ya nadie lo está
+ * atendiendo? Verdadero solo si: es el último mensaje del chat, tiene más de
+ * 90 s (la invocación que lo guardó ya no puede seguir viva), el chat está en
+ * modo bot y no hay ningún mensaje del negocio posterior.
+ */
+async function mensajeSinRespuesta(
+  supa: ReturnType<typeof db>,
+  empleadoId: string,
+  chatId: string,
+  waId: string,
+): Promise<boolean> {
+  const { data: original } = await supa
+    .from("ed_mensajes")
+    .select("creado_en")
+    .eq("empleado_id", empleadoId)
+    .eq("wa_message_id", waId)
+    .maybeSingle();
+  if (!original) return false;
+  const edadMs = Date.now() - new Date(original.creado_en as string).getTime();
+  if (edadMs < 90_000) return false;
+  if ((await modoDe(empleadoId, chatId, supa)) !== "bot") return false;
+  const { data: ultimo } = await supa
+    .from("ed_mensajes")
+    .select("wa_message_id, rol")
+    .eq("empleado_id", empleadoId)
+    .eq("chat_id", chatId)
+    .order("creado_en", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  return Boolean(ultimo && ultimo.rol === "cliente" && ultimo.wa_message_id === waId);
 }

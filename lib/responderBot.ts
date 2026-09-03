@@ -55,22 +55,100 @@ async function derivarPorFalloDeEnvio(
     .is("atendida_en", null)
     .limit(1)
     .maybeSingle();
+  const resumen =
+    "El asistente no pudo entregar su respuesta por un fallo del canal. La conversación quedó esperando a una persona.";
   if (!pendiente) {
-    await supa.from("ed_escalaciones").insert({
-      empleado_id: params.empleadoId,
-      chat_id: params.chatId,
+    await registrarEscalacion(supa, {
+      clienteId: params.clienteId,
+      empleadoId: params.empleadoId,
+      chatId: params.chatId,
       trigger: "incertidumbre",
-      resumen:
-        "El asistente no pudo entregar su respuesta por un fallo del canal. La conversación quedó esperando a una persona.",
-      notificado_a: [],
+      resumen,
     });
   }
+  // Cuando falla el sistema es cuando la persona MÁS necesita enterarse
+  // (auditoría 3-sep-2026): antes este camino no avisaba a nadie.
+  await avisarDerivacion(supa, {
+    clienteId: params.clienteId,
+    empleadoId: params.empleadoId,
+    chatId: params.chatId,
+    resumen,
+  });
   console.error("[responderBot] fallo de entrega:", params.detalle);
   notificarHQ({
     tipo: "error",
     clientePortalId: params.clienteId,
     detalle: `fallo de entrega: ${params.detalle}`,
   });
+}
+
+/** Triggers que la base acepta. Lo que el modelo invente cae en "incertidumbre". */
+const TRIGGERS_VALIDOS = new Set([
+  "pedido_explicito",
+  "sentimiento_negativo",
+  "sin_resolver",
+  "palabra_clave",
+  "monto_alto",
+  "incertidumbre",
+]);
+
+/**
+ * Registra la derivación y AVISA si no se pudo (auditoría 3-sep-2026).
+ *
+ * Antes el insert iba sin revisar `error` y con el `trigger` tal cual lo
+ * escribía el modelo. Si la base lo rechazaba (un trigger fuera del CHECK),
+ * el chat quedaba en modo humano, sin fila en "te esperan" y sin push: mudo
+ * y sin que nadie lo supiera. Ahora el trigger se normaliza y un fallo se
+ * loguea y avisa a HQ.
+ */
+async function registrarEscalacion(
+  supa: SupabaseClient,
+  p: { clienteId: string; empleadoId: string; chatId: string; trigger?: string | null; resumen: string },
+): Promise<void> {
+  const trigger = p.trigger && TRIGGERS_VALIDOS.has(p.trigger) ? p.trigger : "incertidumbre";
+  const { error } = await supa.from("ed_escalaciones").insert({
+    empleado_id: p.empleadoId,
+    chat_id: p.chatId,
+    trigger,
+    resumen: p.resumen,
+    notificado_a: [],
+  });
+  if (error) {
+    console.error("[responderBot] no se pudo registrar la escalación:", error.message);
+    notificarHQ({
+      tipo: "error",
+      clientePortalId: p.clienteId,
+      detalle: `escalación no registrada (${p.chatId}): ${error.message}`,
+    });
+  }
+}
+
+/** Push al equipo: «<quien> necesita ayuda». Un aviso por conversación. */
+async function avisarDerivacion(
+  supa: SupabaseClient,
+  p: { clienteId: string; empleadoId: string; chatId: string; resumen: string },
+): Promise<void> {
+  try {
+    // El nombre hace la diferencia entre "alguien te necesita" y "Cristian te
+    // necesita". Si no está, el número igual dice más que nada.
+    const { data: c } = await supa
+      .from("ed_contactos")
+      .select("nombre")
+      .eq("cliente_id", p.clienteId)
+      .eq("chat_id", p.chatId)
+      .maybeSingle();
+    const quien = (c?.nombre as string | null) || `+${p.chatId}`;
+    await avisarACliente(p.clienteId, {
+      titulo: `${quien} necesita ayuda`,
+      cuerpo: resumirParaAviso(p.resumen),
+      url: `/conversaciones?emp=${encodeURIComponent(p.empleadoId)}&chat=${encodeURIComponent(p.chatId)}`,
+      // Un aviso por conversación: si el mismo chat escala dos veces, se
+      // reemplaza en vez de apilarse.
+      tag: `chat:${p.chatId}`,
+    });
+  } catch {
+    // Best-effort: la escalación ya quedó registrada.
+  }
 }
 
 /**
@@ -81,8 +159,15 @@ async function autoEtiquetar(
   clienteId: string,
   chatId: string,
   datos: RespuestaMotor,
+  /**
+   * ¿Se creó una cita de verdad? "agendado" solo se suma con esto en true
+   * (auditoría 3-sep-2026): antes bastaba que el modelo dijera
+   * `accion:"agendar"` —cosa que hacía hasta en una imprenta, donde no hay
+   * agenda— y esa etiqueta empujaba el embudo a GANADO sin venta alguna.
+   */
+  citaCreada = false,
 ) {
-  const nuevas = etiquetasDesdeMotor(datos);
+  const nuevas = etiquetasDesdeMotor(datos, { citaCreada });
   if (nuevas.length === 0) return;
   try {
     const supa = db();
@@ -97,12 +182,13 @@ async function autoEtiquetar(
     // Con exclusiones: un reclamo nuevo saca "resuelto", etc. (etiquetasCiclo).
     const union = alAgregar(actuales, nuevas);
     if (union === actuales) return;
+    // `update`, no `upsert`: el contacto ya existe (lo crea el camino de
+    // entrada) y el upsert reescribía `etiqueta` a "lead" en cada turno.
     await supa
       .from("ed_contactos")
-      .upsert(
-        { cliente_id: clienteId, chat_id: chatId, etiquetas: union, etiqueta: "lead" },
-        { onConflict: "cliente_id,chat_id" },
-      );
+      .update({ etiquetas: union })
+      .eq("cliente_id", clienteId)
+      .eq("chat_id", chatId);
   } catch {
     /* no romper la respuesta por un fallo de etiquetado */
   }
@@ -297,9 +383,24 @@ export async function responderSiBot(params: {
 
   let datos: RespuestaMotor;
   try {
-    datos = JSON.parse(
+    const crudo: unknown = JSON.parse(
       await generarJSON(prompt, { fechaLimite: params.fechaLimiteModelo }),
     );
+    /**
+     * FORMA DEL JSON (auditoría 3-sep-2026). `JSON.parse` acepta `null`, un
+     * arreglo o un string: con eso `datos.respuesta?.trim()` más abajo lanzaba
+     * un TypeError FUERA de este try, el webhook devolvía 500, Meta reintentaba
+     * y el reintento decía "duplicado" → el cliente quedaba mudo. Y una
+     * respuesta vacía o que no es texto es un fallo del modelo, no algo que
+     * mandar: cae a la misma red de seguridad (derivar a una persona).
+     */
+    if (!crudo || typeof crudo !== "object" || Array.isArray(crudo)) {
+      throw new Error("el modelo no devolvió un objeto JSON");
+    }
+    datos = crudo as RespuestaMotor;
+    if (typeof datos.respuesta !== "string" || !datos.respuesta.trim()) {
+      throw new Error("el modelo devolvió una respuesta vacía");
+    }
   } catch (e) {
     // ── RED DE SEGURIDAD (auditoría 30-jul): el cliente NUNCA queda en silencio ──
     // Antes, si el modelo fallaba (caído, saturado, timeout), la función salía
@@ -328,14 +429,16 @@ export async function responderSiBot(params: {
       });
     }
     await setModo(empleadoId, chatId, "humano", supaF);
-    await supaF.from("ed_escalaciones").insert({
-      empleado_id: empleadoId,
-      chat_id: chatId,
+    const resumenFallo =
+      "El asistente no pudo responder por un problema técnico momentáneo. La conversación quedó esperando a una persona.";
+    await registrarEscalacion(supaF, {
+      clienteId,
+      empleadoId,
+      chatId,
       trigger: "incertidumbre",
-      resumen:
-        "El asistente no pudo responder por un problema técnico momentáneo. La conversación quedó esperando a una persona.",
-      notificado_a: [],
+      resumen: resumenFallo,
     });
+    await avisarDerivacion(supaF, { clienteId, empleadoId, chatId, resumen: resumenFallo });
     console.error("[responderBot] fallo del modelo:", (e as Error).message);
     notificarHQ({
       tipo: "error",
@@ -345,9 +448,7 @@ export async function responderSiBot(params: {
     return { accion: "error_llm_derivado", detalle: (e as Error).message };
   }
 
-  let texto =
-    datos.respuesta?.trim() ||
-    "Prefiero confirmar eso con el equipo para no darte un dato malo 👍";
+  let texto = datos.respuesta.trim();
 
   const supa = db();
 
@@ -376,6 +477,7 @@ export async function responderSiBot(params: {
   // enviar jamás debe crear una cita. La cita la valida y la crea CÓDIGO
   // (tokens de la lista ofrecida + constraint anti doble-reserva en Postgres);
   // la línea de confirmación final también la redacta código, no el modelo.
+  let citaCreada = false;
   if (agenda) {
     const rAgenda = await ejecutarAccionAgenda({
       ctx: agenda,
@@ -390,6 +492,7 @@ export async function responderSiBot(params: {
     } else if ("textoExtra" in rAgenda && rAgenda.textoExtra) {
       texto = `${texto}\n\n${rAgenda.textoExtra}`;
     }
+    citaCreada = rAgenda.tipo === "agendada" || rAgenda.tipo === "reagendada";
   }
 
   // Enviar por WhatsApp. Opción A: usa el sender pasado (Evolution). Opción B:
@@ -450,12 +553,12 @@ export async function responderSiBot(params: {
   // Escalación: si el motor pide humano, silenciar el bot y registrar.
   if (datos.escalar) {
     await setModo(empleadoId, chatId, "humano", supa);
-    await supa.from("ed_escalaciones").insert({
-      empleado_id: empleadoId,
-      chat_id: chatId,
-      trigger: datos.trigger ?? "incertidumbre",
+    await registrarEscalacion(supa, {
+      clienteId,
+      empleadoId,
+      chatId,
+      trigger: datos.trigger,
       resumen: datos.resumen_para_humano ?? "El asistente derivó la conversación.",
-      notificado_a: [],
     });
 
     /**
@@ -503,27 +606,18 @@ export async function responderSiBot(params: {
      * Best-effort: si el aviso falla, la escalación ya quedó registrada y la
      * conversación se atiende igual.
      */
-    void (async () => {
-      // El nombre hace la diferencia entre "alguien te necesita" y "Cristian te
-      // necesita". Si no está, el número igual dice más que nada.
-      const { data: c } = await supa
-        .from("ed_contactos")
-        .select("nombre")
-        .eq("cliente_id", clienteId)
-        .eq("chat_id", chatId)
-        .maybeSingle();
-      const quien = (c?.nombre as string | null) || `+${chatId}`;
-      await avisarACliente(clienteId, {
-        titulo: `${quien} necesita ayuda`,
-        cuerpo: resumirParaAviso(
-          datos.resumen_para_humano || "El asistente derivó la conversación.",
-        ),
-        url: `/conversaciones?emp=${encodeURIComponent(empleadoId)}&chat=${encodeURIComponent(chatId)}`,
-        // Un aviso por conversación: si el mismo chat escala dos veces, se
-        // reemplaza en vez de apilarse.
-        tag: `chat:${chatId}`,
-      });
-    })().catch(() => undefined);
+    /**
+     * Se ESPERA (auditoría 3-sep-2026): antes iba como `void (async …)()`
+     * justo antes del `return`, y en Vercel lo que queda pendiente cuando la
+     * función responde puede no ejecutarse nunca. Es el aviso que más importa;
+     * cuesta uno o dos segundos y ya se mandó la respuesta al cliente.
+     */
+    await avisarDerivacion(supa, {
+      clienteId,
+      empleadoId,
+      chatId,
+      resumen: datos.resumen_para_humano || "El asistente derivó la conversación.",
+    });
 
     notificarHQ({
       tipo: "human_handoff",
@@ -533,7 +627,7 @@ export async function responderSiBot(params: {
   }
 
   // Etiquetado automático de la conversación (posible comprador, cotización...).
-  await autoEtiquetar(clienteId, chatId, datos);
+  await autoEtiquetar(clienteId, chatId, datos, citaCreada);
 
   // Puente a HQ (ver lib/hqBridge.ts): un mensaje real fue atendido y enviado.
   notificarHQ({ tipo: "mensaje", clientePortalId: clienteId });

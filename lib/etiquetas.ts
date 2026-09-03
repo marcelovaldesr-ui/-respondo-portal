@@ -53,16 +53,27 @@ export const ETIQUETAS_MANUALES = ETIQUETAS;
  * Deriva etiquetas automáticas de la salida del motor (para cuando el bot
  * responde en vivo). No borra las existentes: solo suma.
  */
-export function etiquetasDesdeMotor(datos: {
-  escalar?: boolean;
-  trigger?: string | null;
-  accion?: string | null;
-  lead?: { clasificacion?: string } | null;
-}): string[] {
+export function etiquetasDesdeMotor(
+  datos: {
+    escalar?: boolean;
+    trigger?: string | null;
+    accion?: string | null;
+    lead?: { clasificacion?: string } | null;
+  },
+  opts: {
+    /**
+     * "agendado" SOLO cuando la cita existe de verdad (auditoría 3-sep-2026).
+     * Antes bastaba `accion:"agendar"` del modelo —que lo decía hasta en una
+     * imprenta sin agenda— y como `etapaSegunSenales` lee "agendado" como
+     * GANADO, un "¿a qué hora paso a retirar?" terminaba como venta ganada.
+     */
+    citaCreada?: boolean;
+  } = {},
+): string[] {
   const out: string[] = [];
   if (datos.lead?.clasificacion === "caliente") out.push("posible_comprador");
   if (datos.accion === "cotizar") out.push("cotizacion");
-  if (datos.accion === "agendar") out.push("agendado");
+  if (datos.accion === "agendar" && opts.citaCreada) out.push("agendado");
   if (datos.escalar && datos.trigger === "sentimiento_negativo") out.push("reclamo");
   else if (datos.escalar) out.push("necesita_atencion");
   return out;
