@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  MAX_IMAGEN_META_BYTES,
   MAX_SALIDA_BYTES,
   nombreSeguroSalida,
   revisarAdjuntoSalida,
@@ -90,4 +91,20 @@ test("el nombre del archivo se sanea: viaja al teléfono de una persona", () => 
   // guardó como "Cotización final". Lo que se reemplaza es el acento, que es lo
   // que rompe en algunos sistemas.
   assert.equal(nombreSeguroSalida("Cotización final-2.pdf"), "Cotizaci_n final-2.pdf");
+});
+
+test("por Meta solo JPEG/PNG de hasta 5 MB van como imagen; el resto, como documento", () => {
+  // Meta rechaza WEBP/GIF con type:"image" y fotos de más de 5 MB. Antes se
+  // mandaba todo como imagen y el archivo "salía" pero no llegaba.
+  assert.equal(revisarAdjuntoSalida({ bytes: jpeg(5), mime: "image/jpeg", nombre: "f.jpg" }).imagenParaMeta, true);
+  assert.equal(revisarAdjuntoSalida({ bytes: png(), mime: "image/png", nombre: "f.png" }).imagenParaMeta, true);
+  const w = revisarAdjuntoSalida({ bytes: webp(), mime: "image/webp", nombre: "s.webp" });
+  assert.equal(w.esImagen, true);
+  assert.equal(w.imagenParaMeta, false);
+  const grande = new Uint8Array(MAX_IMAGEN_META_BYTES + 1);
+  grande.set([0xff, 0xd8, 0xff]);
+  const g = revisarAdjuntoSalida({ bytes: grande, mime: "image/jpeg", nombre: "enorme.jpg" });
+  assert.equal(g.ok, true, "sigue siendo válido: va como documento");
+  assert.equal(g.imagenParaMeta, false);
+  assert.equal(revisarAdjuntoSalida({ bytes: pdf(), mime: "application/pdf", nombre: "d.pdf" }).imagenParaMeta, false);
 });

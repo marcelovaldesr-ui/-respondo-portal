@@ -5,8 +5,15 @@ import { guardarMensaje } from "@/lib/mensajes";
 import { limitarDistribuido } from "@/lib/seguridad";
 import { PLANTILLAS, limpiarParam, plantillasParaRubro, render } from "@/lib/plantillas";
 import { enviarPlantilla } from "@/lib/whatsapp";
-import { restaurarControl, tomarControlTemporal, transporteSalida } from "@/lib/controlChat";
+import {
+  conservarPausa,
+  restaurarControl,
+  tomarControlTemporal,
+  transporteSalida,
+} from "@/lib/controlChat";
 import { cerrarEscalacionesPendientes } from "@/lib/escalaciones";
+import { idsEmpleadosDeCliente } from "@/lib/empleadosCache";
+import { explicarErrorMeta } from "@/lib/erroresMeta";
 
 export const dynamic = "force-dynamic";
 
@@ -116,13 +123,30 @@ export async function POST(request: NextRequest) {
       .maybeSingle(),
     supa
       .from("ed_contactos")
-      .select("chat_id")
+      .select("chat_id, etiquetas")
       .eq("cliente_id", usuario.clienteId)
       .eq("chat_id", chatId)
       .maybeSingle(),
   ]);
   if (!empleado || !contacto) {
     return NextResponse.json({ ok: false, error: "Sin acceso a este chat" }, { status: 403 });
+  }
+
+  /**
+   * `no_contactar` se respeta también acá (auditoría 3-sep-2026). La etiqueta
+   * la pone el negocio cuando el cliente pidió que no le escriban más; los
+   * seguimientos automáticos ya la miran, pero la plantilla manual —que es
+   * justamente "escribirle a alguien que no nos escribió"— no. Responder un
+   * chat abierto es distinto (el cliente escribió); esto es iniciar contacto.
+   */
+  const etiquetas = (contacto.etiquetas as string[] | null) ?? [];
+  if (etiquetas.includes("no_contactar")) {
+    return NextResponse.json({
+      ok: false,
+      error:
+        "Este contacto está marcado como «no contactar»: no se le inician conversaciones. " +
+        "Si cambió de opinión, quítale la etiqueta primero.",
+    });
   }
 
   const transporte = await transporteSalida(usuario.clienteId);
@@ -150,20 +174,10 @@ export async function POST(request: NextRequest) {
 
   if (!envio.ok) {
     await restaurarControl(supa, empleadoId, chatId, control);
-    /**
-     * Traducir los códigos de Meta a algo que se entienda. Un «132001» en
-     * pantalla no le sirve a nadie: lo que hay que saber es que esa plantilla no
-     * está dada de alta en el WhatsApp de ESTE negocio.
-     */
-    const crudo = envio.error ?? "";
-    const amable = crudo.includes("132001")
-      ? "Esa plantilla todavía no está aprobada en el WhatsApp de este negocio."
-      : crudo.includes("132000")
-        ? "Los datos de la plantilla no calzan con la versión aprobada."
-        : crudo.includes("131047")
-          ? "WhatsApp no aceptó el mensaje: la conversación está fuera de plazo."
-          : crudo || "No se pudo enviar la plantilla";
-    return NextResponse.json({ ok: false, error: amable });
+    // Traducción compartida (lib/erroresMeta.ts): un «132001» en pantalla no
+    // le sirve a nadie; lo que hay que saber es que esa plantilla no está dada
+    // de alta en el WhatsApp de ESTE negocio.
+    return NextResponse.json({ ok: false, error: explicarErrorMeta(envio.error, "plantilla") });
   }
 
   const guardado = await guardarMensaje(supa, {
@@ -182,11 +196,13 @@ export async function POST(request: NextRequest) {
     });
   }
 
+  // Por CHAT (todos los empleados del cliente), no solo el que figura.
   await cerrarEscalacionesPendientes(supa, {
-    empleadoIds: [empleadoId],
+    empleadoIds: await idsEmpleadosDeCliente(usuario.clienteId),
     chatId,
     clienteId: usuario.clienteId,
   });
+  await conservarPausa(supa, empleadoId, chatId, control);
 
-  return NextResponse.json({ ok: true, texto });
+  return NextResponse.json({ ok: true, texto, mensajeId: guardado.id });
 }

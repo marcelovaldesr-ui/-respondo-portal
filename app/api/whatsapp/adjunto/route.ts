@@ -44,8 +44,10 @@ export async function POST(request: NextRequest) {
     mime: archivo.type,
     nombre: archivo.name,
     caption,
-    // El ritmo se cuenta por operador del portal, como antes.
-    limiteClave: usuario.clienteId,
+    // El ritmo se cuenta por PERSONA logueada, igual que el texto: con la
+    // clave por negocio, dos operadores del mismo cliente se bloqueaban entre
+    // sí (auditoría 3-sep-2026).
+    limiteClave: usuario.email,
   });
 
   return NextResponse.json(r);

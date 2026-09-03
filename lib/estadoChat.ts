@@ -53,6 +53,12 @@ export async function setModo(
 /**
  * Marca que el cliente acaba de escribir (ventana de 24h) SIN pisar el modo.
  * Si no existe la fila, la crea en modo "bot".
+ *
+ * Sin carrera (auditoría 3-sep-2026): antes era select → insert, y dos
+ * webhooks del mismo chat en el mismo segundo (foto + texto) hacían que el
+ * segundo insert chocara con la clave única y se perdiera el toque. Ahora:
+ * update primero; si no había fila, insert que ignora el duplicado y se
+ * vuelve a tocar por si otro la creó en el medio.
  */
 export async function tocarVentanaEntrante(
   empleadoId: string,
@@ -62,23 +68,22 @@ export async function tocarVentanaEntrante(
   const ahora = new Date().toISOString();
   const { data } = await supa
     .from("ed_chat_estado")
-    .select("modo")
+    .update({ ultimo_entrante_en: ahora })
     .eq("empleado_id", empleadoId)
     .eq("chat_id", chatId)
-    .maybeSingle();
+    .select("chat_id");
+  if (data?.length) return;
 
-  if (data) {
-    await supa
-      .from("ed_chat_estado")
-      .update({ ultimo_entrante_en: ahora })
-      .eq("empleado_id", empleadoId)
-      .eq("chat_id", chatId);
-  } else {
-    await supa.from("ed_chat_estado").insert({
-      empleado_id: empleadoId,
-      chat_id: chatId,
-      modo: "bot",
-      ultimo_entrante_en: ahora,
-    });
-  }
+  await supa.from("ed_chat_estado").upsert(
+    { empleado_id: empleadoId, chat_id: chatId, modo: "bot", ultimo_entrante_en: ahora },
+    { onConflict: "empleado_id,chat_id", ignoreDuplicates: true },
+  );
+  // Si el upsert no insertó (otro la creó recién), el update de arriba no la
+  // vio: se toca una vez más. Barato y deja el dato correcto.
+  await supa
+    .from("ed_chat_estado")
+    .update({ ultimo_entrante_en: ahora })
+    .eq("empleado_id", empleadoId)
+    .eq("chat_id", chatId)
+    .is("ultimo_entrante_en", null);
 }

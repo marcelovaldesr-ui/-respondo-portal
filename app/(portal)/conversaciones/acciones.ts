@@ -6,6 +6,9 @@ import { obtenerUsuarioConPermiso } from "@/lib/auth";
 import { MODOS, type Modo } from "@/lib/controlChat";
 import { enviarComoHumano, fijarModo } from "@/lib/responderChat";
 import { alAgregar } from "@/lib/etiquetasCiclo";
+import { cerrarEscalacionesPendientes } from "@/lib/escalaciones";
+import { idsEmpleadosDeCliente } from "@/lib/empleadosCache";
+import { notificarYEsperar } from "@/lib/puenteSalida";
 
 /**
  * Control del cliente sobre una conversación: pausar al asistente, tomar el
@@ -91,6 +94,17 @@ export async function responderComoHumano(
  * Agrega o quita una etiqueta de una conversación (manual, por el humano).
  * Las etiquetas viven en ed_contactos.etiquetas (arreglo). Se valida que el
  * contacto sea del cliente logueado.
+ *
+ * Tres cosas que antes no hacía (auditoría 3-sep-2026):
+ *  - UPDATE y no upsert: el upsert creaba contactos para cualquier chat_id
+ *    que llegara del navegador (saltando la barrera "contacto del tenant" que
+ *    protege el envío) y encima reescribía `etiqueta='lead'` en cada cambio.
+ *  - Marcar "resuelto" o quitar "necesita_atencion" a mano CIERRA la
+ *    derivación: es lo que la persona está diciendo, y sin esto el "te espera"
+ *    seguía encendido aunque la etiqueta ya no estuviera.
+ *  - Avisa al sistema del cliente (Gestión) igual que los cambios
+ *    automáticos: si no, el espejo de etiquetas quedaba desactualizado hasta
+ *    el próximo mensaje.
  */
 export async function cambiarEtiqueta(formData: FormData): Promise<void> {
   const usuario = await obtenerUsuarioConPermiso("operar_conversaciones");
@@ -100,18 +114,20 @@ export async function cambiarEtiqueta(formData: FormData): Promise<void> {
   const etiqueta = String(formData.get("etiqueta") ?? "").trim();
   const accion = String(formData.get("accion") ?? ""); // "agregar" | "quitar"
   if (!chatId || !etiqueta || !["agregar", "quitar"].includes(accion)) return;
+  // Una etiqueta es una palabra corta; lo demás no es una etiqueta.
+  if (etiqueta.length > 40 || !/^[a-z0-9_\-áéíóúñü ]+$/i.test(etiqueta)) return;
 
   const supa = db();
 
-  // Traer el contacto (y validar cliente). Si no existe, crearlo con la etiqueta.
   const { data: contacto } = await supa
     .from("ed_contactos")
-    .select("etiquetas")
+    .select("etiquetas, nombre, etapa, etapa_manual, ultimo_mensaje_en")
     .eq("cliente_id", usuario.clienteId)
     .eq("chat_id", chatId)
     .maybeSingle();
+  if (!contacto) return;
 
-  const actuales: string[] = (contacto?.etiquetas as string[] | null) ?? [];
+  const actuales: string[] = (contacto.etiquetas as string[] | null) ?? [];
   // Agregar respeta las exclusiones (etiquetasCiclo): marcar "resuelto" cierra
   // el reclamo y la derivación; "cliente" reemplaza a "cliente_nuevo".
   const nuevas =
@@ -119,17 +135,45 @@ export async function cambiarEtiqueta(formData: FormData): Promise<void> {
       ? alAgregar(actuales, [etiqueta])
       : actuales.filter((e) => e !== etiqueta);
 
-  await supa
+  if (nuevas.length === actuales.length && nuevas.every((e, i) => e === actuales[i])) return;
+
+  const { error } = await supa
     .from("ed_contactos")
-    .upsert(
-      {
-        cliente_id: usuario.clienteId,
-        chat_id: chatId,
+    .update({ etiquetas: nuevas })
+    .eq("cliente_id", usuario.clienteId)
+    .eq("chat_id", chatId);
+  if (error) throw new Error("No se pudo guardar la etiqueta");
+
+  const cerroAtencion =
+    (accion === "agregar" && etiqueta === "resuelto") ||
+    (accion === "quitar" && etiqueta === "necesita_atencion");
+  if (cerroAtencion) {
+    await cerrarEscalacionesPendientes(supa, {
+      empleadoIds: await idsEmpleadosDeCliente(usuario.clienteId),
+      chatId,
+      clienteId: usuario.clienteId,
+    });
+  }
+
+  // Espejo en el sistema del cliente. Se espera (con tope corto) porque una
+  // server action termina al devolver y un fire-and-forget se perdería.
+  await Promise.race([
+    notificarYEsperar({
+      evento: "etapa",
+      clienteId: usuario.clienteId,
+      contacto: {
+        chatId,
+        nombre: (contacto.nombre as string | null) ?? null,
+        canal: chatId.startsWith("ig:") ? "instagram" : "whatsapp",
+        etapa: (contacto.etapa as string | null) ?? null,
+        etapaManual: Boolean(contacto.etapa_manual),
         etiquetas: nuevas,
-        etiqueta: "lead",
+        ultimoMensajeEn: (contacto.ultimo_mensaje_en as string | null) ?? null,
       },
-      { onConflict: "cliente_id,chat_id" },
-    );
+      supa,
+    }).catch((e) => console.warn("[cambiarEtiqueta] puente:", (e as Error).message)),
+    new Promise<void>((r) => setTimeout(r, 4_000)),
+  ]);
 
   revalidatePath("/conversaciones");
 }

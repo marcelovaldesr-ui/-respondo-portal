@@ -90,7 +90,14 @@ export async function tomarControlTemporal(
  * Revierte solo si nadie cambió el modo después de nuestra toma temporal.
  *
  * La comparación por `actualizado_en` es lo que evita pisar a una persona que
- * tomó el control de verdad mientras nuestro envío estaba en vuelo.
+ * tomó el control de verdad mientras nuestro envío estaba en vuelo. (Verificado
+ * el 3-sep-2026 contra la base: ed_chat_estado no tiene trigger que toque
+ * `actualizado_en`, así que la marca que escribimos es la que leemos.)
+ *
+ * Siempre UPDATE, nunca DELETE — aunque la fila no existiera antes. La fila
+ * también guarda `ultimo_entrante_en` (ventana de 24 h) y `reingreso_*`, que el
+ * webhook pudo escribir mientras el envío estaba en vuelo; borrarla tiraba eso.
+ * Una fila en "bot" equivale a que no exista.
  */
 export async function restaurarControl(
   supa: SupabaseClient,
@@ -98,19 +105,31 @@ export async function restaurarControl(
   chatId: string,
   control: ControlTemporal,
 ): Promise<void> {
-  if (control.existia) {
-    await supa
-      .from("ed_chat_estado")
-      .update({ modo: control.modoAnterior, actualizado_en: new Date().toISOString() })
-      .eq("empleado_id", empleadoId)
-      .eq("chat_id", chatId)
-      .eq("actualizado_en", control.marca);
-  } else {
-    await supa
-      .from("ed_chat_estado")
-      .delete()
-      .eq("empleado_id", empleadoId)
-      .eq("chat_id", chatId)
-      .eq("actualizado_en", control.marca);
-  }
+  await supa
+    .from("ed_chat_estado")
+    .update({ modo: control.modoAnterior, actualizado_en: new Date().toISOString() })
+    .eq("empleado_id", empleadoId)
+    .eq("chat_id", chatId)
+    .eq("actualizado_en", control.marca);
+}
+
+/**
+ * Después de un envío humano EXITOSO: si el chat estaba PAUSADO, se deja
+ * pausado.
+ *
+ * Antes, responder desde el portal convertía "pausado" en "humano" permanente
+ * (auditoría 3-sep-2026). Los dos silencian al asistente, pero no son lo mismo:
+ * "pausado" lo eligió el dueño a mano y el vigilante de abandonadas no lo
+ * toca; "humano" es "una persona está atendiendo" y el vigilante SÍ puede
+ * hacer que Tino retome si nadie sigue. Un chat que el dueño pausó no debe
+ * volver a manos de Tino solo porque alguien le contestó una vez.
+ */
+export async function conservarPausa(
+  supa: SupabaseClient,
+  empleadoId: string,
+  chatId: string,
+  control: ControlTemporal,
+): Promise<void> {
+  if (control.modoAnterior !== "pausado") return;
+  await restaurarControl(supa, empleadoId, chatId, control);
 }

@@ -262,6 +262,28 @@ export async function clientePorInstanciaWaha(
 }
 
 /**
+ * La barrera de "WAHA es de UN solo negocio", compartida por texto y media.
+ *
+ * Devuelve el error a devolver, o null si se puede enviar. Antes vivía solo
+ * dentro de `enviarTextoWaha`; `enviarMediaWaha` no la tenía, así que un
+ * adjunto mandado desde el portal de otro cliente en transporte='waha' salía
+ * por el WhatsApp de Impresora Color (auditoría 3-sep-2026: hoy hay dos
+ * clientes activos en 'waha' sin instancia propia).
+ */
+async function bloqueoPorClienteAjeno(clienteId: string | undefined): Promise<string | null> {
+  if (!clienteId) return null;
+  const dueno = await clienteDuenoDeWaha();
+  if (dueno && clienteId !== dueno) {
+    console.error(
+      `[waha] BLOQUEADO: se intentó enviar por la sesión de '${INSTANCIA}' para otro cliente. ` +
+        `WAHA es de un solo negocio; este cliente debe ir por Cloud API (transporte='cloud').`,
+    );
+    return "waha_pertenece_a_otro_cliente";
+  }
+  return null;
+}
+
+/**
  * Envía un mensaje de texto por WAHA (endpoint /api/sendText).
  * `destino` puede ser el jid completo (223...@lid) o un número; se respeta el
  * sufijo para responder a LIDs. Emula tipeo humano y devuelve el id normalizado.
@@ -298,41 +320,43 @@ export async function enviarTextoWaha(
      * esperando a una persona, en vez de escribirle a un cliente ajeno.
      */
     clienteId?: string;
+    /**
+     * Salta el "escribiendo…" y la pausa de ritmo humano. Para lo que escribe
+     * una PERSONA desde el portal: la pausa existe para que el bot no parezca
+     * bot; a alguien que ya está mirando la pantalla solo le agrega segundos.
+     * (Meta ya lo tenía; WAHA no — auditoría 3-sep-2026.)
+     */
+    sinEspera?: boolean;
   },
 ): Promise<{ ok: boolean; waId?: string; error?: string }> {
   const key = process.env.WAHA_API_KEY;
   if (!key || !BASE) return { ok: false, error: "Falta WAHA_API_URL/WAHA_API_KEY" };
 
-  if (opts?.clienteId) {
-    const dueno = await clienteDuenoDeWaha();
-    if (dueno && opts.clienteId !== dueno) {
-      console.error(
-        `[waha] BLOQUEADO: se intentó enviar por la sesión de '${INSTANCIA}' para otro cliente. ` +
-          `WAHA es de un solo negocio; este cliente debe ir por Cloud API (transporte='cloud').`,
-      );
-      return { ok: false, error: "waha_pertenece_a_otro_cliente" };
-    }
-  }
+  const bloqueo = await bloqueoPorClienteAjeno(opts?.clienteId);
+  if (bloqueo) return { ok: false, error: bloqueo };
+
   const chatId = aDestino(destino);
   const headers = { "Content-Type": "application/json", "X-Api-Key": key };
   try {
     // Presencia "escribiendo…" (best-effort; no bloquea el envío si falla).
-    try {
-      await fetch(`${BASE}/api/startTyping`, {
-        method: "POST",
-        headers,
-        body: JSON.stringify({ session: SESSION, chatId }),
-        signal: AbortSignal.timeout(5_000),
-      });
-      await new Promise((r) => setTimeout(r, delayHumano(texto)));
-      await fetch(`${BASE}/api/stopTyping`, {
-        method: "POST",
-        headers,
-        body: JSON.stringify({ session: SESSION, chatId }),
-        signal: AbortSignal.timeout(5_000),
-      });
-    } catch {
-      /* presencia opcional */
+    if (!opts?.sinEspera) {
+      try {
+        await fetch(`${BASE}/api/startTyping`, {
+          method: "POST",
+          headers,
+          body: JSON.stringify({ session: SESSION, chatId }),
+          signal: AbortSignal.timeout(5_000),
+        });
+        await new Promise((r) => setTimeout(r, delayHumano(texto)));
+        await fetch(`${BASE}/api/stopTyping`, {
+          method: "POST",
+          headers,
+          body: JSON.stringify({ session: SESSION, chatId }),
+          signal: AbortSignal.timeout(5_000),
+        });
+      } catch {
+        /* presencia opcional */
+      }
     }
 
     // Último control, ya sin nada más en el medio.
@@ -471,9 +495,15 @@ export function parsearWaha(payload: unknown): EntranteWaha | null {
 export async function enviarMediaWaha(
   destino: string,
   media: { data: string; mimetype: string; filename: string; caption?: string },
+  opts?: {
+    /** Misma barrera que en `enviarTextoWaha`: si no es el dueño de la sesión, no sale. */
+    clienteId?: string;
+  },
 ): Promise<{ ok: boolean; waId?: string; error?: string }> {
   const key = process.env.WAHA_API_KEY;
   if (!key || !BASE) return { ok: false, error: "Falta WAHA_API_URL/WAHA_API_KEY" };
+  const bloqueo = await bloqueoPorClienteAjeno(opts?.clienteId);
+  if (bloqueo) return { ok: false, error: bloqueo };
   const chatId = aDestino(destino);
   const endpoint = media.mimetype.startsWith("image/") ? "sendImage" : "sendFile";
   const headers = { "Content-Type": "application/json", "X-Api-Key": key };

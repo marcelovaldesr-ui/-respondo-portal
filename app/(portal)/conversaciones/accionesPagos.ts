@@ -7,8 +7,16 @@ import { guardarMensaje } from "@/lib/mensajes";
 import { enviarTexto } from "@/lib/whatsapp";
 import { enviarTextoWaha } from "@/lib/waha";
 import { cuentaIgDeCliente, enviarTextoInstagram } from "@/lib/instagram";
-import { restaurarControl, tomarControlTemporal, transporteSalida } from "@/lib/controlChat";
+import {
+  conservarPausa,
+  restaurarControl,
+  tomarControlTemporal,
+  transporteSalida,
+} from "@/lib/controlChat";
 import { ventanaAbierta } from "@/lib/ventana24";
+import { cerrarEscalacionesPendientes } from "@/lib/escalaciones";
+import { idsEmpleadosDeCliente } from "@/lib/empleadosCache";
+import { explicarErrorMeta } from "@/lib/erroresMeta";
 import { mensajeDeCobro, validarCobro, type EstadoPago } from "@/lib/pagosCore";
 import { cambiarEstadoPago, crearPago, linkDePago } from "@/lib/pagos";
 import { programarSeguimiento } from "@/lib/seguimientos";
@@ -153,11 +161,11 @@ export async function cobrarEnChat(formData: FormData): Promise<{
   if (!envio.ok) {
     await restaurarControl(supa, empleadoId, chatId, control);
     await deshacer();
-    return { ok: false, error: envio.error || "No se pudo enviar el cobro" };
+    return { ok: false, error: explicarErrorMeta(envio.error, "cobro") };
   }
 
   // Con el waId, el eco de Coexistencia se reconoce y no se duplica (1-ago).
-  await guardarMensaje(supa, {
+  const guardado = await guardarMensaje(supa, {
     empleadoId,
     chatId,
     rol: "humano",
@@ -165,6 +173,25 @@ export async function cobrarEnChat(formData: FormData): Promise<{
     waId: envio.waId,
     canal: esInstagram ? "instagram" : "whatsapp",
   });
+  if (!guardado.ok) {
+    // El cobro SÍ salió (y la fila existe): no se deshace. Pero sin el mensaje
+    // en el historial la IA no sabría que se cobró, así que se avisa.
+    return {
+      ok: false,
+      referencia: creado.referencia,
+      error:
+        "El cobro salió, pero no se pudo registrar el mensaje en la conversación. " +
+        "Revisa el chat antes de continuar.",
+    };
+  }
+
+  // Cobrar es atender: se cierra la derivación pendiente, por chat.
+  await cerrarEscalacionesPendientes(supa, {
+    empleadoIds: await idsEmpleadosDeCliente(usuario.clienteId),
+    chatId,
+    clienteId: usuario.clienteId,
+  });
+  await conservarPausa(supa, empleadoId, chatId, control);
 
   return { ok: true, referencia: creado.referencia };
 }

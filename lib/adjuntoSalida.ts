@@ -28,6 +28,21 @@ export const MIME_SALIDA_PERMITIDOS = new Set([
 export const MAX_SALIDA_BYTES = 16 * 1024 * 1024;
 
 /**
+ * Lo que la Cloud API de Meta acepta COMO IMAGEN (se ve dentro de la
+ * conversación): solo JPEG y PNG, hasta 5 MB. WEBP y GIF no son "image" para
+ * Meta (WEBP es sticker; GIF no existe) y una foto de más de 5 MB se rechaza
+ * con un error que no explica nada. Antes se mandaba todo como `image` y el
+ * archivo "salía" pero no llegaba (auditoría 3-sep-2026).
+ *
+ * Lo que no cabe como imagen va como DOCUMENTO: Meta acepta cualquier tipo
+ * hasta 100 MB por esa vía, y el cliente lo recibe como archivo con su nombre.
+ * Se prefiere eso a rechazarlo: un WEBP que llega como archivo es mejor que un
+ * "no se pudo enviar".
+ */
+export const MAX_IMAGEN_META_BYTES = 5 * 1024 * 1024;
+const MIMES_IMAGEN_META = new Set(["image/jpeg", "image/png"]);
+
+/**
  * Firmas de archivo ("magic numbers").
  *
  * NO SE CONFÍA EN EL `Content-Type` que declara el navegador: es un texto que
@@ -72,7 +87,18 @@ export function nombreSeguroSalida(nombre: string): string {
 }
 
 export type RevisionAdjunto =
-  | { ok: true; mime: string; nombre: string; esImagen: boolean }
+  | {
+      ok: true;
+      mime: string;
+      nombre: string;
+      /** Es una imagen para NOSOTROS (vista previa en el inbox). */
+      esImagen: boolean;
+      /**
+       * Se puede mandar por la Cloud API con `type: "image"`. Si es false y
+       * `esImagen` es true, por Meta va como documento (ver MAX_IMAGEN_META_BYTES).
+       */
+      imagenParaMeta: boolean;
+    }
   | { ok: false; error: string };
 
 /**
@@ -108,10 +134,13 @@ export function revisarAdjuntoSalida(params: {
       error: "El contenido del archivo no coincide con un formato permitido.",
     };
   }
+  const esImagen = mime.startsWith("image/");
   return {
     ok: true,
     mime,
     nombre: nombreSeguroSalida(params.nombre),
-    esImagen: mime.startsWith("image/"),
+    esImagen,
+    imagenParaMeta:
+      esImagen && MIMES_IMAGEN_META.has(mime) && params.bytes.length <= MAX_IMAGEN_META_BYTES,
   };
 }

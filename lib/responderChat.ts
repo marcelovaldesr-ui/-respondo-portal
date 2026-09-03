@@ -5,8 +5,17 @@ import { enviarTextoWaha } from "@/lib/waha";
 import { cuentaIgDeCliente, enviarTextoInstagram } from "@/lib/instagram";
 import { guardarMensaje } from "@/lib/mensajes";
 import { limitarDistribuido } from "@/lib/seguridad";
-import { restaurarControl, tomarControlTemporal, transporteSalida, type Modo } from "@/lib/controlChat";
+import {
+  conservarPausa,
+  restaurarControl,
+  tomarControlTemporal,
+  transporteSalida,
+  type Modo,
+} from "@/lib/controlChat";
 import { cerrarEscalacionesPendientes } from "@/lib/escalaciones";
+import { idsEmpleadosDeCliente } from "@/lib/empleadosCache";
+import { ventanaAbierta } from "@/lib/ventana24";
+import { explicarErrorMeta } from "@/lib/erroresMeta";
 
 /**
  * RESPONDER Y TOMAR EL CONTROL DE UN CHAT — el núcleo, sin sesión.
@@ -27,7 +36,19 @@ import { cerrarEscalacionesPendientes } from "@/lib/escalaciones";
  * Eso es de cada llamador.
  */
 
-export type ResultadoEnvio = { ok: boolean; error?: string; enviado?: boolean };
+export type ResultadoEnvio = {
+  ok: boolean;
+  error?: string;
+  enviado?: boolean;
+  /**
+   * Motivo legible por máquina, para que la interfaz pueda OFRECER algo en vez
+   * de solo mostrar el error (p. ej. abrir el selector de plantillas cuando la
+   * ventana de 24 h está cerrada).
+   */
+  codigo?: "ventana_cerrada" | "sin_acceso" | "limite" | "canal" | "proveedor" | "registro";
+  /** Id del mensaje guardado (ed_mensajes.id), para que la bandeja reemplace la burbuja temporal. */
+  mensajeId?: string;
+};
 
 /**
  * Empleado dueño de la conversación.
@@ -60,7 +81,15 @@ export async function empleadoDelChat(
   return (tino?.id as string | undefined) ?? null;
 }
 
-/** Cambia el modo del chat y cierra la escalación si se le devuelve a la IA. */
+/**
+ * Cambia el modo del chat.
+ *
+ * Cierra la escalación pendiente tanto al DEVOLVER el chat a la IA como al
+ * TOMAR EL CONTROL: en los dos casos una persona se hizo cargo de la
+ * derivación, y dejarla abierta mantenía el "te espera" encendido aunque
+ * Cecilia ya estuviera atendiendo (auditoría 3-sep-2026; antes solo cerraba
+ * con modo="bot"). "pausado" no cierra nada: es silencio, no atención.
+ */
 export async function fijarModo(params: {
   clienteId: string;
   empleadoId: string;
@@ -71,27 +100,29 @@ export async function fijarModo(params: {
   const { clienteId, empleadoId, chatId, modo } = params;
   const supa = params.supa ?? db();
 
-  // Barrera de acceso: el empleado tiene que ser de este cliente. Sin esto, un
-  // id cambiado en la petición dejaría pausar el asistente de otro negocio.
-  const { data: empleado } = await supa
-    .from("ed_empleados")
-    .select("id")
-    .eq("id", empleadoId)
-    .eq("cliente_id", clienteId)
-    .maybeSingle();
-  if (!empleado) return { ok: false, error: "Sin acceso a este chat" };
+  // Barrera de acceso: el empleado Y el chat tienen que ser de este cliente.
+  // Sin esto, un id cambiado en la petición dejaría pausar el asistente de otro
+  // negocio, o crear filas de estado para chats que no existen.
+  const [{ data: empleado }, { data: contacto }] = await Promise.all([
+    supa.from("ed_empleados").select("id").eq("id", empleadoId).eq("cliente_id", clienteId).maybeSingle(),
+    supa.from("ed_contactos").select("chat_id").eq("cliente_id", clienteId).eq("chat_id", chatId).maybeSingle(),
+  ]);
+  if (!empleado || !contacto) return { ok: false, error: "Sin acceso a este chat", codigo: "sin_acceso" };
 
-  await supa
+  const { error } = await supa
     .from("ed_chat_estado")
     .upsert(
       { empleado_id: empleadoId, chat_id: chatId, modo, actualizado_en: new Date().toISOString() },
       { onConflict: "empleado_id,chat_id" },
     );
+  if (error) return { ok: false, error: "No se pudo cambiar el modo del chat", codigo: "registro" };
 
-  // Devolverle el control al asistente cierra la escalación pendiente: si no,
-  // la conversación seguiría apareciendo como "te espera" para siempre.
-  if (modo === "bot") {
-    await cerrarEscalacionesPendientes(supa, { empleadoIds: [empleadoId], chatId, clienteId });
+  if (modo === "bot" || modo === "humano") {
+    await cerrarEscalacionesPendientes(supa, {
+      empleadoIds: await idsEmpleadosDeCliente(clienteId),
+      chatId,
+      clienteId,
+    });
   }
 
   return { ok: true };
@@ -131,7 +162,7 @@ export async function enviarComoHumano(params: {
   // Anti-abuso: si un acceso se ve comprometido, esto impide usar el número de
   // WhatsApp del negocio para spam masivo (y que WhatsApp lo suspenda).
   if (!(await limitarDistribuido(`enviar:${limiteClave}`, 40, 60)).ok) {
-    return { ok: false, error: "Demasiados mensajes seguidos. Espera un momento." };
+    return { ok: false, error: "Demasiados mensajes seguidos. Espera un momento.", codigo: "limite" };
   }
 
   // Tanto el empleado como el destinatario tienen que ser de este tenant. Sin
@@ -141,37 +172,59 @@ export async function enviarComoHumano(params: {
     supa.from("ed_empleados").select("id").eq("id", empleadoId).eq("cliente_id", clienteId).maybeSingle(),
     supa.from("ed_contactos").select("chat_id").eq("cliente_id", clienteId).eq("chat_id", chatId).maybeSingle(),
   ]);
-  if (!empleado || !contacto) return { ok: false, error: "Sin acceso a este chat" };
-
-  const transporte = await transporteSalida(clienteId);
-  if (transporte.tipo === "error") return { ok: false, error: transporte.error };
-
-  const control = await tomarControlTemporal(supa, empleadoId, chatId);
-  if (!control) return { ok: false, error: "No se pudo tomar el control del chat" };
+  if (!empleado || !contacto) return { ok: false, error: "Sin acceso a este chat", codigo: "sin_acceso" };
 
   const esInstagram = chatId.startsWith("ig:");
+
+  const transporte = esInstagram ? null : await transporteSalida(clienteId);
+  if (transporte?.tipo === "error") return { ok: false, error: transporte.error, codigo: "canal" };
+
+  /**
+   * VENTANA DE 24 H, ANTES DE MANDAR (auditoría 3-sep-2026).
+   *
+   * Meta acepta el POST de un texto libre fuera de la ventana y lo rechaza
+   * DESPUÉS, por el webhook, con el 131047. O sea que el portal daba el
+   * mensaje por enviado (✓, escalación cerrada, historial guardado) y el
+   * cliente nunca lo recibía. El cobro ya chequeaba esto; el texto normal, no.
+   * Ante la duda `ventanaAbierta` dice false: prefiero pedir una plantilla de
+   * más a un mensaje que "salió" y no llegó.
+   */
+  if (transporte?.tipo === "cloud" && !(await ventanaAbierta({ clienteId, chatId, supa }))) {
+    return {
+      ok: false,
+      codigo: "ventana_cerrada",
+      error:
+        "Pasaron más de 24 h desde el último mensaje del cliente: WhatsApp no entrega texto libre. " +
+        "Retoma la conversación con una plantilla.",
+    };
+  }
+
+  const control = await tomarControlTemporal(supa, empleadoId, chatId);
+  if (!control) return { ok: false, error: "No se pudo tomar el control del chat", codigo: "registro" };
 
   let envio: { ok: boolean; waId?: string; error?: string };
   if (esInstagram) {
     const cuenta = await cuentaIgDeCliente(clienteId);
     if (!cuenta) {
       await restaurarControl(supa, empleadoId, chatId, control);
-      return { ok: false, error: "Este negocio no tiene Instagram conectado" };
+      return { ok: false, error: "Este negocio no tiene Instagram conectado", codigo: "canal" };
     }
     envio = await enviarTextoInstagram(cuenta, chatId.slice(3), texto, { sinEspera: true });
   } else {
     // `sinEspera`: lo escribió una PERSONA. La pausa de "escribiendo…" existe
     // para que el bot no parezca bot; acá solo agregaría segundos de espera a
     // alguien que ya está mirando la pantalla.
+    // `clienteId` en WAHA: la sesión es de UN negocio; si este no es el dueño,
+    // el envío se rechaza en vez de salir por el WhatsApp ajeno.
     envio =
-      transporte.tipo === "cloud"
-        ? await enviarTexto(transporte.config, chatId, texto, { sinEspera: true })
-        : await enviarTextoWaha(chatId, texto);
+      transporte!.tipo === "cloud"
+        ? await enviarTexto(transporte!.config, chatId, texto, { sinEspera: true })
+        : await enviarTextoWaha(chatId, texto, { clienteId, sinEspera: true });
   }
 
   if (!envio.ok) {
     await restaurarControl(supa, empleadoId, chatId, control);
-    return { ok: false, error: envio.error || `${esInstagram ? "Instagram" : "WhatsApp"} rechazó el envío` };
+    return { ok: false, error: explicarErrorMeta(envio.error, "mensaje"), codigo: "proveedor" };
   }
 
   const guardado = await guardarMensaje(supa, {
@@ -188,12 +241,22 @@ export async function enviarComoHumano(params: {
     return {
       ok: false,
       enviado: true,
+      codigo: "registro",
       error: "El mensaje salió, pero no se pudo registrar. Revisa el chat antes de continuar.",
     };
   }
 
-  // La escalación se cierra recién DESPUÉS de confirmar envío y persistencia.
-  await cerrarEscalacionesPendientes(supa, { empleadoIds: [empleadoId], chatId, clienteId });
+  // La escalación se cierra recién DESPUÉS de confirmar envío y persistencia,
+  // y por CHAT (todos los empleados del cliente): la derivación pudo haberla
+  // abierto Tino aunque quien responde figure bajo Beto o Vera.
+  await cerrarEscalacionesPendientes(supa, {
+    empleadoIds: await idsEmpleadosDeCliente(clienteId),
+    chatId,
+    clienteId,
+  });
 
-  return { ok: true };
+  // Si el dueño lo tenía pausado, sigue pausado (ver conservarPausa).
+  await conservarPausa(supa, empleadoId, chatId, control);
+
+  return { ok: true, mensajeId: guardado.id };
 }

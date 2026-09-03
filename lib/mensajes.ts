@@ -37,7 +37,7 @@ export async function guardarMensaje(
     /** Metadatos del adjunto, si el mensaje traía uno (migración 270). */
     media?: MediaMensaje | null;
   },
-): Promise<{ ok: boolean; dup?: boolean }> {
+): Promise<{ ok: boolean; dup?: boolean; id?: string }> {
   // Núcleo: siempre existe. Nunca se pierde por columnas opcionales faltantes.
   const base: Record<string, unknown> = {
     empleado_id: m.empleadoId,
@@ -75,8 +75,10 @@ export async function guardarMensaje(
   for (let i = 0; i < intentos.length; i++) {
     // Saltar intentos idénticos al anterior (p.ej. sin media/canal/waId que aportar).
     if (i > 0 && JSON.stringify(intentos[i]) === JSON.stringify(intentos[i - 1])) continue;
-    const { error } = await supa.from("ed_mensajes").insert(intentos[i]);
-    if (!error) return { ok: true };
+    // Se pide el id de vuelta: la bandeja lo usa para reemplazar la burbuja
+    // optimista por la real en vez de mostrar las dos (auditoría 3-sep-2026).
+    const { data, error } = await supa.from("ed_mensajes").insert(intentos[i]).select("id").maybeSingle();
+    if (!error) return { ok: true, id: (data?.id as string | undefined) ?? undefined };
     if (error.code === "23505") return { ok: true, dup: true }; // idempotencia DB
     if (esColumnaInexistente(error.code)) continue; // baja una capa y reintenta
     // Error real (no de columna): loguear y cortar.

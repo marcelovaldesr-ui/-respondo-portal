@@ -2,11 +2,19 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { db } from "@/lib/db";
 import { guardarMensaje } from "@/lib/mensajes";
 import { revisarAdjuntoSalida } from "@/lib/adjuntoSalida";
-import { restaurarControl, tomarControlTemporal, transporteSalida } from "@/lib/controlChat";
+import {
+  conservarPausa,
+  restaurarControl,
+  tomarControlTemporal,
+  transporteSalida,
+} from "@/lib/controlChat";
 import { enviarMediaWaha } from "@/lib/waha";
 import { enviarMediaMeta, subirMediaMeta } from "@/lib/whatsapp";
 import { limitarDistribuido } from "@/lib/seguridad";
 import { cerrarEscalacionesPendientes } from "@/lib/escalaciones";
+import { idsEmpleadosDeCliente } from "@/lib/empleadosCache";
+import { ventanaAbierta } from "@/lib/ventana24";
+import { explicarErrorMeta } from "@/lib/erroresMeta";
 import type { ResultadoEnvio } from "@/lib/responderChat";
 
 /**
@@ -42,7 +50,7 @@ export async function enviarAdjuntoComoHumano(params: {
 
   // Freno de abuso: subir archivos es lo más caro que expone este camino.
   if (!(await limitarDistribuido(`adjunto:${limiteClave}`, 30, 60)).ok) {
-    return { ok: false, error: "Demasiados envíos seguidos. Espera un momento." };
+    return { ok: false, error: "Demasiados envíos seguidos. Espera un momento.", codigo: "limite" };
   }
 
   const revision = revisarAdjuntoSalida({ bytes, mime: params.mime, nombre: params.nombre });
@@ -52,20 +60,33 @@ export async function enviarAdjuntoComoHumano(params: {
     supa.from("ed_empleados").select("id").eq("id", empleadoId).eq("cliente_id", clienteId).maybeSingle(),
     supa.from("ed_contactos").select("chat_id").eq("cliente_id", clienteId).eq("chat_id", chatId).maybeSingle(),
   ]);
-  if (!empleado || !contacto) return { ok: false, error: "Sin acceso a este chat" };
+  if (!empleado || !contacto) return { ok: false, error: "Sin acceso a este chat", codigo: "sin_acceso" };
 
   if (chatId.startsWith("ig:")) {
     return {
       ok: false,
+      codigo: "canal",
       error: "Por ahora los archivos solo se pueden enviar por WhatsApp. En Instagram puedes responder con texto.",
     };
   }
 
   const transporte = await transporteSalida(clienteId);
-  if (transporte.tipo === "error") return { ok: false, error: transporte.error };
+  if (transporte.tipo === "error") return { ok: false, error: transporte.error, codigo: "canal" };
+
+  // Fuera de las 24 h Meta acepta el envío y lo rechaza después por el webhook
+  // (131047): el archivo "salía" y no llegaba. Mismo chequeo que en el texto.
+  if (transporte.tipo === "cloud" && !(await ventanaAbierta({ clienteId, chatId, supa }))) {
+    return {
+      ok: false,
+      codigo: "ventana_cerrada",
+      error:
+        "Pasaron más de 24 h desde el último mensaje del cliente: WhatsApp no entrega archivos ni texto libre. " +
+        "Retoma la conversación con una plantilla y manda el archivo cuando responda.",
+    };
+  }
 
   const control = await tomarControlTemporal(supa, empleadoId, chatId);
-  if (!control) return { ok: false, error: "No se pudo tomar el control del chat" };
+  if (!control) return { ok: false, error: "No se pudo tomar el control del chat", codigo: "registro" };
 
   /** `meta:<id>` para que el proxy sepa resolverlo después; null en WAHA. */
   let refMedia: string | null = null;
@@ -79,27 +100,34 @@ export async function enviarAdjuntoComoHumano(params: {
     });
     if (!subida.ok) {
       await restaurarControl(supa, empleadoId, chatId, control);
-      return { ok: false, error: `No se pudo subir el archivo: ${subida.error}` };
+      return { ok: false, error: explicarErrorMeta(subida.error, "archivo"), codigo: "proveedor" };
     }
     refMedia = `meta:${subida.id}`;
     envio = await enviarMediaMeta(transporte.config, chatId, {
       id: subida.id,
-      tipo: revision.esImagen ? "image" : "document",
+      // Solo JPEG/PNG ≤ 5 MB van como imagen; WEBP/GIF o fotos grandes van
+      // como documento, que Meta sí acepta (ver adjuntoSalida.ts).
+      tipo: revision.imagenParaMeta ? "image" : "document",
       caption: caption || undefined,
       nombre: revision.nombre,
     });
   } else {
-    envio = await enviarMediaWaha(chatId, {
-      data: Buffer.from(bytes).toString("base64"),
-      mimetype: revision.mime,
-      filename: revision.nombre,
-      caption: caption || undefined,
-    });
+    envio = await enviarMediaWaha(
+      chatId,
+      {
+        data: Buffer.from(bytes).toString("base64"),
+        mimetype: revision.mime,
+        filename: revision.nombre,
+        caption: caption || undefined,
+      },
+      // La sesión de WAHA es de UN negocio: si este no es el dueño, no sale.
+      { clienteId },
+    );
   }
 
   if (!envio.ok) {
     await restaurarControl(supa, empleadoId, chatId, control);
-    return { ok: false, error: envio.error || "No se pudo enviar el archivo" };
+    return { ok: false, error: explicarErrorMeta(envio.error, "archivo"), codigo: "proveedor" };
   }
 
   const etiqueta = revision.esImagen ? "📷 Imagen enviada" : `📎 Archivo enviado: ${revision.nombre}`;
@@ -121,11 +149,21 @@ export async function enviarAdjuntoComoHumano(params: {
     return {
       ok: false,
       enviado: true,
+      codigo: "registro",
       error: "El archivo salió, pero no se pudo registrar. Revisa el chat antes de continuar.",
     };
   }
 
-  await cerrarEscalacionesPendientes(supa, { empleadoIds: [empleadoId], chatId, clienteId });
+  // Por CHAT, no por [empleadoId]: la derivación pudo abrirla Tino aunque el
+  // adjunto se registre bajo otro empleado.
+  await cerrarEscalacionesPendientes(supa, {
+    empleadoIds: await idsEmpleadosDeCliente(clienteId),
+    chatId,
+    clienteId,
+  });
+  await conservarPausa(supa, empleadoId, chatId, control);
 
-  return { ok: true };
+  // El id real del mensaje, para que la bandeja reemplace la burbuja temporal
+  // en vez de mostrar la temporal Y la real (auditoría 3-sep-2026, C).
+  return { ok: true, mensajeId: guardado.id ?? undefined };
 }
