@@ -240,7 +240,18 @@ async function revisarUna(p: {
   const propuesta = interpretarCierre(crudo);
   const decision = decidirCierre(propuesta, historial);
 
-  await anotar(supa, { clienteId, chatId, estado: decision.estado, evidencia: decision.evidencia, propuesta: propuesta.estado });
+  await anotar(supa, {
+    clienteId,
+    chatId,
+    estado: decision.estado,
+    propuesta: propuesta.estado,
+    // Si la reja rechazó, queda el motivo Y lo que el modelo había citado:
+    // sin eso no se puede saber si la reja acertó.
+    evidencia:
+      decision.estado === "abierto" && propuesta.estado !== "abierto"
+        ? `${decision.evidencia}: «${propuesta.evidencia}»`
+        : decision.evidencia,
+  });
 
   if (decision.estado === "pagado") {
     await supa.from("ed_resultados").insert({

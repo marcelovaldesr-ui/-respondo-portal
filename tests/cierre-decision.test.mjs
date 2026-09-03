@@ -106,6 +106,12 @@ test("⭐ un adjunto sin nombre NO es comprobante", () => {
 test("⭐ un número suelto no es evidencia", () => {
   const c = [{ rol: "cliente", texto: "somos 15 personas" }];
   assert.equal(decidirCierre({ estado: "aprobado_sin_pago", evidencia: "15" }, c).estado, "abierto");
+  assert.equal(decidirCierre({ estado: "aprobado_sin_pago", evidencia: "sí" }, [{ rol: "cliente", texto: "sí" }]).estado, "abierto");
+});
+
+test("una sola palabra vale si es de pago («Abono» de un documento \"Abono ok\")", () => {
+  const c = [{ rol: "cliente", texto: "[documento] Abono ok" }];
+  assert.equal(decidirCierre({ estado: "pagado", evidencia: "Abono" }, c).estado, "pagado");
 });
 
 test("pagado sin evidencia = abierto", () => {

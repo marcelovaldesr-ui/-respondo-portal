@@ -154,7 +154,12 @@ export function decidirCierre(
    *    ni descripción. Una foto cualquiera no es un comprobante; si lo fuera,
    *    el nombre del archivo o la descripción lo dirían.
    */
-  if (ev.split(" ").filter(Boolean).length < 2 || ev.length < 6) {
+  const palabras = ev.split(" ").filter(Boolean).length;
+  // Una sola palabra vale solo si es una palabra de pago ("Abono", "comprobante"):
+  // visto en producción, el modelo citó «Abono» de un documento "Abono ok" y
+  // era un pago real. Un «15» o un «sí» sueltos siguen sin valer.
+  const palabraDePago = /comprobante|abon|transfer|pag[oa]/.test(ev);
+  if (ev.length < 4 || (palabras < 2 && !palabraDePago)) {
     return { estado: "abierto", evidencia: "evidencia demasiado corta" };
   }
   if (esMarcadorDeAdjunto(ev)) {
