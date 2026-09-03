@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { avisarPedidoListo, marcarPago } from "@/app/(portal)/conversaciones/accionesPagos";
 import { formatearMonto } from "@/lib/pagosCore";
 import type { Pago } from "@/lib/pagos";
@@ -31,6 +31,11 @@ export function PagosCard({ pagos: iniciales }: { pagos: Pago[] | undefined }) {
   const [pagos, setPagos] = useState(iniciales ?? []);
   const [error, setError] = useState<string | null>(null);
   const [ocupado, setOcupado] = useState<string | null>(null);
+  // Cuando el detalle se refresca (cobro nuevo, refresco de la lista), la
+  // tarjeta sigue a la lista del servidor en vez de quedarse con la primera.
+  useEffect(() => {
+    setPagos(iniciales ?? []);
+  }, [iniciales]);
 
   if (!pagos.length) return null;
 
@@ -46,6 +51,7 @@ export function PagosCard({ pagos: iniciales }: { pagos: Pago[] | undefined }) {
       const r = await marcarPago(fd);
       if (r.ok) {
         setPagos((xs) => xs.map((x) => (x.id === p.id ? { ...x, estado: hacia } : x)));
+        window.dispatchEvent(new Event("respondo:detalle-cambio"));
       } else {
         setError(r.error ?? "No se pudo actualizar");
       }

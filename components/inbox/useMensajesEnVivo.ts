@@ -30,6 +30,16 @@ import type { EstadoEnvio, MensajeUI } from "./tipos";
  *    cambia después. Sin esto los ✓✓ quedarían congelados hasta recargar.
  */
 
+/**
+ * Orden por fecha REAL, no por texto: el servidor manda "…+00:00" con
+ * microsegundos y el optimista "…Z" con milisegundos; comparar strings los
+ * cruzaba. Desempate por id para que dos del mismo instante no bailen.
+ */
+function ordenCronologico(a: MensajeUI, b: MensajeUI): number {
+  const d = Date.parse(a.creadoEn) - Date.parse(b.creadoEn);
+  return d !== 0 && !Number.isNaN(d) ? d : a.id.localeCompare(b.id);
+}
+
 /** Cuánto esperar entre sondeos cuando SSE no está disponible. */
 const SONDEO_ACTIVO_MS = 1500;
 const SONDEO_REPOSO_MS = 4000;
@@ -43,13 +53,32 @@ export function useMensajesEnVivo(params: {
   chatId: string;
   inicial: MensajeUI[];
   modoInicial: string;
+  /** Si el servidor ya sabe que hay más historial que el tramo inicial. */
+  hayMasInicial?: boolean;
 }) {
   const { empleadoId, chatId } = params;
   const [mensajes, setMensajes] = useState<MensajeUI[]>(params.inicial);
   const [modo, setModo] = useState(params.modoInicial);
   const [conexion, setConexion] = useState<EstadoConexion>("reconectando");
-  const [hayMasHistorial, setHayMasHistorial] = useState(true);
+  // Antes arrancaba en `true` siempre: un chat de 3 mensajes ofrecía "ver
+  // anteriores" y el botón apretaba en el vacío (auditoría 3-sep-2026).
+  const [hayMasHistorial, setHayMasHistorial] = useState(params.hayMasInicial ?? true);
   const [cargandoHistorial, setCargandoHistorial] = useState(false);
+
+  /**
+   * Espejo de `mensajes` para leerlo desde callbacks SIN depender de él.
+   *
+   * ⚠️ ESTE ERA EL ORIGEN DE LA TORMENTA DE RECONEXIONES (auditoría 3-sep):
+   * `idsVigilados` dependía de `mensajes`, `sondear` de `idsVigilados` y el
+   * efecto del stream de `sondear`. O sea que CADA mensaje nuevo cerraba y
+   * volvía a abrir el EventSource; con el límite de 6 conexiones por minuto
+   * del servidor, a la sexta el stream devolvía 429 y la bandeja caía a sondeo
+   * "sin motivo". Con el espejo, los callbacks son estables y el stream vive.
+   */
+  const mensajesRef = useRef<MensajeUI[]>(params.inicial);
+  useEffect(() => {
+    mensajesRef.current = mensajes;
+  }, [mensajes]);
 
   /** Cursor: fecha del último mensaje conocido. Se lee en callbacks, va en ref. */
   const cursor = useRef<string>(
@@ -95,8 +124,13 @@ export function useMensajesEnVivo(params: {
         const yaEsta = porId.get(m.id);
         if (yaEsta) {
           // Puede venir con estado nuevo o con el adjunto ya resuelto.
-          if (yaEsta.estado !== m.estado || yaEsta.texto !== m.texto) {
-            porId.set(m.id, { ...yaEsta, ...m });
+          if (
+            yaEsta.estado !== m.estado ||
+            yaEsta.texto !== m.texto ||
+            (m.media && !yaEsta.media)
+          ) {
+            // La versión real reemplaza la vista previa local (blob) del adjunto.
+            porId.set(m.id, { ...yaEsta, ...m, previa: m.media ? null : yaEsta.previa });
             cambio = true;
           }
           continue;
@@ -121,7 +155,7 @@ export function useMensajesEnVivo(params: {
 
       if (!cambio) return prev;
       ultimaActividad.current = Date.now();
-      return [...porId.values()].sort((a, b) => a.creadoEn.localeCompare(b.creadoEn));
+      return [...porId.values()].sort(ordenCronologico);
     });
   }, []);
 
@@ -144,7 +178,7 @@ export function useMensajesEnVivo(params: {
 
   /** Ids propios cuyo ✓ todavía puede avanzar. Se mandan al servidor para que los vigile. */
   const idsVigilados = useCallback(() => {
-    return mensajes
+    return mensajesRef.current
       .filter(
         (m) =>
           m.rol !== "cliente" &&
@@ -154,7 +188,7 @@ export function useMensajesEnVivo(params: {
       )
       .slice(-25)
       .map((m) => m.id);
-  }, [mensajes]);
+  }, []);
 
   /** Una pasada de sondeo. También se usa para recuperar tras un error de SSE. */
   const sondear = useCallback(async () => {
@@ -290,10 +324,10 @@ export function useMensajesEnVivo(params: {
       document.removeEventListener("visibilitychange", onVisibilidad);
       cerrar();
     };
-    // `idsVigilados` cambia con cada mensaje; incluirlo reabriría el stream todo
-    // el tiempo. Se lee al abrir, que es cuando importa.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [empleadoId, chatId, fusionar, aplicarEstados, sondear]);
+    // Todas las dependencias son estables (los mensajes se leen por ref), así
+    // que este efecto corre UNA vez por conversación. Si alguna vez vuelve a
+    // depender de `mensajes`, el stream se reabre en cada mensaje: ver arriba.
+  }, [empleadoId, chatId, fusionar, aplicarEstados, sondear, idsVigilados]);
 
   /** Cargar el tramo anterior de la conversación (botón "ver anteriores"). */
   const cargarAnteriores = useCallback(async () => {
@@ -340,6 +374,22 @@ export function useMensajesEnVivo(params: {
     setMensajes((prev) => prev.map((m) => (m.id === id ? { ...m, ...cambios } : m)));
   }, []);
 
+  /**
+   * El servidor confirmó el envío y devolvió el id REAL: la burbuja temporal
+   * pasa a ser la definitiva. Así, cuando el mismo mensaje llegue por el
+   * stream, se fusiona por id en vez de aparecer dos veces (antes pasaba con
+   * los adjuntos, cuyo texto real «📷 Imagen enviada — …» no calzaba con el
+   * temporal y el "reconocimiento por texto" fallaba).
+   */
+  const confirmar = useCallback((idTmp: string, real: { id: string } & Partial<MensajeUI>) => {
+    setMensajes((prev) => {
+      if (prev.some((m) => m.id === real.id)) return prev.filter((m) => m.id !== idTmp);
+      return prev.map((m) =>
+        m.id === idTmp ? { ...m, ...real, previa: real.media ? null : m.previa } : m,
+      );
+    });
+  }, []);
+
   return {
     mensajes,
     modo,
@@ -349,6 +399,7 @@ export function useMensajesEnVivo(params: {
     agregarOptimista,
     quitar,
     marcar,
+    confirmar,
     cargarAnteriores,
     hayMasHistorial,
     cargandoHistorial,

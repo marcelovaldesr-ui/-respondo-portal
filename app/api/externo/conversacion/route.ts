@@ -1,6 +1,7 @@
 import { db } from "@/lib/db";
 import { autenticarExterno } from "@/lib/externo";
 import { empleadoDelChat } from "@/lib/responderChat";
+import { idsEmpleadosDeCliente } from "@/lib/empleadosCache";
 
 /**
  * EL HILO DE UNA CONVERSACIÓN, para que el negocio lo lea desde su propia app.
@@ -51,11 +52,14 @@ export async function POST(request: Request) {
   // Se piden los ÚLTIMOS y después se dan vuelta: el orden natural para leer es
   // del más viejo al más nuevo, pero traer los primeros 60 de una conversación
   // de 300 mensajes mostraría el saludo de hace meses.
+  // El hilo es por NÚMERO: mensajes y derivaciones de TODOS los empleados del
+  // cliente (Tino, Beto, Vera), no solo del dueño del chat (auditoría 3-sep).
+  const hilo = await idsEmpleadosDeCliente(clienteId);
   const [{ data: mensajes }, { data: estado }, { data: escalacion }] = await Promise.all([
     supa
       .from("ed_mensajes")
       .select("id, rol, texto, creado_en, canal, media_tipo, media_nombre, estado_envio")
-      .eq("empleado_id", empleadoId)
+      .in("empleado_id", hilo)
       .eq("chat_id", chatId)
       .order("creado_en", { ascending: false })
       .limit(limite),
@@ -68,7 +72,7 @@ export async function POST(request: Request) {
     supa
       .from("ed_escalaciones")
       .select("trigger, resumen, creado_en")
-      .eq("empleado_id", empleadoId)
+      .in("empleado_id", hilo)
       .eq("chat_id", chatId)
       .is("atendida_en", null)
       .order("creado_en", { ascending: false })

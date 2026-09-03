@@ -7,6 +7,7 @@ import {
   mensajesNuevos,
   ultimosMensajes,
 } from "@/lib/inboxConsulta";
+import { idsEmpleadosDeCliente } from "@/lib/empleadosCache";
 
 export const dynamic = "force-dynamic";
 
@@ -50,9 +51,13 @@ export async function GET(request: NextRequest) {
     .maybeSingle();
   if (!emp) return NextResponse.json({ error: "No encontrado" }, { status: 404 });
 
+  // El hilo es por NÚMERO: mensajes de todos los empleados del cliente (ver
+  // inboxConsulta.ts). El modo sigue siendo del empleado pedido.
+  const hilo = await idsEmpleadosDeCliente(usuario.clienteId);
+
   const antesDe = searchParams.get("antesDe");
   if (antesDe) {
-    const r = await mensajesAnteriores(supa, { empleadoId, chatId, antesDe });
+    const r = await mensajesAnteriores(supa, { empleadoId: hilo, chatId, antesDe });
     return NextResponse.json(r, { headers: { "Cache-Control": "no-store" } });
   }
 
@@ -62,23 +67,25 @@ export async function GET(request: NextRequest) {
     .map((s) => s.trim())
     .filter(Boolean);
 
-  const [mensajes, estado, estados] = await Promise.all([
+  const [tramo, estado, estados] = await Promise.all([
     desde
-      ? mensajesNuevos(supa, { empleadoId, chatId, desde })
-      : ultimosMensajes(supa, { empleadoId, chatId }),
+      ? mensajesNuevos(supa, { empleadoId: hilo, chatId, desde }).then((mensajes) => ({ mensajes, hayMas: undefined }))
+      : ultimosMensajes(supa, { empleadoId: hilo, chatId }),
     supa
       .from("ed_chat_estado")
       .select("modo")
       .eq("empleado_id", empleadoId)
       .eq("chat_id", chatId)
       .maybeSingle(),
-    idsEstado.length ? estadosDe(supa, { empleadoId, ids: idsEstado }) : Promise.resolve({}),
+    idsEstado.length ? estadosDe(supa, { empleadoId: hilo, ids: idsEstado }) : Promise.resolve({}),
   ]);
+  const mensajes = tramo.mensajes;
 
   return NextResponse.json(
     {
       modo: (estado.data?.modo as string) ?? "bot",
       mensajes,
+      hayMas: tramo.hayMas,
       estados,
       // Marca de "hasta acá leí": el navegador la usa como cursor siguiente.
       // Va explícita para no depender de que el cliente sepa deducirla.

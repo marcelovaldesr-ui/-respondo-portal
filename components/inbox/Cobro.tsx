@@ -56,6 +56,8 @@ export function Cobro({
         setExito(`Cobro enviado · referencia ${r.referencia}`);
         setMonto("");
         setConcepto("");
+        // El panel de cobros se entera sin cambiar de chat.
+        window.dispatchEvent(new Event("respondo:detalle-cambio"));
         setTimeout(() => {
           setExito(null);
           setAbierto(false);

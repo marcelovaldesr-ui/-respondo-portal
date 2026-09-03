@@ -48,6 +48,10 @@ export type ResultadoEnvio = {
   codigo?: "ventana_cerrada" | "sin_acceso" | "limite" | "canal" | "proveedor" | "registro";
   /** Id del mensaje guardado (ed_mensajes.id), para que la bandeja reemplace la burbuja temporal. */
   mensajeId?: string;
+  /** Texto tal como quedó guardado (los adjuntos llevan un rótulo). */
+  texto?: string;
+  /** Adjunto ya resuelto, con la URL del proxy autenticado. */
+  media?: { tipo: string; mime: string | null; nombre: string | null; url: string } | null;
 };
 
 /**

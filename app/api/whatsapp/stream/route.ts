@@ -3,6 +3,7 @@ import { obtenerUsuarioConPermiso } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { limitarDistribuido } from "@/lib/seguridad";
 import { estadosDe, mensajesNuevos } from "@/lib/inboxConsulta";
+import { idsEmpleadosDeCliente } from "@/lib/empleadosCache";
 
 export const dynamic = "force-dynamic";
 /**
@@ -96,6 +97,9 @@ export async function GET(request: NextRequest) {
     .maybeSingle();
   if (!emp) return new Response("No encontrado", { status: 404 });
 
+  // El hilo es por NÚMERO (todos los empleados del cliente); el modo, del pedido.
+  const hilo = await idsEmpleadosDeCliente(usuario.clienteId);
+
   const encoder = new TextEncoder();
   let cerrado = false;
 
@@ -141,7 +145,7 @@ export async function GET(request: NextRequest) {
           if (cerrado) break;
 
           const [nuevos, estado, estados] = await Promise.all([
-            mensajesNuevos(supa, { empleadoId, chatId, desde: cursor, limite: 50, excluir: yaEnviados }),
+            mensajesNuevos(supa, { empleadoId: hilo, chatId, desde: cursor, limite: 50, excluir: yaEnviados }),
             supa
               .from("ed_chat_estado")
               .select("modo")
@@ -149,7 +153,7 @@ export async function GET(request: NextRequest) {
               .eq("chat_id", chatId)
               .maybeSingle(),
             vigilados.size
-              ? estadosDe(supa, { empleadoId, ids: [...vigilados] })
+              ? estadosDe(supa, { empleadoId: hilo, ids: [...vigilados] })
               : Promise.resolve({} as Record<string, string>),
           ]);
 

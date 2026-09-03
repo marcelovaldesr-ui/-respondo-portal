@@ -27,8 +27,26 @@ const hora = (iso: string) => {
  * sea que teníamos el dato de si un mensaje llegó y la persona no tenía forma de
  * verlo: quedaba con la duda de si el cliente lo recibió.
  */
-function Acuse({ estado }: { estado: EstadoEnvio }) {
+/** Pasado este tiempo sin acuse, el mensaje ya salió: no sigue "enviando". */
+const RELOJ_MAX_MS = 2 * 60_000;
+
+function Acuse({ estado, creadoEn }: { estado: EstadoEnvio; creadoEn: string }) {
   if (!estado || estado === "pendiente") {
+    /**
+     * Sin estado y con más de dos minutos: se muestra como enviado, no como
+     * "enviando". Los mensajes que Cecilia manda desde el TELÉFONO llegan por
+     * eco y Meta nunca les manda acuse (531 de 701 en Impresora Color,
+     * auditoría 3-sep-2026): quedaban con el relojito para siempre, como si
+     * nunca hubieran salido. Sí salieron —los escribió ella en WhatsApp—.
+     */
+    const viejo = Date.now() - Date.parse(creadoEn) > RELOJ_MAX_MS;
+    if (viejo && estado !== "pendiente") {
+      return (
+        <span title="Enviado" aria-label="Enviado" style={{ opacity: 0.55, letterSpacing: "-2px" }}>
+          ✓
+        </span>
+      );
+    }
     return (
       <span title="Enviando" aria-label="Enviando" style={{ opacity: 0.55 }}>
         🕘
@@ -92,7 +110,9 @@ function BurbujaBase({ m }: { m: MensajeUI }) {
           style={delCliente ? { color: "var(--muted-2)" } : undefined}
         >
           <span>{hora(m.creadoEn)}</span>
-          {!delCliente && <Acuse estado={m.fallido ? "error" : (m.estado ?? null)} />}
+          {!delCliente && (
+            <Acuse estado={m.fallido ? "error" : (m.estado ?? null)} creadoEn={m.creadoEn} />
+          )}
         </div>
       </div>
     </div>

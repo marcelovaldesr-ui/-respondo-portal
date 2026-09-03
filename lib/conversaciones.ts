@@ -46,11 +46,21 @@ export type DetalleConversacion = {
    * refresco reemplazaba la lista entera — un parpadeo en cada apertura.
    */
   mensajes: MensajeInbox[];
-  escalacion: { trigger: string; resumen: string; atendida: boolean } | null;
+  /** Hay mensajes más antiguos que los del tramo: la bandeja ofrece "ver anteriores". */
+  hayMasHistorial: boolean;
+  escalacion: { trigger: string; resumen: string; atendida: boolean; creadoEn: string | null } | null;
   resultados: string[];
   etiquetas: string[];
-  /** Estado de la ventana de 24h de WhatsApp (Opción B). */
+  /** Estado de la ventana de 24h de WhatsApp (Opción B), al momento de cargar. */
   ventana: "abierta" | "cerrada" | "desconocida" | "no_aplica";
+  /**
+   * Para recalcular la ventana EN VIVO en el navegador (auditoría 3-sep-2026):
+   * la foto de arriba envejece con la pestaña abierta. `ventanaAplica` es
+   * "transporte cloud"; `ultimoClienteEn` es el último mensaje del cliente por
+   * NÚMERO (cualquier empleado), que es como la cuenta Meta.
+   */
+  ventanaAplica: boolean;
+  ultimoClienteEn: string | null;
   /**
    * Rubro del negocio, para ofrecer SOLO las plantillas que existen en su WABA.
    *
@@ -82,6 +92,8 @@ export type ResumenConversaciones = {
   espera: number;
   humano: number;
   bot: number;
+  /** Chats pausados a mano (migración 293; 0 si el RPC viejo no lo trae). */
+  pausado: number;
   etiquetas: Record<string, number>;
 };
 
@@ -90,61 +102,6 @@ export type PaginaConversaciones = {
   totalFiltrado: number;
   resumen: ResumenConversaciones;
 };
-
-/**
- * Estado de la ventana de 24 h de WhatsApp para este chat.
- *
- * ⚠️ LA VENTANA NO APLICA IGUAL EN LOS DOS TRANSPORTES, y esto no lo miraba
- * (arreglado el 24-ago-2026).
- *
- *  - **Cloud API (oficial)**: Meta solo acepta texto libre dentro de las 24 h
- *    desde el último mensaje DEL CLIENTE. Después, solo plantillas aprobadas.
- *    Y aplica a todos por igual: al asistente y a la persona del negocio.
- *  - **WAHA (vía no oficial)**: no existe tal ventana. Es una sesión real de la
- *    app de WhatsApp, así que se puede escribir cuando sea, como desde el
- *    teléfono.
- *
- * Antes esto calculaba solo con la fecha, sin mirar el transporte, así que a un
- * cliente en WAHA le mostraba «pasaron más de 24 h, tu mensaje puede no llegar»
- * cuando su mensaje iba a llegar perfectamente. Un aviso falso en la pantalla
- * donde alguien decide si escribirle a un cliente es peor que no tener aviso:
- * frena a la persona sin motivo.
- *
- * ⚠️ **CONSECUENCIA COMERCIAL QUE NO ESTABA ANOTADA EN NINGUNA PARTE:** migrar
- * un cliente de WAHA a Cloud API le QUITA la posibilidad de escribirle libremente
- * a quien quiera cuando quiera. Para un negocio que hoy retoma conversaciones
- * viejas a mano, eso es una pérdida de capacidad concreta, no un detalle
- * técnico. Debe decirse ANTES de migrar. Ver docs/PLAN_MIGRACION_WAHA_A_CLOUD.
- *
- * Defensivo: la columna `ultimo_entrante_en` la agrega la migración 210; si no
- * está, devuelve "desconocida" sin romper la página.
- */
-export async function estadoVentana(
-  empleadoId: string,
-  chatId: string,
-  clienteId?: string,
-): Promise<"abierta" | "cerrada" | "desconocida" | "no_aplica"> {
-  // En WAHA no hay ventana que calcular.
-  if (clienteId) {
-    const { data: cli } = await db()
-      .from("ed_clientes")
-      .select("transporte")
-      .eq("id", clienteId)
-      .maybeSingle();
-    const transporte = (cli?.transporte as string | null) ?? "waha";
-    if (transporte !== "cloud") return "no_aplica";
-  }
-
-  const { data, error } = await db()
-    .from("ed_chat_estado")
-    .select("ultimo_entrante_en")
-    .eq("empleado_id", empleadoId)
-    .eq("chat_id", chatId)
-    .maybeSingle();
-
-  if (error) return "desconocida";
-  return ventanaDesde("cloud", (data?.ultimo_entrante_en as string | null) ?? null);
-}
 
 /**
  * Empleados del cliente. Base de toda validación de acceso.
@@ -175,7 +132,7 @@ export async function listarConversacionesPagina(
     supa.rpc("ed_listar_conversaciones_portal", {
       p_cliente_id: clienteId,
       p_q: opts.q?.trim() || null,
-      p_estado: ["espera", "humano", "bot"].includes(opts.estado ?? "")
+      p_estado: ["espera", "humano", "bot", "pausado"].includes(opts.estado ?? "")
         ? opts.estado
         : null,
       p_etiqueta: opts.etiqueta || null,
@@ -202,6 +159,7 @@ export async function listarConversacionesPagina(
       espera: todos.filter((c) => c.esperandoHumano).length,
       humano: todos.filter((c) => c.modo === "humano" && !c.esperandoHumano).length,
       bot: todos.filter((c) => c.modo === "bot" && !c.esperandoHumano).length,
+      pausado: todos.filter((c) => c.modo === "pausado" && !c.esperandoHumano).length,
       etiquetas,
     };
     const busqueda = opts.q?.trim().toLocaleLowerCase("es") ?? "";
@@ -211,6 +169,7 @@ export async function listarConversacionesPagina(
       if (opts.estado === "espera" && !c.esperandoHumano) return false;
       if (opts.estado === "humano" && (c.modo !== "humano" || c.esperandoHumano)) return false;
       if (opts.estado === "bot" && (c.modo !== "bot" || c.esperandoHumano)) return false;
+      if (opts.estado === "pausado" && c.modo !== "pausado") return false;
       if (!busqueda) return true;
       return (
         c.contacto.toLocaleLowerCase("es").includes(busqueda) ||
@@ -234,6 +193,7 @@ export async function listarConversacionesPagina(
     espera: Number(resumenRaw?.espera ?? 0),
     humano: Number(resumenRaw?.humano ?? 0),
     bot: Number(resumenRaw?.bot ?? 0),
+    pausado: Number(resumenRaw?.pausado ?? 0),
     etiquetas: (resumenRaw?.etiquetas as Record<string, number> | undefined) ?? {},
   };
   return {
@@ -356,7 +316,7 @@ export async function listarConversaciones(
    * propia pestaña ("Te esperan"). Para eso está el filtro — no hacía falta
    * torcer el orden, que es el contrato implícito de la pantalla.
    */
-  return lista.sort((a, b) => b.ultimoEn.localeCompare(a.ultimoEn));
+  return lista.sort((a, b) => Date.parse(b.ultimoEn) - Date.parse(a.ultimoEn));
 }
 
 export async function obtenerConversacion(
@@ -389,7 +349,13 @@ export async function obtenerConversacion(
    * Ahora el transporte viaja en paralelo, la fila de estado se pide UNA vez con
    * las dos columnas, y la ventana se calcula sin red con `ventanaDesde`.
    */
-  const [mensajes, contacto, estado, escalacion, resultados, cliente, pagos] = await Promise.all([
+  // El hilo es por NÚMERO: mensajes, derivaciones y resultados de TODOS los
+  // empleados del cliente. Con `ultimo_empleado_id` en Beto, el detalle
+  // mostraba solo el seguimiento de Beto y perdía la conversación con Tino
+  // (auditoría 3-sep-2026). El modo sigue siendo del empleado abierto.
+  const hilo = empleados.map((e) => e.id);
+
+  const [tramo, contacto, estado, escalaciones, resultados, cliente, pagos] = await Promise.all([
     /**
      * Tramo reciente, con id, adjunto y estado de entrega.
      *
@@ -398,7 +364,7 @@ export async function obtenerConversacion(
      * hidratar y casi todo invisible. Sesenta llena la pantalla con margen, y
      * lo anterior se pide con "ver mensajes anteriores" cuando hace falta.
      */
-    ultimosMensajes(supa, { empleadoId, chatId, limite: 60 }),
+    ultimosMensajes(supa, { empleadoId: hilo, chatId, limite: 60 }),
     supa
       .from("ed_contactos")
       .select("nombre, telefono, etiqueta, etiquetas, etapa, total_mensajes, primer_mensaje_en, notas")
@@ -414,18 +380,19 @@ export async function obtenerConversacion(
       .eq("empleado_id", empleadoId)
       .eq("chat_id", chatId)
       .maybeSingle(),
+    // Las últimas derivaciones del chat (cualquier empleado). Se elige la
+    // ABIERTA si hay una; si no, la más reciente.
     supa
       .from("ed_escalaciones")
-      .select("trigger, resumen, atendida_en")
-      .eq("empleado_id", empleadoId)
+      .select("trigger, resumen, atendida_en, creado_en")
+      .in("empleado_id", hilo)
       .eq("chat_id", chatId)
       .order("creado_en", { ascending: false })
-      .limit(1)
-      .maybeSingle(),
+      .limit(5),
     supa
       .from("ed_resultados")
       .select("tipo")
-      .eq("empleado_id", empleadoId)
+      .in("empleado_id", hilo)
       .eq("chat_id", chatId),
     // Solo el transporte: decide si la ventana de 24 h aplica. Es una consulta
     // suelta y liviana, así que viaja con el resto en vez de encadenarse.
@@ -438,7 +405,24 @@ export async function obtenerConversacion(
     pagosDeChat({ clienteId, chatId, supa }).catch(() => [] as Pago[]),
   ]);
 
+  const mensajes = tramo.mensajes;
   if (!mensajes.length) return null;
+
+  const escalacion =
+    (escalaciones.data ?? []).find((e) => !e.atendida_en) ?? (escalaciones.data ?? [])[0] ?? null;
+
+  /**
+   * Último mensaje del cliente por NÚMERO: el más reciente entre lo que dice
+   * ed_chat_estado del empleado abierto y lo que se ve en el hilo completo.
+   * Así la ventana no dice «cerrada» porque el cliente le escribió a Beto.
+   */
+  const ultimoClienteEn = [
+    estado.data?.ultimo_entrante_en as string | null,
+    ...mensajes.filter((m) => m.rol === "cliente").map((m) => m.creadoEn),
+  ]
+    .filter((x): x is string => Boolean(x))
+    .sort((a, b) => Date.parse(b) - Date.parse(a))[0] ?? null;
+  const transporte = (cliente.data?.transporte as string | null) ?? "waha";
 
   return {
     chatId,
@@ -449,11 +433,13 @@ export async function obtenerConversacion(
     empleadoRol: emp.rol as string,
     modo: (estado.data?.modo as string) ?? "bot",
     mensajes,
-    escalacion: escalacion.data
+    hayMasHistorial: tramo.hayMas,
+    escalacion: escalacion
       ? {
-          trigger: escalacion.data.trigger as string,
-          resumen: escalacion.data.resumen as string,
-          atendida: Boolean(escalacion.data.atendida_en),
+          trigger: escalacion.trigger as string,
+          resumen: escalacion.resumen as string,
+          atendida: Boolean(escalacion.atendida_en),
+          creadoEn: (escalacion.creado_en as string | null) ?? null,
         }
       : null,
     resultados: (resultados.data ?? []).map((r) => r.tipo as string),
@@ -464,10 +450,9 @@ export async function obtenerConversacion(
       (p) => p.nombre === "pedido_listo",
     ),
     // Se calcula sin red, con lo que ya trajeron las consultas de arriba.
-    ventana: ventanaDesde(
-      cliente.data?.transporte as string | null,
-      estado.data?.ultimo_entrante_en as string | null,
-    ),
+    ventana: ventanaDesde(transporte, ultimoClienteEn),
+    ventanaAplica: transporte === "cloud",
+    ultimoClienteEn,
     etapa: (contacto.data?.etapa as string) ?? "nuevo",
     // Si el resumen todavía no existe (contacto anterior al trigger), se cae al
     // largo del hilo que ya se trajo: nunca un 0 que parezca un dato real.

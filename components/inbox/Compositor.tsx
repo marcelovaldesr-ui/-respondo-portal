@@ -1,6 +1,6 @@
 "use client";
 
-import { memo, useRef, useState } from "react";
+import { memo, useEffect, useRef, useState } from "react";
 import { SelectorPlantilla } from "./SelectorPlantilla";
 
 /**
@@ -36,6 +36,7 @@ function CompositorBase({
   rubro,
   enviarPlantilla,
   enviandoPlantilla,
+  pedirPlantilla = 0,
 }: {
   enviarTexto: (texto: string) => void;
   enviarArchivo: (archivo: File, caption: string) => void;
@@ -51,12 +52,33 @@ function CompositorBase({
   rubro: string | null;
   enviarPlantilla: (nombre: string, params: string[]) => void;
   enviandoPlantilla: boolean;
+  /** Contador: cada incremento abre el selector de plantillas (el servidor rechazó por 24 h). */
+  pedirPlantilla?: number;
 }) {
   const [texto, setTexto] = useState("");
   const [conPlantilla, setConPlantilla] = useState(false);
   const areaRef = useRef<HTMLTextAreaElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const RAPIDAS = rapidas && rapidas.length > 0 ? rapidas : RAPIDAS_DEFECTO;
+
+  useEffect(() => {
+    if (pedirPlantilla > 0) setConPlantilla(true);
+  }, [pedirPlantilla]);
+
+  /**
+   * En un teléfono, Enter NO envía: es el salto de línea. El teclado táctil no
+   * tiene Shift+Enter cómodo, y un Enter que manda a medio escribir es el error
+   * más común en chats móviles (auditoría 3-sep-2026). En escritorio Enter
+   * envía, como en WhatsApp Web.
+   */
+  const [tactil, setTactil] = useState(false);
+  useEffect(() => {
+    try {
+      setTactil(window.matchMedia("(pointer: coarse)").matches);
+    } catch {
+      /* sin matchMedia: escritorio */
+    }
+  }, []);
 
   const mandar = () => {
     const limpio = texto.trim();
@@ -193,13 +215,18 @@ function CompositorBase({
           onChange={(e) => setTexto(e.target.value)}
           onPaste={onPegar}
           onKeyDown={(e) => {
-            if (e.key === "Enter" && !e.shiftKey) {
+            if (!tactil && e.key === "Enter" && !e.shiftKey) {
               e.preventDefault();
               mandar();
             }
           }}
           rows={2}
-          placeholder="Escríbele al cliente…  (Enter envía · 📎 o pegar una imagen)"
+          placeholder={
+            tactil
+              ? "Escríbele al cliente…"
+              : "Escríbele al cliente…  (Enter envía · 📎 o pegar una imagen)"
+          }
+          aria-label="Mensaje para el cliente"
           className="campo flex-1 resize-none"
         />
         <button

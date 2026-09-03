@@ -29,6 +29,9 @@ export default function EtiquetasEditor({
     startTransition(async () => {
       await cambiarEtiqueta(fd);
       setAbierto(false);
+      // El panel vuelve a pedir el detalle (PanelChat escucha esto) y la lista
+      // se refresca: antes las etiquetas de la fila y del panel quedaban viejas.
+      window.dispatchEvent(new Event("respondo:detalle-cambio"));
       router.refresh();
     });
   }

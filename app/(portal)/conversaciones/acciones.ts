@@ -4,7 +4,7 @@ import { revalidatePath } from "next/cache";
 import { db } from "@/lib/db";
 import { obtenerUsuarioConPermiso } from "@/lib/auth";
 import { MODOS, type Modo } from "@/lib/controlChat";
-import { enviarComoHumano, fijarModo } from "@/lib/responderChat";
+import { enviarComoHumano, fijarModo, type ResultadoEnvio } from "@/lib/responderChat";
 import { alAgregar } from "@/lib/etiquetasCiclo";
 import { cerrarEscalacionesPendientes } from "@/lib/escalaciones";
 import { idsEmpleadosDeCliente } from "@/lib/empleadosCache";
@@ -47,9 +47,7 @@ export async function cambiarModo(formData: FormData) {
  * Pone el chat en modo humano, entrega por el transporte configurado y solo
  * después registra el mensaje y cierra la escalación.
  */
-export async function responderComoHumano(
-  formData: FormData,
-): Promise<{ ok: boolean; error?: string; enviado?: boolean }> {
+export async function responderComoHumano(formData: FormData): Promise<ResultadoEnvio> {
   const usuario = await obtenerUsuarioConPermiso("operar_conversaciones");
   if (!usuario) throw new Error("Sesión no válida");
 
@@ -71,7 +69,7 @@ export async function responderComoHumano(
   if (!r.ok) return r;
 
   revalidatePath("/conversaciones");
-  return { ok: true };
+  return { ok: true, mensajeId: r.mensajeId };
 }
 
 /*

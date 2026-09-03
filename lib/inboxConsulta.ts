@@ -23,6 +23,22 @@ import type { SupabaseClient } from "@supabase/supabase-js";
  * chat en la primera pantalla.
  */
 
+/**
+ * EL HILO ES POR NÚMERO, NO POR EMPLEADO (auditoría 3-sep-2026).
+ *
+ * ed_mensajes guarda cada mensaje bajo el empleado digital que lo atendió. Si
+ * Beto manda un seguimiento, ese mensaje queda bajo Beto y el cliente responde
+ * en el MISMO WhatsApp: para la persona es una conversación. La bandeja pedía
+ * solo las filas de `ultimo_empleado_id`, así que apenas Beto/Vera entren en
+ * producción el detalle mostraría un pedazo del hilo. Por eso estas consultas
+ * aceptan uno o varios empleados; quien llama pasa TODOS los del cliente.
+ */
+type Empleados = string | string[];
+/** Lista siempre: un solo empleado es la lista de uno (el `.in` lo resuelve igual). */
+function ids(emp: Empleados): string[] {
+  return Array.isArray(emp) ? emp : [emp];
+}
+
 /** Columnas con adjunto (migración 270). */
 const COLS = "id, rol, texto, creado_en, estado_envio, media_tipo, media_mime, media_nombre";
 /** Respaldo si la 270 no está aplicada en algún entorno. */
@@ -117,7 +133,7 @@ async function conRespaldoDeColumnas(
 export async function mensajesNuevos(
   supa: SupabaseClient,
   params: {
-    empleadoId: string;
+    empleadoId: Empleados;
     chatId: string;
     desde: string;
     limite?: number;
@@ -129,10 +145,13 @@ export async function mensajesNuevos(
     supa
       .from("ed_mensajes")
       .select(cols)
-      .eq("empleado_id", params.empleadoId)
+      .in("empleado_id", ids(params.empleadoId))
       .eq("chat_id", params.chatId)
       .gte("creado_en", params.desde)
+      // Desempate por id: dos mensajes en el mismo milisegundo salían en orden
+      // arbitrario y podían cruzarse entre dos consultas.
       .order("creado_en", { ascending: true })
+      .order("id", { ascending: true })
       .limit(params.limite ?? 100),
   );
   const out = filas.map(aMensaje);
@@ -147,18 +166,25 @@ export async function mensajesNuevos(
  */
 export async function ultimosMensajes(
   supa: SupabaseClient,
-  params: { empleadoId: string; chatId: string; limite?: number },
-): Promise<MensajeInbox[]> {
+  params: { empleadoId: Empleados; chatId: string; limite?: number },
+): Promise<{ mensajes: MensajeInbox[]; hayMas: boolean }> {
+  const limite = params.limite ?? 60;
   const filas = await conRespaldoDeColumnas((cols) =>
     supa
       .from("ed_mensajes")
       .select(cols)
-      .eq("empleado_id", params.empleadoId)
+      .in("empleado_id", ids(params.empleadoId))
       .eq("chat_id", params.chatId)
       .order("creado_en", { ascending: false })
-      .limit(params.limite ?? 60),
+      .order("id", { ascending: false })
+      .limit(limite + 1),
   );
-  return filas.reverse().map(aMensaje);
+  // Se pide uno de más: así la bandeja sabe si ofrecer "ver anteriores" en vez
+  // de mostrar siempre el botón y que apriete en el vacío.
+  return {
+    mensajes: filas.slice(0, limite).reverse().map(aMensaje),
+    hayMas: filas.length > limite,
+  };
 }
 
 /**
@@ -170,17 +196,18 @@ export async function ultimosMensajes(
  */
 export async function mensajesAnteriores(
   supa: SupabaseClient,
-  params: { empleadoId: string; chatId: string; antesDe: string; limite?: number },
+  params: { empleadoId: Empleados; chatId: string; antesDe: string; limite?: number },
 ): Promise<{ mensajes: MensajeInbox[]; hayMas: boolean }> {
   const limite = params.limite ?? 50;
   const filas = await conRespaldoDeColumnas((cols) =>
     supa
       .from("ed_mensajes")
       .select(cols)
-      .eq("empleado_id", params.empleadoId)
+      .in("empleado_id", ids(params.empleadoId))
       .eq("chat_id", params.chatId)
       .lt("creado_en", params.antesDe)
       .order("creado_en", { ascending: false })
+      .order("id", { ascending: false })
       .limit(limite + 1),
   );
   const hayMas = filas.length > limite;
@@ -202,13 +229,13 @@ export async function mensajesAnteriores(
  */
 export async function estadosDe(
   supa: SupabaseClient,
-  params: { empleadoId: string; ids: string[] },
+  params: { empleadoId: Empleados; ids: string[] },
 ): Promise<Record<string, string>> {
   if (params.ids.length === 0) return {};
   const { data, error } = await supa
     .from("ed_mensajes")
     .select("id, estado_envio")
-    .eq("empleado_id", params.empleadoId)
+    .in("empleado_id", ids(params.empleadoId))
     .in("id", params.ids.slice(0, 60));
   if (error) return {}; // columna inexistente: sin estados, pero el chat funciona
   const out: Record<string, string> = {};

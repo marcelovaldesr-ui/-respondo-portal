@@ -57,10 +57,12 @@ function Iniciales({ nombre, color }: { nombre: string; color: string }) {
  */
 const ORDEN_ETIQUETA: Record<string, number> = {
   reclamo: 0,
-  necesita_atencion: 1,
-  cotizacion: 2,
-  agendado: 3,
-  posible_comprador: 4,
+  // «Falta pago» es la tarea que más se olvida (el abono del 50 %): va arriba.
+  pago_pendiente: 1,
+  necesita_atencion: 2,
+  cotizacion: 3,
+  agendado: 4,
+  posible_comprador: 5,
 };
 function prioridadEtiqueta(v: string): number {
   return ORDEN_ETIQUETA[v] ?? 9;
@@ -100,8 +102,13 @@ export default async function Conversaciones({
   }
   const lista = paginaDatos.items;
   const totalFiltrado = paginaDatos.totalFiltrado;
-  const { total: totalConversaciones, espera: nEspera, humano: nHumano, bot: nBot } =
-    paginaDatos.resumen;
+  const {
+    total: totalConversaciones,
+    espera: nEspera,
+    humano: nHumano,
+    bot: nBot,
+    pausado: nPausado,
+  } = paginaDatos.resumen;
   const etiquetasBarra = Object.entries(paginaDatos.resumen.etiquetas).sort(
     (a, b) => b[1] - a[1],
   );
@@ -155,6 +162,11 @@ export default async function Conversaciones({
     chipEstado("espera", `Te esperan (${nEspera})`, "var(--coral)"),
     chipEstado("humano", `Con tu equipo (${nHumano})`, "#334155"),
     chipEstado("bot", `Atiende Tino (${nBot})`, "var(--indigo)"),
+    // Solo si hay alguno: es raro y no vale un chip permanente. Con él, los
+    // cuatro suman el total (antes faltaba y "no cuadraba").
+    ...(nPausado > 0 || estado === "pausado"
+      ? [chipEstado("pausado", `Pausados (${nPausado})`, "#64748B")]
+      : []),
   ];
 
   return (
@@ -197,6 +209,7 @@ export default async function Conversaciones({
             name="q"
             defaultValue={q}
             placeholder="Buscar por nombre o número…"
+            aria-label="Buscar conversaciones por nombre o número"
             className="campo w-[210px] py-1.5"
           />
           {q && (
@@ -350,9 +363,13 @@ export default async function Conversaciones({
                     style={{ fontSize: "var(--t-menor)", color: "var(--muted)" }}
                   >
                     {/* Quién habló último. Sin esto, "Sí" o "Ya" no dicen si
-                        estás esperando tú o el cliente. */}
-                    {c.ultimoRol !== "cliente" && (
+                        estás esperando tú o el cliente. "Tú" es la persona;
+                        lo del asistente lleva su nombre (antes todo era "Tú"). */}
+                    {c.ultimoRol === "humano" && (
                       <span style={{ color: "var(--muted-3)" }}>Tú: </span>
+                    )}
+                    {c.ultimoRol === "empleado" && (
+                      <span style={{ color: "var(--muted-3)" }}>{c.empleadoNombre}: </span>
                     )}
                     {c.ultimoMensaje}
                   </div>
@@ -379,9 +396,11 @@ export default async function Conversaciones({
                       <span className="pildora-neutra">Pausado</span>
                     ) : null;
 
-                    const ordenadas = [...c.etiquetas].sort(
-                      (a, b) => prioridadEtiqueta(a) - prioridadEtiqueta(b),
-                    );
+                    // «Te espera» ya lo dice la píldora de estado: repetir
+                    // "Necesita atención" al lado era la misma señal dos veces.
+                    const ordenadas = c.etiquetas
+                      .filter((v) => !(c.esperandoHumano && v === "necesita_atencion"))
+                      .sort((a, b) => prioridadEtiqueta(a) - prioridadEtiqueta(b));
                     const principal = ordenadas[0];
                     const resto = ordenadas.length - (principal ? 1 : 0);
                     if (!estadoPill && !principal) return null;

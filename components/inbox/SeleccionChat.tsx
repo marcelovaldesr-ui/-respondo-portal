@@ -183,12 +183,15 @@ export function FilaChat({
       onMouseEnter={precargar}
       onFocus={precargar}
       /**
-       * `pointerdown` dispara ANTES que `click`, y en un teléfono esa diferencia
-       * son los ~80-150 ms que pasan entre que el dedo toca y se levanta. En
-       * escritorio adelanta el trayecto del botón. Es gratis y no hay mouse que
-       * pasar por encima en un celular, donde `onMouseEnter` nunca ocurre.
+       * `pointerdown` dispara ANTES que `click`: en escritorio adelanta el
+       * trayecto del botón. SOLO con mouse: en el teléfono, cada dedo que
+       * apoya para hacer scroll también es un pointerdown, y desplazar la
+       * lista disparaba una petición por fila tocada (auditoría 3-sep-2026).
+       * Ahí alcanza con el clic; la precarga inicial ya cubre las de arriba.
        */
-      onPointerDown={precargar}
+      onPointerDown={(e) => {
+        if (e.pointerType === "mouse") precargar();
+      }}
       onClick={(e) => {
         // Respetar Ctrl/Cmd/medio: la persona quiere una pestaña nueva.
         if (e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0) return;

@@ -163,7 +163,20 @@ export async function enviarAdjuntoComoHumano(params: {
   });
   await conservarPausa(supa, empleadoId, chatId, control);
 
-  // El id real del mensaje, para que la bandeja reemplace la burbuja temporal
-  // en vez de mostrar la temporal Y la real (auditoría 3-sep-2026, C).
-  return { ok: true, mensajeId: guardado.id ?? undefined };
+  // El id real y el adjunto ya resuelto, para que la bandeja reemplace la
+  // burbuja temporal en vez de mostrar la temporal Y la real (auditoría
+  // 3-sep-2026, C). La URL es la del proxy autenticado, como en inboxConsulta.
+  return {
+    ok: true,
+    mensajeId: guardado.id ?? undefined,
+    texto: caption ? `${etiqueta} — ${caption}` : etiqueta,
+    media: guardado.id
+      ? {
+          tipo: revision.esImagen ? "imagen" : "documento",
+          mime: revision.mime,
+          nombre: revision.nombre,
+          url: `/api/whatsapp/media?id=${encodeURIComponent(guardado.id)}`,
+        }
+      : null,
+  };
 }

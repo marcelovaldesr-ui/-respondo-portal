@@ -100,6 +100,17 @@ function EsqueletoContexto() {
   );
 }
 
+/**
+ * Una derivación ya atendida se sigue mostrando un día, para entender por qué
+ * se derivó; después estorba: era un cartel «ya atendida» de hace semanas en
+ * la cabecera de cada chat que alguna vez se derivó (auditoría 3-sep-2026).
+ */
+function mostrarEscalacion(e: NonNullable<DetalleConversacion["escalacion"]>): boolean {
+  if (!e.atendida) return true;
+  if (!e.creadoEn) return false;
+  return Date.now() - Date.parse(e.creadoEn) < 24 * 3600_000;
+}
+
 function Dato({ etiqueta, children }: { etiqueta: string; children: React.ReactNode }) {
   return (
     <div className="flex items-baseline justify-between gap-3 py-1.5">
@@ -144,9 +155,19 @@ export default function PanelChat({
   const claveActual = empleadoId && chatId ? claveDe(empleadoId, chatId) : "";
   const d = cargado && cargado.clave === claveActual ? cargado.d : null;
   const [cargando, setCargando] = useState(false);
-  const [fallo, setFallo] = useState(false);
+  const [fallo, setFallo] = useState<false | "red" | "no_existe">(false);
   /** Cambiarlo vuelve a disparar el efecto de carga sin tocar la selección. */
   const [reintento, setReintento] = useState(0);
+  /**
+   * Panel de contexto bajo 1280 px (auditoría 3-sep-2026). Antes era
+   * `hidden xl:flex`: en un notebook de 13" o en el teléfono no había forma
+   * de etiquetar, marcar un pago ni leer la nota interna. Ahora se abre como
+   * cajón desde el botón «Detalles» de la cabecera.
+   */
+  const [contextoAbierto, setContextoAbierto] = useState(false);
+  useEffect(() => {
+    setContextoAbierto(false);
+  }, [empleadoId, chatId]);
   /** Evita que una respuesta lenta pise a un chat que ya se cambió. */
   const pedido = useRef(0);
 
@@ -155,8 +176,42 @@ export default function PanelChat({
    * abre un chat, se va a otro y vuelve, el primero no se vuelve a pedir.
    */
   useEffect(() => {
-    if (inicial && claveInicial) guardar(claveInicial, inicial);
-  }, [inicial, claveInicial]);
+    if (!inicial || !claveInicial) return;
+    guardar(claveInicial, inicial);
+    /**
+     * Y TAMBIÉN SE APLICA A LO QUE SE VE (auditoría 3-sep-2026).
+     *
+     * `router.refresh()` —el de la lista cada 25 s y el de las acciones—
+     * vuelve a traer `inicial` fresco, pero `useState` solo lo lee la primera
+     * vez: las etiquetas, la derivación, el modo y los cobros del panel se
+     * quedaban con la versión de la primera carga hasta cambiar de chat.
+     * Se aplica solo si es la conversación abierta AHORA (nunca un chat viejo
+     * que llegó tarde).
+     */
+    setCargado((prev) => {
+      if (claveInicial !== claveActual) return prev;
+      return { clave: claveInicial, d: inicial };
+    });
+  }, [inicial, claveInicial, claveActual]);
+
+  /**
+   * Los componentes del panel (etiquetas, cobros, aviso de pedido) avisan
+   * cuando cambian algo, y el detalle se vuelve a pedir forzado. Es un evento
+   * de ventana para no enhebrar callbacks por cuatro niveles de props.
+   */
+  useEffect(() => {
+    if (!empleadoId || !chatId) return;
+    const k = claveDe(empleadoId, chatId);
+    const alCambiar = () => {
+      void traer(empleadoId, chatId, { forzar: true }).then((fresco) => {
+        // Atado a `k`: si mientras tanto se cambió de chat, `d` se deriva
+        // comparando la clave y esto simplemente no se muestra.
+        if (fresco) setCargado({ clave: k, d: fresco });
+      });
+    };
+    window.addEventListener("respondo:detalle-cambio", alCambiar);
+    return () => window.removeEventListener("respondo:detalle-cambio", alCambiar);
+  }, [empleadoId, chatId]);
 
   useEffect(() => {
     if (!empleadoId || !chatId) {
@@ -221,7 +276,7 @@ export default function PanelChat({
         // Llegó tarde: la persona ya está en otro chat. Descartar.
         if (mio !== pedido.current) return;
         if (json) poner(json);
-        else setFallo(true);
+        else setFallo(json === null ? "no_existe" : "red");
       })
       .finally(() => {
         if (mio === pedido.current) setCargando(false);
@@ -240,9 +295,13 @@ export default function PanelChat({
   if (fallo) {
     return (
       <div className="tarjeta-plana flex min-h-[320px] flex-col items-center justify-center gap-3 p-6 text-center">
-        <div className="text-[15px] font-bold">No se pudo abrir la conversación</div>
+        <div className="text-[15px] font-bold">
+          {fallo === "no_existe" ? "Esta conversación no está disponible" : "No se pudo abrir la conversación"}
+        </div>
         <p className="text-[13.5px]" style={{ color: "var(--muted)" }}>
-          Puede haber sido un corte de conexión. Nada se perdió.
+          {fallo === "no_existe"
+            ? "Puede que el enlace sea viejo o que la conversación sea de otro negocio."
+            : "Puede haber sido un corte de conexión. Nada se perdió."}
         </p>
         <button onClick={reintentar} className="btn-primario px-4 py-2 text-[13.5px]">
           Reintentar
@@ -268,8 +327,13 @@ export default function PanelChat({
   const contactoVisible = d?.contacto ?? adelanto?.contacto ?? "";
   const empleadoVisible = d?.empleadoNombre ?? adelanto?.empleadoNombre ?? "";
   const modoVisible = d?.modo ?? adelanto?.modo ?? "bot";
-  /** Hay conversación abierta: con detalle completo o solo con el adelanto. */
-  const hayChat = Boolean(d) || Boolean(adelanto && empleadoId && chatId);
+  /**
+   * Hay conversación abierta: basta la selección. Antes exigía detalle o
+   * adelanto, y al volver con "atrás" en el teléfono (sin adelanto, detalle
+   * todavía en vuelo) la lista se ocultaba Y el chat también: pantalla en
+   * blanco hasta que llegaba la respuesta (auditoría 3-sep-2026).
+   */
+  const hayChat = Boolean(empleadoId && chatId);
 
   return (
     /**
@@ -290,9 +354,19 @@ export default function PanelChat({
     {/* Detalle — en móvil ocupa toda la pantalla; el panel vacío solo tiene
         sentido en escritorio, donde convive con la lista. */}
     <div
+      /*
+        CADENA FLEX HASTA LA LISTA DE MENSAJES (auditoría 3-sep-2026).
+
+        La columna era un bloque con scroll propio y la lista de mensajes
+        adentro tenía `h-full` de un padre sin alto: nunca desplazaba por sí
+        misma, así que "estás abajo" daba siempre true, el aviso de «N nuevos»
+        no aparecía y "ver anteriores" saltaba al final. En lg+ la columna es
+        flex con alto fijo y overflow-hidden, y la lista (min-h-0, flex-1) es la
+        que desplaza. En el teléfono sigue desplazando la página.
+      */
       className={
-        "tarjeta-plana min-w-0 overflow-y-auto p-4 sm:p-5 lg:h-full " +
-        (hayChat ? "block" : "hidden lg:block")
+        "tarjeta-plana min-w-0 p-4 sm:p-5 lg:flex lg:h-full lg:flex-col lg:overflow-hidden " +
+        (hayChat ? "flex flex-col" : "hidden lg:flex")
       }
       style={{ background: "var(--fondo)" }}
     >
@@ -386,12 +460,23 @@ export default function PanelChat({
             {/* Atajo a la agenda: en el rediseño de Design está acá arriba
                 porque agendar es la acción que más se dispara desde una
                 conversación abierta. */}
-            <Link href="/agenda" className="btn-chico shrink-0">
-              Agendar hora
-            </Link>
+            <div className="flex shrink-0 items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setContextoAbierto(true)}
+                className="btn-chico xl:hidden"
+                aria-expanded={contextoAbierto}
+                aria-controls="panel-contexto-chat"
+              >
+                Detalles
+              </button>
+              <Link href="/agenda" className="btn-chico">
+                Agendar hora
+              </Link>
+            </div>
           </div>
 
-          {d?.escalacion && (
+          {d?.escalacion && mostrarEscalacion(d.escalacion) && (
             <div
               className="mt-4 rounded-xl border p-4"
               style={{
@@ -445,6 +530,9 @@ export default function PanelChat({
               aparecían recién cuando el refresco reemplazaba la lista.
             */
             mensajesIniciales={d.mensajes}
+            hayMasInicial={d.hayMasHistorial}
+            ventanaAplica={d.ventanaAplica}
+            ultimoClienteEn={d.ultimoClienteEn}
             modoInicial={d.modo}
             contacto={d.contacto}
             rubro={d.rubro}
@@ -475,8 +563,33 @@ export default function PanelChat({
       Con el adelanto, "quién atiende" ya se puede pintar de verdad, y lo que
       todavía no sabemos va como esqueleto ocupando su lugar.
     */}
+    {hayChat && contextoAbierto && (
+      /* Fondo del cajón, solo bajo xl. Tocar afuera cierra. */
+      <div
+        className="fixed inset-0 z-30 xl:hidden"
+        style={{ background: "rgba(6,9,20,.35)" }}
+        onClick={() => setContextoAbierto(false)}
+        aria-hidden="true"
+      />
+    )}
     {hayChat && (
-      <aside className="hidden min-w-0 flex-col gap-3 overflow-y-auto xl:flex xl:h-full">
+      <aside
+        id="panel-contexto-chat"
+        className={
+          "min-w-0 flex-col gap-3 overflow-y-auto xl:static xl:flex xl:h-full xl:w-auto xl:p-0 xl:shadow-none " +
+          (contextoAbierto
+            ? "fixed inset-y-0 right-0 z-40 flex w-[340px] max-w-[92vw] p-3 shadow-2xl"
+            : "hidden")
+        }
+        style={contextoAbierto ? { background: "var(--fondo-hundido, #F3F4F9)" } : undefined}
+      >
+        <button
+          type="button"
+          onClick={() => setContextoAbierto(false)}
+          className="btn-chico self-end xl:hidden"
+        >
+          Cerrar ✕
+        </button>
         <div className="tarjeta p-3.5">
           <Rotulo>Quién atiende</Rotulo>
           <div className="mt-2 flex items-center gap-2.5">
@@ -556,7 +669,8 @@ export default function PanelChat({
                 </span>
               </Dato>
             )}
-            {d.ventana !== "desconocida" && (
+            {/* Solo cuando la ventana EXISTE (Cloud). En WAHA decía «Cerrada». */}
+            {(d.ventana === "abierta" || d.ventana === "cerrada") && (
               <Dato etiqueta="Ventana 24 h">
                 <span
                   className="pildora"

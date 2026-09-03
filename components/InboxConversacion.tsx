@@ -7,6 +7,7 @@ import { Compositor } from "@/components/inbox/Compositor";
 import { Cobro } from "@/components/inbox/Cobro";
 import { useMensajesEnVivo } from "@/components/inbox/useMensajesEnVivo";
 import type { MensajeUI } from "@/components/inbox/tipos";
+import { ventanaDesde, type EstadoVentana } from "@/lib/ventana24Regla";
 
 /**
  * INBOX EN VIVO — la pantalla donde el negocio atiende.
@@ -35,8 +36,11 @@ export default function InboxConversacion({
   empleadoId,
   chatId,
   empleadoNombre,
-  ventana,
+  ventana: ventanaInicial,
+  ventanaAplica,
+  ultimoClienteEn,
   mensajesIniciales,
+  hayMasInicial,
   modoInicial,
   rapidas,
   contacto,
@@ -45,8 +49,13 @@ export default function InboxConversacion({
   empleadoId: string;
   chatId: string;
   empleadoNombre: string;
-  ventana: "abierta" | "cerrada" | "desconocida" | "no_aplica";
+  ventana: EstadoVentana;
+  /** Transporte cloud: la ventana de 24 h existe. En WAHA no. */
+  ventanaAplica?: boolean;
+  /** Último mensaje del cliente (por número) al cargar; se actualiza con el stream. */
+  ultimoClienteEn?: string | null;
   mensajesIniciales: MensajeUI[];
+  hayMasInicial?: boolean;
   modoInicial: string;
   rapidas?: string[];
   /** Nombre del contacto: precarga el primer dato de las plantillas. */
@@ -63,10 +72,17 @@ export default function InboxConversacion({
     agregarOptimista,
     quitar,
     marcar,
+    confirmar,
     cargarAnteriores,
     hayMasHistorial,
     cargandoHistorial,
-  } = useMensajesEnVivo({ empleadoId, chatId, inicial: mensajesIniciales, modoInicial });
+  } = useMensajesEnVivo({
+    empleadoId,
+    chatId,
+    inicial: mensajesIniciales,
+    modoInicial,
+    hayMasInicial,
+  });
 
   const [, startTransition] = useTransition();
   const [cambiando, setCambiando] = useState(false);
@@ -75,6 +91,45 @@ export default function InboxConversacion({
   const [progreso, setProgreso] = useState(0);
   const [sinLeer, setSinLeer] = useState(0);
   const [enviandoPlantilla, setEnviandoPlantilla] = useState(false);
+  /** El servidor rechazó un envío por ventana cerrada: manda sobre cualquier cálculo local. */
+  const [ventanaCerradaConfirmada, setVentanaCerradaConfirmada] = useState(false);
+  /** Cada incremento le pide al compositor que abra el selector de plantillas. */
+  const [pedirPlantilla, setPedirPlantilla] = useState(0);
+  /** Reloj de un minuto: la ventana de 24 h se cierra sola con la pestaña abierta. */
+  const [ahora, setAhora] = useState(() => Date.now());
+  useEffect(() => {
+    const t = setInterval(() => setAhora(Date.now()), 60_000);
+    return () => clearInterval(t);
+  }, []);
+
+  /**
+   * VENTANA DE 24 H EN VIVO (auditoría 3-sep-2026).
+   *
+   * Antes era una foto del momento de carga: con la bandeja abierta toda la
+   * mañana, decía «abierta» sobre una conversación que se cerró hace horas, y
+   * el mensaje "salía" y no llegaba. Ahora se recalcula con el último mensaje
+   * del cliente que se conoce (el del servidor o uno que llegó por el stream)
+   * y con un reloj de un minuto.
+   */
+  const ventana: EstadoVentana = (() => {
+    if (ventanaCerradaConfirmada) return "cerrada";
+    if (ventanaAplica === undefined) return ventanaInicial;
+    if (!ventanaAplica) return "no_aplica";
+    let ultimo = ultimoClienteEn ?? null;
+    for (const m of mensajes) {
+      if (m.rol === "cliente" && (!ultimo || Date.parse(m.creadoEn) > Date.parse(ultimo))) {
+        ultimo = m.creadoEn;
+      }
+    }
+    return ventanaDesde("cloud", ultimo, ahora);
+  })();
+  // Un mensaje nuevo del cliente reabre la ventana: se levanta la confirmación.
+  useEffect(() => {
+    if (!ventanaCerradaConfirmada) return;
+    const delCliente = mensajes.filter((m) => m.rol === "cliente");
+    const ultimo = delCliente[delCliente.length - 1];
+    if (ultimo && Date.now() - Date.parse(ultimo.creadoEn) < 60_000) setVentanaCerradaConfirmada(false);
+  }, [mensajes, ventanaCerradaConfirmada]);
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const finRef = useRef<HTMLDivElement>(null);
@@ -83,11 +138,34 @@ export default function InboxConversacion({
   /** Alto del contenido antes de insertar historial, para no perder el punto. */
   const altoPrevio = useRef(0);
 
-  const estaAbajo = useCallback(() => {
-    const el = scrollRef.current;
-    if (!el) return true;
-    return el.scrollHeight - el.scrollTop - el.clientHeight < UMBRAL_ABAJO;
+  /**
+   * QUIÉN HACE SCROLL DE VERDAD.
+   *
+   * En escritorio la lista de mensajes desplaza por dentro (cadena flex con
+   * min-h-0). En el teléfono no hay alto fijo y la que desplaza es la columna
+   * o la página entera. Medir siempre `scrollRef` daba "estás abajo" en todos
+   * los casos (scrollHeight == clientHeight), así que el aviso de «N nuevos»
+   * nunca aparecía y "ver anteriores" saltaba al final (auditoría 3-sep-2026).
+   */
+  const contenedorScroll = useCallback((): HTMLElement | null => {
+    let n: HTMLElement | null = scrollRef.current;
+    while (n) {
+      const desborda = n.scrollHeight > n.clientHeight + 1;
+      const estilo = window.getComputedStyle(n).overflowY;
+      if (desborda && (estilo === "auto" || estilo === "scroll")) return n;
+      n = n.parentElement;
+    }
+    return null; // desplaza la página
   }, []);
+
+  const estaAbajo = useCallback(() => {
+    const el = contenedorScroll();
+    if (!el) {
+      const doc = document.documentElement;
+      return doc.scrollHeight - window.scrollY - window.innerHeight < UMBRAL_ABAJO;
+    }
+    return el.scrollHeight - el.scrollTop - el.clientHeight < UMBRAL_ABAJO;
+  }, [contenedorScroll]);
 
   const irAlFinal = useCallback((suave = true) => {
     finRef.current?.scrollIntoView({ behavior: suave ? "smooth" : "auto", block: "end" });
@@ -104,6 +182,11 @@ export default function InboxConversacion({
    * Es exactamente lo que hace WhatsApp, y la diferencia se nota al primer uso.
    */
   useEffect(() => {
+    // -1 = acaba de insertarse historial arriba: no es "nuevo", no se baja.
+    if (cantidadPrevia.current === -1) {
+      cantidadPrevia.current = mensajes.length;
+      return;
+    }
     const nuevos = mensajes.length - cantidadPrevia.current;
     cantidadPrevia.current = mensajes.length;
     if (nuevos <= 0) return;
@@ -129,6 +212,14 @@ export default function InboxConversacion({
     if (estabaAbajo.current && sinLeer) setSinLeer(0);
   }, [estaAbajo, sinLeer]);
 
+  // El scroll puede ocurrir en un ancestro o en la ventana (teléfono): se
+  // escucha en captura para enterarse igual.
+  useEffect(() => {
+    const h = () => onScroll();
+    window.addEventListener("scroll", h, { capture: true, passive: true });
+    return () => window.removeEventListener("scroll", h, { capture: true });
+  }, [onScroll]);
+
   /**
    * Cargar historial conservando la posición visual.
    *
@@ -136,15 +227,20 @@ export default function InboxConversacion({
    * termina mirando otra parte de la conversación sin haber tocado nada.
    */
   const verAnteriores = useCallback(async () => {
-    const el = scrollRef.current;
-    altoPrevio.current = el?.scrollHeight ?? 0;
+    const el = contenedorScroll();
+    const doc = document.documentElement;
+    altoPrevio.current = el ? el.scrollHeight : doc.scrollHeight;
+    // Se marca que NO estamos abajo: los mensajes que se insertan arriba no son
+    // "nuevos" y no deben arrastrar la vista al final.
+    estabaAbajo.current = false;
+    cantidadPrevia.current = -1; // ver efecto de scroll: ignora este cambio
     await cargarAnteriores();
     requestAnimationFrame(() => {
-      const e2 = scrollRef.current;
-      if (!e2) return;
-      e2.scrollTop = e2.scrollHeight - altoPrevio.current;
+      const e2 = contenedorScroll();
+      if (e2) e2.scrollTop += e2.scrollHeight - altoPrevio.current;
+      else window.scrollBy(0, doc.scrollHeight - altoPrevio.current);
     });
-  }, [cargarAnteriores]);
+  }, [cargarAnteriores, contenedorScroll]);
 
   const enControl = modo === "humano";
 
@@ -189,9 +285,17 @@ export default function InboxConversacion({
             if (!r.enviado) quitar(idTmp);
             else marcar(idTmp, { fallido: true });
             setAviso(r.error || "No se pudo enviar el mensaje.");
+            // Fuera de las 24 h: en vez de solo avisar, se ofrece la plantilla.
+            if (r.codigo === "ventana_cerrada") {
+              setVentanaCerradaConfirmada(true);
+              setPedirPlantilla((n) => n + 1);
+            }
           } else {
             setAviso(null);
-            // Trae la versión real (con id y estado) para que el ✓ empiece a
+            // El id real reemplaza al temporal: cuando llegue por el stream se
+            // fusiona en vez de duplicarse.
+            if (r.mensajeId) confirmar(idTmp, { id: r.mensajeId });
+            // Trae la versión real (con estado) para que el ✓ empiece a
             // moverse sin esperar al próximo ciclo.
             void sondear();
           }
@@ -201,7 +305,7 @@ export default function InboxConversacion({
         }
       });
     },
-    [empleadoId, chatId, agregarOptimista, quitar, marcar, setModo, sondear],
+    [empleadoId, chatId, agregarOptimista, quitar, marcar, confirmar, setModo, sondear],
   );
 
   /**
@@ -243,21 +347,41 @@ export default function InboxConversacion({
       const terminar = () => {
         setSubiendo(false);
         setProgreso(0);
-        if (previa) URL.revokeObjectURL(previa);
+        // La vista previa local se libera un rato después: la burbuja la sigue
+        // usando hasta que llega el adjunto real, y revocarla al instante
+        // dejaba la imagen rota si el stream tardaba.
+        if (previa) setTimeout(() => URL.revokeObjectURL(previa), 30_000);
       };
       xhr.onload = () => {
-        let r: { ok?: boolean; error?: string; enviado?: boolean } = {};
+        let r: {
+          ok?: boolean;
+          error?: string;
+          enviado?: boolean;
+          codigo?: string;
+          mensajeId?: string;
+          texto?: string;
+          media?: MensajeUI["media"];
+        } = {};
         try {
           r = JSON.parse(xhr.responseText);
         } catch {
           /* respuesta ilegible */
         }
         if (r.ok) {
+          // Id, texto y adjunto reales: la burbuja temporal pasa a definitiva
+          // (antes quedaban la temporal Y la real, con textos distintos).
+          if (r.mensajeId) {
+            confirmar(idTmp, { id: r.mensajeId, texto: r.texto ?? undefined, media: r.media ?? null });
+          }
           void sondear();
         } else {
           if (!r.enviado) quitar(idTmp);
           else marcar(idTmp, { fallido: true });
           setAviso(r.error || "No se pudo enviar el archivo.");
+          if (r.codigo === "ventana_cerrada") {
+            setVentanaCerradaConfirmada(true);
+            setPedirPlantilla((n) => n + 1);
+          }
         }
         terminar();
       };
@@ -268,7 +392,7 @@ export default function InboxConversacion({
       };
       xhr.send(fd);
     },
-    [empleadoId, chatId, subiendo, agregarOptimista, quitar, marcar, setModo, sondear],
+    [empleadoId, chatId, subiendo, agregarOptimista, quitar, marcar, confirmar, setModo, sondear],
   );
 
   /** Enviar una plantilla aprobada (única vía fuera de la ventana de 24 h). */
@@ -362,7 +486,12 @@ export default function InboxConversacion({
         <div
           ref={scrollRef}
           onScroll={onScroll}
-          className="flex h-full min-h-[46vh] flex-col gap-2.5 overflow-y-auto pr-1"
+          /*
+            En escritorio (lg+) la columna del chat tiene alto fijo y ESTA lista
+            es la que desplaza (cadena flex + min-h-0 desde PanelChat). En el
+            teléfono no hay alto fijo: la lista crece y desplaza la página.
+          */
+          className="flex min-h-[46vh] flex-col gap-2.5 overflow-y-auto pr-1 lg:h-full lg:min-h-0"
           style={{ overflowAnchor: "none" }}
         >
           {hayMasHistorial && mensajes.length > 0 && (
@@ -398,6 +527,8 @@ export default function InboxConversacion({
 
       {aviso && (
         <div
+          role="status"
+          aria-live="polite"
           className="mt-2 rounded-lg px-3 py-2 text-[12.5px]"
           style={{ background: "var(--alerta-suave)", color: "var(--alerta)" }}
         >
@@ -427,6 +558,7 @@ export default function InboxConversacion({
           rubro={rubro ?? null}
           enviarPlantilla={enviarPlantilla}
           enviandoPlantilla={enviandoPlantilla}
+          pedirPlantilla={pedirPlantilla}
         />
       </div>
     </div>

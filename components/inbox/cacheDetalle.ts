@@ -33,7 +33,7 @@ import type { DetalleConversacion } from "@/lib/conversaciones";
 
 const memoria = new Map<string, DetalleConversacion>();
 /** Peticiones en curso, para no pedir dos veces lo mismo al pasar el mouse. */
-const enVuelo = new Map<string, Promise<DetalleConversacion | null>>();
+const enVuelo = new Map<string, Promise<DetalleConversacion | null | undefined>>();
 
 /**
  * ⚠️ LA VERSIÓN EN EL PREFIJO INVALIDA EL CACHÉ VIEJO EN CADA CAMBIO DE FORMA.
@@ -44,7 +44,7 @@ const enVuelo = new Map<string, Promise<DetalleConversacion | null>>();
  * versión acá hace que lo viejo simplemente no se encuentre y se vuelva a pedir.
  * Súbela cada vez que cambies el tipo del detalle.
  */
-const PREFIJO = "respondo:chat:v2:";
+const PREFIJO = "respondo:chat:v3:";
 /**
  * Cuánto se acepta de sessionStorage. Diez minutos: pasado eso, la conversación
  * pudo cambiar tanto que mostrarla completa antes de refrescar sería confuso.
@@ -105,11 +105,17 @@ export function olvidar(k: string): void {
  * inmediato: sin él serían dos peticiones idénticas compitiendo, y la segunda
  * no llegaría antes por ser la segunda.
  */
+/**
+ * Devuelve el detalle; `null` si el servidor dijo que NO EXISTE (404: enlace
+ * viejo o chat de otro negocio); `undefined` si no se pudo saber (red, 5xx).
+ * La distinción importa para no decirle «corte de conexión» a alguien que
+ * abrió un enlace que ya no vale (auditoría 3-sep-2026).
+ */
 export function traer(
   empleadoId: string,
   chatId: string,
   opts: { forzar?: boolean } = {},
-): Promise<DetalleConversacion | null> {
+): Promise<DetalleConversacion | null | undefined> {
   const k = clave(empleadoId, chatId);
 
   if (!opts.forzar) {
@@ -126,12 +132,14 @@ export function traer(
     `/api/conversaciones/detalle?emp=${encodeURIComponent(empleadoId)}&chat=${encodeURIComponent(chatId)}`,
     { cache: "no-store" },
   )
-    .then((r) => (r.ok ? (r.json() as Promise<DetalleConversacion>) : null))
+    .then((r) =>
+      r.ok ? (r.json() as Promise<DetalleConversacion>) : r.status === 404 ? null : undefined,
+    )
     .then((d) => {
       if (d) guardar(k, d);
       return d;
     })
-    .catch(() => null)
+    .catch(() => undefined)
     .finally(() => {
       enVuelo.delete(k);
     });
