@@ -12,6 +12,7 @@ const RUTAS_PROTEGIDAS = [
   "/probar",
   "/informacion",
   "/whatsapp",
+  "/cobros",
 ];
 
 /** Refresca la sesión y hace únicamente el control optimista de autenticación. */

@@ -1,4 +1,4 @@
-import { clienteDeFirmaExterna } from "@/lib/externo";
+import { clienteDeFirmaExterna, huellaDeArchivo } from "@/lib/externo";
 import { empleadoDelChat } from "@/lib/responderChat";
 import { enviarAdjuntoComoHumano } from "@/lib/adjuntoChat";
 
@@ -7,9 +7,12 @@ import { enviarAdjuntoComoHumano } from "@/lib/adjuntoChat";
  *
  * Hermano de /api/externo/responder, pero con archivo: no se puede firmar el
  * cuerpo entero (es multipart binario), así que se firma una cadena canónica
- * — `chatId=<chatId>` — igual que ya hace /api/whatsapp/media para las
- * descargas. El trabajo de verdad (subir a Meta, enviar, guardar con
- * metadatos) vive en lib/adjuntoChat.ts, el MISMO código del inbox del portal.
+ * — `chatId=<chatId>&sha256=<hash del archivo>` — con ts y nonce como el
+ * resto (ver lib/externo.ts). La huella del archivo importa: con la cadena
+ * vieja (`chatId=<chatId>`) una firma capturada servía para mandar CUALQUIER
+ * archivo a ese chat. La cadena vieja se acepta mientras Gestión se actualiza.
+ * El trabajo de verdad (subir a Meta, enviar, guardar con metadatos) vive en
+ * lib/adjuntoChat.ts, el MISMO código del inbox del portal.
  *
  * FormData: chatId, caption (opcional), archivo.
  */
@@ -34,15 +37,17 @@ export async function POST(request: Request) {
     return Response.json({ ok: false, error: "Falta chatId o el archivo" }, { status: 400 });
   }
 
-  const clienteId = await clienteDeFirmaExterna(request, `chatId=${chatId}`);
+  const bytes = new Uint8Array(await archivo.arrayBuffer());
+
+  const clienteId =
+    (await clienteDeFirmaExterna(request, `chatId=${chatId}&sha256=${huellaDeArchivo(bytes)}`)) ??
+    (await clienteDeFirmaExterna(request, `chatId=${chatId}`));
   if (!clienteId) return Response.json({ ok: false, error: "Firma inválida" }, { status: 401 });
 
   const empleadoId = await empleadoDelChat(clienteId, chatId);
   if (!empleadoId) {
     return Response.json({ ok: false, error: "Este negocio no tiene asistente activo" }, { status: 409 });
   }
-
-  const bytes = new Uint8Array(await archivo.arrayBuffer());
 
   const r = await enviarAdjuntoComoHumano({
     clienteId,
