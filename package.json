@@ -11,6 +11,7 @@
     "check": "npm run lint && npm run typecheck && npm test && npm run build",
     "typecheck": "tsc --noEmit --incremental false",
     "test": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test tests/*.test.mjs",
+    "test:integracion": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --experimental-test-module-mocks --env-file=.env.local --import ./tests-integracion/soporte/registrar.mjs --test tests-integracion/*.integracion.test.mjs",
     "typecheck:scripts": "tsc --noEmit -p tsconfig.scripts.json"
   },
   "dependencies": {
