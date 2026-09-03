@@ -107,6 +107,15 @@ export type ContactoPuente = {
   canal: "whatsapp" | "instagram";
   etapa?: string | null;
   etapaManual?: boolean;
+  /**
+   * Por qué está en esa etapa (auditoría 3-sep-2026): `nuevo_ciclo` (un
+   * cliente ganado volvió a cotizar), `volvio_a_escribir` (un perdido
+   * reapareció), `sin_respuesta`, `pago_detectado`… Sin esto, Gestión veía
+   * "ganado → cotizado" como una regresión inexplicable y la ignoraba.
+   */
+  etapaMotivo?: string | null;
+  /** Desde cuándo está en esa etapa. */
+  etapaEn?: string | null;
   etiquetas?: string[] | null;
   ultimoMensajeEn?: string | null;
   ultimoMensajeRol?: string | null;
@@ -177,9 +186,23 @@ export function notificarSistemaDelCliente(params: ParamsPuente): void {
   });
 }
 
-/** Versión esperable. Solo para el backfill y los tests, donde sí interesa saber si llegó. */
+/** Versión esperable. Para el backfill, los tests y el CRON, donde la función termina al devolver. */
 export async function notificarYEsperar(params: ParamsPuente): Promise<void> {
   await enviar(params);
+}
+
+/**
+ * Para el cron y las server actions: espera al puente, pero con TOPE. Un
+ * Gestión lento no puede comerse el presupuesto de 60 s del latido; un
+ * fire-and-forget se perdía cuando la función terminaba (auditoría 3-sep).
+ */
+export async function notificarConTope(params: ParamsPuente, topeMs = 4_000): Promise<void> {
+  await Promise.race([
+    enviar(params).catch((e) => {
+      console.warn("[puenteSalida] fallo:", (e as Error).message);
+    }),
+    new Promise<void>((r) => setTimeout(r, topeMs)),
+  ]);
 }
 
 async function enviar(params: ParamsPuente): Promise<void> {

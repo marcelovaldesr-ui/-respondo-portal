@@ -96,7 +96,7 @@ export async function generarSeguimientosCotizacion(
      */
     const { data: contactos } = await supa
       .from("ed_contactos")
-      .select("chat_id, nombre, etapa, etiquetas, ultimo_mensaje_en")
+      .select("chat_id, nombre, etapa, etiquetas, ultimo_mensaje_en, ultimo_mensaje_rol")
       .eq("cliente_id", clienteId)
       .gte("ultimo_mensaje_en", desde)
       .lte("ultimo_mensaje_en", hasta)
@@ -106,49 +106,23 @@ export async function generarSeguimientosCotizacion(
     if (!contactos?.length) continue;
 
     /**
-     * QUIÉN HABLÓ ÚLTIMO, EN UNA SOLA CONSULTA.
+     * QUIÉN HABLÓ ÚLTIMO: `ed_contactos.ultimo_mensaje_rol`, mantenido por el
+     * trigger de la migración 250 con CADA mensaje de CUALQUIER empleado.
      *
-     * Es el dato que más protege —no escribirle a quien acaba de escribir— y el
-     * más caro si se pide por contacto. Con 300 candidatos serían 300 viajes en
-     * serie dentro de un cron con techo de tiempo. Se trae todo junto y se
-     * reduce en memoria, igual que se arregló el N+1 de `seguimientos.ts`.
+     * 🔴 BUG CAZADO EN AUDITORÍA (27-ago): acá se leía solo el hilo de Beto.
+     * 🔴 BUG CAZADO EN AUDITORÍA (3-sep): la corrección anterior leía hasta
+     * 1.000 mensajes de la ventana de 30 días ORDENADOS ASCENDENTE y se
+     * quedaba con el último de ESOS. Impresora Color tiene ~8.200 mensajes en
+     * 30 días: la consulta devolvía los 1.000 más VIEJOS (PostgREST corta ahí
+     * sin avisar), y "el último que habló" era el de hace tres semanas. Con
+     * eso, Beto le habría insistido con una plantilla pagada a quien respondió
+     * ayer. Estaba latente porque `cotizacion_seguimiento` sigue apagado.
+     *
+     * El campo del contacto es exacto, gratis y ya viene en la consulta de
+     * arriba. Si es null (contacto anterior al trigger), la regla pura hace
+     * fail-closed y no envía.
      */
     const chatIds = contactos.map((c) => c.chat_id as string);
-
-    /**
-     * 🔴 BUG CAZADO EN AUDITORÍA (27-ago): acá decía `eq("empleado_id", betoId)`.
-     *
-     * La conversación de cotización vive en el hilo de TINO — el de Beto está
-     * vacío hasta que él manda algo. Leer solo su hilo dejaba `ultimoRol` en
-     * null para todos, y la protección «si el cliente habló último, no se le
-     * escribe» NUNCA se activaba: Beto podía insistirle a alguien que había
-     * respondido hace una hora. Los tests de la regla pura pasaban porque el
-     * bug estaba en la plomería, no en la regla.
-     *
-     * Se leen los mensajes de TODOS los empleados del cliente: para el cliente
-     * final es una sola conversación con el negocio, venga de quien venga.
-     */
-    const { data: empsTodos } = await supa
-      .from("ed_empleados")
-      .select("id")
-      .eq("cliente_id", clienteId)
-      .limit(20);
-    const empIds = (empsTodos ?? []).map((e) => e.id as string);
-
-    const { data: mensajes } = await supa
-      .from("ed_mensajes")
-      .select("chat_id, rol, creado_en")
-      .in("empleado_id", empIds.length ? empIds : [betoId])
-      .in("chat_id", chatIds)
-      .gte("creado_en", desde)
-      .order("creado_en", { ascending: true })
-      .limit(1000);
-
-    const ultimoRol = new Map<string, string>();
-    for (const m of mensajes ?? []) {
-      // Ordenado ascendente: el último que se escribe gana.
-      ultimoRol.set(m.chat_id as string, m.rol as string);
-    }
 
     // Seguimientos previos de este tipo, para no insistir dos veces.
     const { data: previos } = await supa
@@ -175,7 +149,7 @@ export async function generarSeguimientosCotizacion(
         etiquetas: ((c.etiquetas as string[] | null) ?? []),
         etapa: (c.etapa as string | null) ?? null,
         ultimoMensajeEn: (c.ultimo_mensaje_en as string | null) ?? null,
-        ultimoRol: ultimoRol.get(chatId) ?? null,
+        ultimoRol: (c.ultimo_mensaje_rol as string | null) ?? null,
         ultimoSeguimientoEn: ultimoSeg.get(chatId) ?? null,
       };
       if (decidirCotizacion(cand, ahora).enviar) {

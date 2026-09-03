@@ -126,6 +126,19 @@ export async function revisarAbandonadas(
     out.revisados += candidatos.length;
 
     /**
+     * `no_contactar` se respeta también acá (auditoría 3-sep-2026): el
+     * vigilante le escribiría a quien pidió que no le escriban más. Los
+     * seguimientos ya lo miran; faltaba este camino.
+     */
+    const { data: contactosNC } = await supa
+      .from("ed_contactos")
+      .select("chat_id")
+      .eq("cliente_id", clienteId)
+      .in("chat_id", candidatos.map((c) => c.chat_id as string))
+      .contains("etiquetas", ["no_contactar"]);
+    const noContactar = new Set((contactosNC ?? []).map((c) => c.chat_id as string));
+
+    /**
      * ¿Alguien contestó después? Se lee por CHAT (no por empleado digital): si
      * Beto le escribió, el cliente ya tiene respuesta aunque el estado de Tino
      * diga otra cosa. Paginado en `lib/ultimaSalida.ts` para que el tope de
@@ -150,6 +163,8 @@ export async function revisarAbandonadas(
     });
 
     let procesados = 0;
+    /** Un chat por pasada aunque tenga filas de estado bajo dos empleados. */
+    const vistos = new Set<string>();
     for (const c of candidatos) {
       if (procesados >= MAX_POR_PASADA) break;
       if (fechaLimite - Date.now() < MINIMO_POR_REVISION_MS) {
@@ -161,6 +176,10 @@ export async function revisarAbandonadas(
       const chatId = c.chat_id as string;
       const entranteEn = c.ultimo_entrante_en as string;
       const reingresoEn = (c.reingreso_en as string | null) ?? null;
+
+      if (vistos.has(chatId)) continue;
+      vistos.add(chatId);
+      if (noContactar.has(chatId)) continue;
 
       // Si el negocio respondió DESPUÉS del último mensaje del cliente, no hay
       // nada abandonado. Es el caso normal y se descarta sin gastar modelo.
@@ -178,6 +197,28 @@ export async function revisarAbandonadas(
       const yaReingreso = Boolean(reingresoEn) && !(humanoEn && reingresoEn && humanoEn > reingresoEn);
 
       const minutos = Math.floor((ahora - new Date(entranteEn).getTime()) / 60_000);
+
+      /**
+       * EL CLIENTE LE CONTESTÓ A TINO Y NADIE SIGUIÓ (auditoría 3-sep-2026).
+       *
+       * Tino preguntó («¿cuántas unidades?»), el cliente respondió, y como el
+       * episodio ya tenía su revisión, esto se saltaba en silencio: el cliente
+       * quedaba esperando por segunda vez y el equipo no se enteraba. Ahora se
+       * avisa UNA vez por episodio (se anota en la bitácora para no repetir).
+       */
+      if (yaReingreso && reingresoEn && entranteEn > reingresoEn) {
+        const yaAvisado = await avisoRespuestaHecho(supa, clienteId, chatId, reingresoEn);
+        if (!yaAvisado) {
+          await avisarRespuestaATino(supa, clienteId, chatId, minutos);
+          await anotar(
+            supa,
+            { clienteId, empleadoId, chatId, minutos },
+            { accion: "callar", motivo: MOTIVO_RESPONDIO_A_TINO },
+          );
+          out.detalle.push("cliente respondió a Tino: avisado");
+        }
+        continue;
+      }
 
       /**
        * ⚠️ SE USA `ventanaAbierta` DE `lib/ventana24.ts`, NO LA REGLA PURA.
@@ -214,11 +255,13 @@ export async function revisarAbandonadas(
           supa,
           clienteId,
           empleadoId,
+          empIds,
           chatId,
           transporte,
           habilitadas,
           minutos,
           fechaLimite,
+          entranteEn,
         });
         if (r.accion === "callar") {
           out.callados++;
@@ -250,18 +293,23 @@ async function reingresarEn(p: {
   supa: ReturnType<typeof db>;
   clienteId: string;
   empleadoId: string;
+  /** Todos los empleados del cliente: el hilo y la marca son por NÚMERO. */
+  empIds: string[];
   chatId: string;
   transporte: string;
   habilitadas: readonly string[];
   minutos: number;
   fechaLimite: number;
+  /** Último mensaje del cliente al decidir: si llega otro después, la respuesta caduca. */
+  entranteEn: string;
 }): Promise<Decision> {
-  const { supa, clienteId, empleadoId, chatId, transporte, habilitadas, minutos, fechaLimite } = p;
-
+  const { supa, clienteId, empleadoId, empIds, chatId, transporte, habilitadas, minutos, fechaLimite } = p;
+  // El hilo completo del número (Tino, Beto, Vera): si Beto mandó un
+  // seguimiento y el cliente contestó, ese contexto importa para retomar.
   const { data: filas } = await supa
     .from("ed_mensajes")
     .select("rol, texto")
-    .eq("empleado_id", empleadoId)
+    .in("empleado_id", empIds)
     .eq("chat_id", chatId)
     .order("creado_en", { ascending: false })
     .limit(MENSAJES_CONTEXTO);
@@ -271,7 +319,7 @@ async function reingresarEn(p: {
     .map((f) => ({ rol: f.rol as MensajePrueba["rol"], texto: (f.texto as string) ?? "" }));
 
   if (!historial.length) {
-    await marcarRevisado(supa, empleadoId, chatId);
+    await marcarRevisado(supa, empIds, chatId);
     return await anotar(supa, p, { accion: "callar", motivo: "sin historial" });
   }
 
@@ -286,7 +334,7 @@ async function reingresarEn(p: {
    */
   const base = await armarPrompt(clienteId, empleadoId, historial);
   if (!base) {
-    await marcarRevisado(supa, empleadoId, chatId);
+    await marcarRevisado(supa, empIds, chatId);
     return await anotar(supa, p, { accion: "callar", motivo: "no se pudo armar el prompt" });
   }
   const prompt = `${base}\n\n${bloqueReingreso(habilitadas, minutos)}`;
@@ -298,7 +346,7 @@ async function reingresarEn(p: {
   const propuesta = interpretar(crudo);
   const decision = filtrar(propuesta, habilitadas);
 
-  await marcarRevisado(supa, empleadoId, chatId);
+  await marcarRevisado(supa, empIds, chatId);
 
   if (decision.accion === "callar") {
     /**
@@ -313,9 +361,35 @@ async function reingresarEn(p: {
   }
 
   const texto = decision.texto;
-  const enviado = await mandar({ clienteId, chatId, texto, transporte });
-  if (!enviado) {
-    return await anotar(supa, p, { accion: "callar", motivo: "no se pudo enviar" }, propuesta);
+
+  /**
+   * ÚLTIMA COMPROBACIÓN ANTES DE MANDAR (auditoría 3-sep-2026). Entre la
+   * decisión y el envío pasan hasta 40 s de modelo: si en ese rato una persona
+   * respondió, o el cliente volvió a escribir, la propuesta ya no vale. Mismo
+   * `vigente` que usa el chat en vivo.
+   */
+  const vigente = async () => {
+    const { data } = await supa
+      .from("ed_mensajes")
+      .select("rol, creado_en")
+      .in("empleado_id", empIds)
+      .eq("chat_id", chatId)
+      .order("creado_en", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (!data) return true;
+    return data.rol === "cliente" && (data.creado_en as string) <= p.entranteEn;
+  };
+
+  const enviado = await mandar({ clienteId, chatId, texto, transporte, vigente });
+  if (!enviado.ok) {
+    if (enviado.error === "obsoleto:llego_mensaje_nuevo") {
+      return await anotar(supa, p, { accion: "callar", motivo: "alguien escribió mientras Tino decidía" }, propuesta);
+    }
+    // El envío falló de verdad: el cliente sigue esperando y ahora lo sabe el
+    // equipo (antes se anotaba y nadie se enteraba).
+    await avisarAbandono(supa, clienteId, chatId, minutos);
+    return await anotar(supa, p, { accion: "callar", motivo: `no se pudo enviar (${enviado.error ?? "?"})` }, propuesta);
   }
   await anotar(supa, p, decision, propuesta);
 
@@ -326,6 +400,11 @@ async function reingresarEn(p: {
     // aparezca como humano sería mentirle al propio equipo en la bandeja.
     rol: "empleado",
     texto,
+    // CON el id de WhatsApp: sin él, el eco de Coexistencia de este mismo
+    // mensaje se tomaba por "una persona escribió" (toma humana) y además se
+    // duplicaba en el hilo.
+    waId: enviado.waId,
+    canal: "whatsapp",
   });
 
   // El equipo se entera SIEMPRE de lo que Tino dijo. Enterarse después de que un
@@ -364,16 +443,60 @@ async function avisarAbandono(
   }, supa);
 }
 
+/** Marca TODAS las filas de estado del chat (por número): una revisión por episodio, no por empleado. */
 async function marcarRevisado(
   supa: ReturnType<typeof db>,
-  empleadoId: string,
+  empIds: string[],
   chatId: string,
 ) {
   await supa
     .from("ed_chat_estado")
     .update({ reingreso_en: new Date().toISOString() })
-    .eq("empleado_id", empleadoId)
+    .in("empleado_id", empIds)
     .eq("chat_id", chatId);
+}
+
+const MOTIVO_RESPONDIO_A_TINO = "el cliente respondió al reingreso: avisado al equipo";
+
+/** ¿Ya se avisó que el cliente respondió al reingreso de ESTE episodio? (bitácora 290) */
+async function avisoRespuestaHecho(
+  supa: ReturnType<typeof db>,
+  clienteId: string,
+  chatId: string,
+  reingresoEn: string,
+): Promise<boolean> {
+  const { data, error } = await supa
+    .from("ed_reingresos")
+    .select("id")
+    .eq("cliente_id", clienteId)
+    .eq("chat_id", chatId)
+    .eq("motivo", MOTIVO_RESPONDIO_A_TINO)
+    .gte("creado_en", reingresoEn)
+    .limit(1);
+  // Sin bitácora (migración 290 sin aplicar) se prefiere NO repetir avisos.
+  if (error) return true;
+  return (data?.length ?? 0) > 0;
+}
+
+async function avisarRespuestaATino(
+  supa: ReturnType<typeof db>,
+  clienteId: string,
+  chatId: string,
+  minutos: number,
+) {
+  const { data: c } = await supa
+    .from("ed_contactos")
+    .select("nombre")
+    .eq("cliente_id", clienteId)
+    .eq("chat_id", chatId)
+    .maybeSingle();
+  const quien = (c?.nombre as string | null) || `+${chatId}`;
+  await avisarACliente(clienteId, {
+    titulo: `${quien} le respondió a Tino y sigue esperando`,
+    cuerpo: `Tino retomó la conversación, el cliente contestó hace ${Math.floor(minutos / 60)} h y nadie siguió. Necesita a una persona.`,
+    url: `/conversaciones?chat=${encodeURIComponent(chatId)}`,
+    tag: `abandono:${chatId}`,
+  }, supa);
 }
 
 async function mandar(p: {
@@ -381,14 +504,14 @@ async function mandar(p: {
   chatId: string;
   texto: string;
   transporte: string;
-}): Promise<boolean> {
+  vigente: () => Promise<boolean>;
+}): Promise<{ ok: boolean; waId?: string; error?: string }> {
   if (p.transporte === "cloud") {
     const cfg = await configPorCliente(p.clienteId);
-    if (!cfg) return false;
+    if (!cfg) return { ok: false, error: "sin credenciales de Meta" };
     // `sinEspera`: nadie está mirando la pantalla del otro lado esperando los
     // puntitos. La pausa humana solo gastaría tiempo del cron.
-    const r = await enviarTexto(cfg, p.chatId, p.texto, { sinEspera: true });
-    return Boolean(r?.ok);
+    return enviarTexto(cfg, p.chatId, p.texto, { sinEspera: true, vigente: p.vigente });
   }
   /**
    * ⚠️ `clienteId` VA SÍ O SÍ, aunque el tipo lo declare opcional.
@@ -398,8 +521,7 @@ async function mandar(p: {
    * cliente equivocado recibe el mensaje. Es exactamente el hallazgo de la
    * auditoría del 11-ago-2026 (ver `lib/waha.ts`).
    */
-  const r = await enviarTextoWaha(p.chatId, p.texto, { clienteId: p.clienteId });
-  return Boolean(r?.ok);
+  return enviarTextoWaha(p.chatId, p.texto, { clienteId: p.clienteId, vigente: p.vigente, sinEspera: true });
 }
 
 /**

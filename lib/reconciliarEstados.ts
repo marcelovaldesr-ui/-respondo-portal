@@ -2,7 +2,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { db } from "@/lib/db";
 import { cerrarEscalacionesPendientes } from "@/lib/escalaciones";
 import { ETIQUETAS_ABIERTAS, conEtiqueta, etiquetasTrasCierre, sinEtiqueta } from "@/lib/etiquetasCiclo";
-import { notificarSistemaDelCliente } from "@/lib/puenteSalida";
+import { notificarConTope } from "@/lib/puenteSalida";
 import { ultimaSalidaPorChat } from "@/lib/ultimaSalida";
 
 /**
@@ -54,6 +54,14 @@ export type ResumenReconciliar = {
 
 export async function reconciliarEstados(
   supa: SupabaseClient = db(),
+  opts: {
+    /**
+     * `Date.now()` después del cual no se empieza otro paso ni otra fila
+     * (auditoría 3-sep-2026). Antes el barrido no tenía techo: 200 chats × 3
+     * viajes en serie podían comerse el latido entero antes del detector.
+     */
+    fechaLimite?: number;
+  } = {},
 ): Promise<ResumenReconciliar> {
   const out: ResumenReconciliar = {
     escalacionesCerradas: 0,
@@ -61,28 +69,34 @@ export async function reconciliarEstados(
     contactosReabiertos: 0,
     agendadosCorregidos: 0,
   };
+  const limite = opts.fechaLimite ?? Date.now() + 60_000;
+  const hayTiempo = () => limite - Date.now() > 3_000;
 
   try {
-    out.escalacionesCerradas = await cerrarDerivacionesAtendidas(supa);
+    out.escalacionesCerradas = await cerrarDerivacionesAtendidas(supa, hayTiempo);
   } catch (e) {
     console.error("[reconciliar] derivaciones:", (e as Error).message);
   }
+  if (!hayTiempo()) return out;
   try {
-    const r = await revisarCerradas(supa);
+    const r = await revisarCerradas(supa, hayTiempo);
     out.contactosLimpiados = r.limpiados;
     out.contactosReabiertos = r.reabiertos;
   } catch (e) {
     console.error("[reconciliar] cerradas:", (e as Error).message);
   }
+  if (!hayTiempo()) return out;
   try {
-    out.agendadosCorregidos = await sincronizarAgendado(supa);
+    out.agendadosCorregidos = await sincronizarAgendado(supa, hayTiempo);
   } catch (e) {
     console.error("[reconciliar] agendado:", (e as Error).message);
   }
   return out;
 }
 
-async function cerrarDerivacionesAtendidas(supa: SupabaseClient): Promise<number> {
+type HayTiempo = () => boolean;
+
+async function cerrarDerivacionesAtendidas(supa: SupabaseClient, hayTiempo: HayTiempo): Promise<number> {
   const { data: abiertas } = await supa
     .from("ed_escalaciones")
     .select("empleado_id, chat_id, creado_en")
@@ -126,6 +140,7 @@ async function cerrarDerivacionesAtendidas(supa: SupabaseClient): Promise<number
     const salidas = await ultimaSalidaPorChat({ supa, empleadoIds: idsCli, chatIds, desde });
 
     for (const [chatId, ultimaDerivacion] of chats) {
+      if (!hayTiempo()) return cerradas;
       const humano = salidas.get(chatId)?.humano ?? null;
       if (!humano || humano < ultimaDerivacion) continue;
       const r = await cerrarEscalacionesPendientes(supa, {
@@ -142,6 +157,7 @@ async function cerrarDerivacionesAtendidas(supa: SupabaseClient): Promise<number
 
 async function revisarCerradas(
   supa: SupabaseClient,
+  hayTiempo: HayTiempo,
 ): Promise<{ limpiados: number; reabiertos: number }> {
   const out = { limpiados: 0, reabiertos: 0 };
 
@@ -160,6 +176,7 @@ async function revisarCerradas(
 
   const reabiertos = new Set<string>();
   for (const c of conActividad ?? []) {
+    if (!hayTiempo()) return out;
     const etapaEn = c.etapa_en as string;
     const ultimo = c.ultimo_mensaje_en as string;
     if (ultimo <= etapaEn) continue;
@@ -180,19 +197,20 @@ async function revisarCerradas(
     if (error) continue;
     out.reabiertos++;
     reabiertos.add(`${c.cliente_id}|${c.chat_id}`);
-    avisarPuente(supa, c, "nuevo", etiquetas);
+    await avisarPuente(supa, c, "nuevo", etiquetas, "volvio_a_escribir");
   }
 
   // (b) Limpiar etiquetas abiertas en lo que sigue cerrado.
   const { data: contactos } = await supa
     .from("ed_contactos")
-    .select("cliente_id, chat_id, nombre, etapa, etapa_en, etiquetas, ultimo_mensaje_en, ultimo_mensaje_rol")
+    .select("cliente_id, chat_id, nombre, etapa, etapa_en, etapa_motivo, etiquetas, ultimo_mensaje_en, ultimo_mensaje_rol")
     .in("etapa", ["ganado", "perdido"])
     .overlaps("etiquetas", [...ETIQUETAS_ABIERTAS])
     .order("ultimo_mensaje_en", { ascending: false })
     .limit(MAX_CONTACTOS);
 
   for (const c of contactos ?? []) {
+    if (!hayTiempo()) return out;
     if (reabiertos.has(`${c.cliente_id}|${c.chat_id}`)) continue;
     // Ganado al que el cliente le volvió a escribir: puede ser un ciclo nuevo
     // (la etiqueta fresca es la señal). Lo decide el detector con evidencia;
@@ -216,7 +234,7 @@ async function revisarCerradas(
       .eq("chat_id", c.chat_id);
     if (error) continue;
     out.limpiados++;
-    avisarPuente(supa, c, c.etapa as string, limpias);
+    await avisarPuente(supa, c, c.etapa as string, limpias, (c.etapa_motivo as string | null) ?? null);
   }
   return out;
 }
@@ -224,7 +242,7 @@ async function revisarCerradas(
 /** Citas que todavía cuentan como "por venir". */
 const CITA_ACTIVA = ["agendada", "confirmada", "reagendada"];
 
-async function sincronizarAgendado(supa: SupabaseClient): Promise<number> {
+async function sincronizarAgendado(supa: SupabaseClient, hayTiempo: HayTiempo): Promise<number> {
   const ahora = new Date().toISOString();
 
   // Chats con una cita activa futura, por cliente.
@@ -246,6 +264,7 @@ async function sincronizarAgendado(supa: SupabaseClient): Promise<number> {
     .contains("etiquetas", ["agendado"])
     .limit(500);
   for (const c of etiquetados ?? []) {
+    if (!hayTiempo()) return corregidos;
     if (conCita.has(`${c.cliente_id}|${c.chat_id}`)) continue;
     const actuales = (c.etiquetas as string[] | null) ?? [];
     const nuevas = sinEtiqueta(actuales, "agendado");
@@ -257,7 +276,7 @@ async function sincronizarAgendado(supa: SupabaseClient): Promise<number> {
       .eq("chat_id", c.chat_id);
     if (!error) {
       corregidos++;
-      avisarPuente(supa, c, c.etapa as string, nuevas);
+      await avisarPuente(supa, c, c.etapa as string, nuevas);
     }
   }
 
@@ -272,6 +291,7 @@ async function sincronizarAgendado(supa: SupabaseClient): Promise<number> {
     .in("chat_id", chatIds)
     .limit(1000);
   for (const c of contactosConCita ?? []) {
+    if (!hayTiempo()) return corregidos;
     if (!conCita.has(`${c.cliente_id}|${c.chat_id}`)) continue;
     const actuales = (c.etiquetas as string[] | null) ?? [];
     const nuevas = conEtiqueta(actuales, "agendado");
@@ -283,20 +303,22 @@ async function sincronizarAgendado(supa: SupabaseClient): Promise<number> {
       .eq("chat_id", c.chat_id);
     if (!error) {
       corregidos++;
-      avisarPuente(supa, c, c.etapa as string, nuevas);
+      await avisarPuente(supa, c, c.etapa as string, nuevas);
     }
   }
   return corregidos;
 }
 
-function avisarPuente(
+async function avisarPuente(
   supa: SupabaseClient,
-  c: { cliente_id: unknown; chat_id: unknown; nombre?: unknown; ultimo_mensaje_en?: unknown },
+  c: { cliente_id: unknown; chat_id: unknown; nombre?: unknown; ultimo_mensaje_en?: unknown; etapa_en?: unknown },
   etapa: string,
   etiquetas: string[],
+  motivo: string | null = null,
 ) {
   const chatId = c.chat_id as string;
-  notificarSistemaDelCliente({
+  // Esperado con tope: desde el cron, el fire-and-forget se perdía al terminar.
+  await notificarConTope({
     evento: "etapa",
     clienteId: c.cliente_id as string,
     contacto: {
@@ -304,6 +326,9 @@ function avisarPuente(
       nombre: (c.nombre as string | null) || null,
       canal: chatId.startsWith("ig:") ? "instagram" : "whatsapp",
       etapa,
+      etapaManual: false,
+      etapaMotivo: motivo,
+      etapaEn: (c.etapa_en as string | null) ?? null,
       etiquetas,
       ultimoMensajeEn: (c.ultimo_mensaje_en as string | null) ?? null,
     },

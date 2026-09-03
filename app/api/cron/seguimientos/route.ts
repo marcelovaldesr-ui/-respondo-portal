@@ -239,7 +239,7 @@ export async function GET(request: NextRequest) {
     agendadosCorregidos: 0,
   };
   try {
-    reconciliado = await reconciliarEstados(supa);
+    reconciliado = await reconciliarEstados(supa, { fechaLimite: inicioCron + 40_000 });
   } catch (e) {
     console.error("[cron] reconciliar estados falló (no afecta lo demás)", (e as Error).message);
   }
@@ -273,7 +273,7 @@ export async function GET(request: NextRequest) {
    */
   let adjuntos = { revisados: 0, archivados: 0, grandes: 0, fallidos: 0 };
   try {
-    const a = await archivarPendientes(supa);
+    const a = await archivarPendientes(supa, undefined, { fechaLimite: inicioCron + 55_000 });
     adjuntos = {
       revisados: a.revisados,
       archivados: a.archivados,

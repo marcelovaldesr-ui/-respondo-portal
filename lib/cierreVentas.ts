@@ -2,7 +2,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { db } from "@/lib/db";
 import { generarJSON } from "@/lib/gemini";
 import { avisarACliente } from "@/lib/push";
-import { notificarSistemaDelCliente } from "@/lib/puenteSalida";
+import { notificarConTope } from "@/lib/puenteSalida";
 import { conEtiqueta, etiquetasTrasCierre } from "@/lib/etiquetasCiclo";
 import {
   decidirCierre,
@@ -238,7 +238,14 @@ async function revisarUna(p: {
     intentosPorModelo: 1,
   });
   const propuesta = interpretarCierre(crudo);
-  const decision = decidirCierre(propuesta, historial);
+  /**
+   * La evidencia se valida contra lo NUEVO cuando ya hubo una revisión
+   * anterior (auditoría 3-sep-2026): antes se validaba contra los 14 mensajes
+   * completos, así que el mismo comprobante de hace tres días —ya contado—
+   * volvía a "confirmar" una venta cada vez que el cliente escribía un
+   * «gracias». Sin revisión previa, la conversación entera es lo nuevo.
+   */
+  const decision = decidirCierre(propuesta, p.revisadoHasta ? nuevos : historial);
 
   await anotar(supa, {
     clienteId,
@@ -254,13 +261,30 @@ async function revisarUna(p: {
   });
 
   if (decision.estado === "pagado") {
-    await supa.from("ed_resultados").insert({
-      empleado_id: p.empleadoResultado,
-      chat_id: chatId,
-      tipo: "venta_confirmada",
-      detectado_por: "bot",
-      nota: { origen: "detector_cierre", evidencia: decision.evidencia },
-    });
+    /**
+     * Una venta por episodio: si ya hay una `venta_confirmada` posterior al
+     * último mensaje revisado (o de hace menos de un día sin revisión
+     * previa), el pago ya se contó — un reintento del cron tras un marcado
+     * fallido no debe sumar dos ventas al panel de Inicio.
+     */
+    const desdeVenta = p.revisadoHasta ?? new Date(Date.now() - 86_400_000).toISOString();
+    const { data: ventasPrevias } = await supa
+      .from("ed_resultados")
+      .select("id")
+      .in("empleado_id", p.empIds)
+      .eq("chat_id", chatId)
+      .eq("tipo", "venta_confirmada")
+      .gte("creado_en", desdeVenta)
+      .limit(1);
+    if (!ventasPrevias?.length) {
+      await supa.from("ed_resultados").insert({
+        empleado_id: p.empleadoResultado,
+        chat_id: chatId,
+        tipo: "venta_confirmada",
+        detectado_por: "bot",
+        nota: { origen: "detector_cierre", evidencia: decision.evidencia },
+      });
+    }
     const etiquetas = etiquetasTrasCierre(p.etiquetas, "ganado");
     await marcar({
       etapa: "ganado",
@@ -269,7 +293,7 @@ async function revisarUna(p: {
       etiquetas,
     });
     avisar(supa, clienteId, chatId, p.nombre, "Pago detectado", decision.evidencia);
-    puente(supa, clienteId, chatId, p.nombre, "ganado", etiquetas, p.ultimoMensajeEn);
+    await puente(supa, clienteId, chatId, p.nombre, "ganado", etiquetas, p.ultimoMensajeEn, nuevoCiclo ? "nuevo_ciclo" : "pago_detectado");
     return { estado: "pagado", consultado: true };
   }
 
@@ -284,7 +308,7 @@ async function revisarUna(p: {
       avisar(supa, clienteId, chatId, p.nombre, "Aprobó, falta el pago", decision.evidencia);
     }
     if (cambio) {
-      puente(supa, clienteId, chatId, p.nombre, (subida.etapa as string) ?? p.etapa, etiquetas, p.ultimoMensajeEn);
+      await puente(supa, clienteId, chatId, p.nombre, (subida.etapa as string) ?? p.etapa, etiquetas, p.ultimoMensajeEn, (subida.etapa_motivo as string | null) ?? null);
     }
     return { estado: "aprobado_sin_pago", consultado: true };
   }
@@ -303,7 +327,7 @@ async function revisarUna(p: {
         detectado_por: "bot",
         nota: { origen: "detector_cierre", evidencia: decision.evidencia },
       });
-      puente(supa, clienteId, chatId, p.nombre, (subida.etapa as string) ?? p.etapa, etiquetas, p.ultimoMensajeEn);
+      await puente(supa, clienteId, chatId, p.nombre, (subida.etapa as string) ?? p.etapa, etiquetas, p.ultimoMensajeEn, (subida.etapa_motivo as string | null) ?? null);
     }
     return { estado: "cotizado", consultado: true };
   }
@@ -348,7 +372,7 @@ function avisar(
   ).catch(() => undefined);
 }
 
-function puente(
+async function puente(
   supa: SupabaseClient,
   clienteId: string,
   chatId: string,
@@ -356,8 +380,11 @@ function puente(
   etapa: string,
   etiquetas: string[],
   ultimoMensajeEn: string,
+  motivo: string | null = null,
 ) {
-  notificarSistemaDelCliente({
+  // Esperado con tope: desde el cron, un fire-and-forget se perdía al terminar
+  // la función y Gestión se quedaba con la etapa vieja.
+  await notificarConTope({
     evento: "etapa",
     clienteId,
     contacto: {
@@ -366,6 +393,8 @@ function puente(
       canal: chatId.startsWith("ig:") ? "instagram" : "whatsapp",
       etapa,
       etapaManual: false,
+      etapaMotivo: motivo,
+      etapaEn: new Date().toISOString(),
       etiquetas,
       ultimoMensajeEn,
     },

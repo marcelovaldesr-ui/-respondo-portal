@@ -124,6 +124,24 @@ export async function programarSeguimiento(params: {
 }
 
 /**
+ * Cierra un seguimiento que NO se va a enviar (max_intentos agotado): queda
+ * `enviado_en` para que salga de la cola y `variables.descartado` con el
+ * motivo, para que se entienda al mirarlo. No se borra: es historial.
+ */
+async function descartar(
+  supa: SupabaseClient,
+  s: Seguimiento,
+  motivo: string,
+  intento?: number,
+): Promise<void> {
+  const variables = { ...((s.variables as Record<string, unknown> | null) ?? {}), descartado: motivo };
+  await supa
+    .from("ed_seguimientos")
+    .update({ enviado_en: new Date().toISOString(), variables, ...(intento ? { intento } : {}) })
+    .eq("id", s.id);
+}
+
+/**
  * Procesa los seguimientos vencidos y los envía.
  *
  * Salvaguardas (innegociables para la vía no oficial):
@@ -240,8 +258,16 @@ export async function procesarSeguimientos(opts: {
   let enviados = 0;
   for (const s of pendientes as Seguimiento[]) {
     const intento = (s.intento ?? 0) + 1;
-    if (intento > (s.max_intentos ?? 1)) {
-      detalle.push(`${s.id.slice(0, 8)}: max_intentos superado, omitido`);
+    const maxIntentos = s.max_intentos ?? 1;
+    if (intento > maxIntentos) {
+      /**
+       * Se CIERRA la fila (auditoría 3-sep-2026). Antes solo se saltaba y,
+       * como sigue pendiente y es la más vieja, volvía a entrar en las 10 de
+       * cada pasada: diez filas así bloqueaban TODOS los seguimientos del
+       * sistema para siempre. `enviado_en` con nota en variables = descartado.
+       */
+      await descartar(supa, s, "max_intentos superado");
+      detalle.push(`${s.id.slice(0, 8)}: max_intentos superado, descartado`);
       continue;
     }
 
@@ -304,7 +330,19 @@ export async function procesarSeguimientos(opts: {
       continue;
     }
     if (!r.ok) {
-      detalle.push(`${s.id.slice(0, 8)}: envío falló (${r.error ?? "?"})`);
+      /**
+       * El fallo CONSUME el intento (auditoría 3-sep-2026). Antes no se
+       * escribía nada y la fila se reintentaba en cada pasada, sin tope, y
+       * encima ocupaba un lugar de la tanda de 10. Con el último intento
+       * agotado, se descarta con el motivo para poder revisarlo.
+       */
+      if (intento >= maxIntentos) {
+        await descartar(supa, s, `envío falló: ${r.error ?? "?"}`, intento);
+        detalle.push(`${s.id.slice(0, 8)}: envío falló (${r.error ?? "?"}), descartado`);
+      } else {
+        await supa.from("ed_seguimientos").update({ intento }).eq("id", s.id);
+        detalle.push(`${s.id.slice(0, 8)}: envío falló (${r.error ?? "?"}), intento ${intento}/${maxIntentos}`);
+      }
       continue;
     }
 

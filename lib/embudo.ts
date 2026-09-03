@@ -1,7 +1,7 @@
 import { db } from "@/lib/db";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { idsEmpleadosDeCliente } from "@/lib/empleadosCache";
-import { notificarSistemaDelCliente } from "@/lib/puenteSalida";
+import { notificarConTope, notificarYEsperar } from "@/lib/puenteSalida";
 
 /**
  * EMBUDO — en qué va cada conversación.
@@ -116,6 +116,16 @@ export function metaEtapa(valor: string) {
  * Etapa que corresponde según las señales del asistente.
  * Solo mira lo que YA existe: etiquetas automáticas y agendamientos.
  */
+/**
+ * Motivos que marcan el INICIO de un ciclo nuevo para un contacto: lo que
+ * pasó antes de `etapa_en` (ventas, agendas, etiquetas) ya no lo empuja.
+ */
+export const MOTIVOS_CICLO_NUEVO: ReadonlySet<string> = new Set([
+  "nuevo_ciclo",
+  "volvio_a_escribir",
+  "correccion_auditoria",
+]);
+
 export function etapaSegunSenales(params: {
   etiquetas: string[];
   tieneAgendamiento?: boolean;
@@ -174,7 +184,7 @@ export async function cargarEmbudo(
   let consultaContactos = supa
     .from("ed_contactos")
     .select(
-      "chat_id, nombre, etiquetas, etapa, etapa_manual, etapa_motivo, ultimo_mensaje_en, ultimo_mensaje_texto, ultimo_mensaje_rol",
+      "chat_id, nombre, etiquetas, etapa, etapa_manual, etapa_motivo, etapa_en, ultimo_mensaje_en, ultimo_mensaje_texto, ultimo_mensaje_rol",
     )
     .eq("cliente_id", clienteId);
   if (corteActividad) consultaContactos = consultaContactos.gte("ultimo_mensaje_en", corteActividad);
@@ -199,7 +209,7 @@ export async function cargarEmbudo(
   const [resultadosR, escalacionesR] = await Promise.all([
     supa
       .from("ed_resultados")
-      .select("chat_id, tipo")
+      .select("chat_id, tipo, creado_en")
       .in("empleado_id", ids)
       .in("chat_id", chats),
     supa
@@ -210,13 +220,33 @@ export async function cargarEmbudo(
       .is("atendida_en", null),
   ]);
 
-  // Señales de "ganado" que vienen de ed_resultados (agenda y ventas).
+  /**
+   * Señales de "ganado" que vienen de ed_resultados (agenda y ventas).
+   *
+   * ⚠️ CICLO NUEVO (auditoría 3-sep-2026). Un cliente que ya compró y vuelve
+   * a cotizar baja a "cotizado" con motivo `nuevo_ciclo` (detector de
+   * cierres), y un perdido que vuelve a escribir sube a "nuevo" con
+   * `volvio_a_escribir` (reconciliar). Pero la venta ANTERIOR sigue en
+   * ed_resultados: sin esta regla, al abrir el embudo la señal vieja lo
+   * devolvía a "ganado", el detector lo bajaba en el próximo latido y así cada
+   * cinco minutos. Para esos motivos solo cuentan los resultados posteriores
+   * a `etapa_en` (el inicio del ciclo).
+   */
+  const inicioCiclo = new Map<string, string>();
+  for (const c of contactos) {
+    const motivo = c.etapa_motivo as string | null;
+    const en = c.etapa_en as string | null;
+    if (en && motivo && MOTIVOS_CICLO_NUEVO.has(motivo)) inicioCiclo.set(c.chat_id as string, en);
+  }
   const conAgenda = new Set<string>();
   const conVenta = new Set<string>();
   for (const r of resultadosR.data ?? []) {
+    const chat = r.chat_id as string;
+    const desde = inicioCiclo.get(chat);
+    if (desde && ((r.creado_en as string | null) ?? "") < desde) continue;
     const t = r.tipo as string;
-    if (t === "agendamiento") conAgenda.add(r.chat_id as string);
-    if (t === "venta_confirmada" || t === "venta_recuperada") conVenta.add(r.chat_id as string);
+    if (t === "agendamiento") conAgenda.add(chat);
+    if (t === "venta_confirmada" || t === "venta_recuperada") conVenta.add(chat);
   }
   const esperando = new Set((escalacionesR.data ?? []).map((e) => e.chat_id as string));
 
@@ -335,29 +365,39 @@ export async function cargarEmbudo(
      * conversación — que es la forma más rápida de que alguien deje de creerle
      * a los dos.
      *
-     * Fire-and-forget, igual que el resto del puente: esta función se llama al
-     * abrir una página y no debe esperar a un tercero para pintar.
+     * Se esperan TODOS a la vez con un tope de 4 s (auditoría 3-sep-2026):
+     * en serverless, un fire-and-forget se perdía al terminar el render, y
+     * el sistema del cliente se quedaba con la etapa vieja. Cuatro segundos
+     * de tope para no colgar la pantalla si Gestión no responde.
      */
     const porChat = new Map(cambios.map((c) => [c.chat_id, c]));
+    const avisos: Promise<void>[] = [];
     for (const t of tarjetas) {
       const cambio = porChat.get(t.chatId);
       if (!cambio) continue;
-      notificarSistemaDelCliente({
-        evento: "etapa",
-        clienteId,
-        contacto: {
-          chatId: t.chatId,
-          nombre: t.contacto.startsWith("+") ? null : t.contacto,
-          // El embudo no distingue canal; se deduce del prefijo que usa
-          // inboundInstagram para que un IGSID no colisione con un teléfono.
-          canal: t.chatId.startsWith("ig:") ? "instagram" : "whatsapp",
-          etapa: cambio.etapa,
-          etapaManual: false, // por construcción: acá solo entran cambios automáticos
-          etiquetas: t.etiquetas,
-          ultimoMensajeEn: t.ultimoEn,
-        },
-        supa,
-      });
+      avisos.push(
+        notificarYEsperar({
+          evento: "etapa",
+          clienteId,
+          contacto: {
+            chatId: t.chatId,
+            nombre: t.contacto.startsWith("+") ? null : t.contacto,
+            // El embudo no distingue canal; se deduce del prefijo que usa
+            // inboundInstagram para que un IGSID no colisione con un teléfono.
+            canal: t.chatId.startsWith("ig:") ? "instagram" : "whatsapp",
+            etapa: cambio.etapa,
+            etapaManual: false, // por construcción: acá solo entran cambios automáticos
+            etapaMotivo: cambio.motivo,
+            etapaEn: ahora,
+            etiquetas: t.etiquetas,
+            ultimoMensajeEn: t.ultimoEn,
+          },
+          supa,
+        }).catch((e) => console.warn("[embudo] puente:", (e as Error).message)),
+      );
+    }
+    if (avisos.length) {
+      await Promise.race([Promise.allSettled(avisos), new Promise((r) => setTimeout(r, 4_000))]);
     }
   }
 
@@ -398,7 +438,8 @@ export async function moverEtapa(
    * Cuando pase, los dos guardan la etapa cruda y el desacuerdo se puede
    * auditar sin adivinar.
    */
-  notificarSistemaDelCliente({
+  // Esperado con tope: es una server action y el fire-and-forget se perdía.
+  await notificarConTope({
     evento: "etapa",
     clienteId,
     contacto: {
@@ -406,6 +447,8 @@ export async function moverEtapa(
       canal: chatId.startsWith("ig:") ? "instagram" : "whatsapp",
       etapa,
       etapaManual: true,
+      etapaMotivo: null,
+      etapaEn: new Date().toISOString(),
     },
     supa,
   });

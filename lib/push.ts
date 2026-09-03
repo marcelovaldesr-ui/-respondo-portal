@@ -114,6 +114,9 @@ export async function avisarACliente(
             // sirve — la conversación se atendió o se perdió.
             TTL: 4 * 60 * 60,
             urgency: "high",
+            // Un servicio de push colgado no puede comerse el presupuesto del
+            // cron ni del webhook: 8 s y se sigue (auditoría 3-sep-2026).
+            timeout: 8_000,
           },
         );
         enviados++;

@@ -67,6 +67,14 @@ test("no se persigue a quien ya compró ni a quien dijo que no", () => {
   }
 });
 
+test("⭐⭐ si aprobó y falta el abono (pago_pendiente), no se le pregunta si «sigue en pie»", () => {
+  // La etiqueta la pone el detector de cierres: el cliente ya dijo que sí.
+  // Insistirle con la plantilla de cotización es contradictorio y cuesta $85.
+  const v = decidirCotizacion({ ...BASE, etiquetas: ["cotizacion", "pago_pendiente"] }, AHORA);
+  assert.equal(v.enviar, false);
+  assert.match(v.motivo, /abono/i);
+});
+
 test("no se insiste dos veces por la misma cotización", () => {
   const v = decidirCotizacion(
     { ...BASE, ultimoSeguimientoEn: haceDias(DIAS_SIN_REPETIR - 1) },

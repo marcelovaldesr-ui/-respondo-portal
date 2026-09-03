@@ -91,6 +91,18 @@ export function decidirCotizacion(
   }
 
   /**
+   * APROBÓ Y FALTA EL ABONO → NO ES UNA COTIZACIÓN SIN RESPUESTA.
+   *
+   * `pago_pendiente` la pone el detector de cierres cuando el cliente dijo que
+   * sí pero no hay pago (auditoría 3-sep-2026). Mandarle «¿sigue en pie la
+   * cotización?» a alguien que ya la aprobó es contradictorio y paga $85 por
+   * quedar mal. Lo que corresponde ahí es que el negocio pida el abono.
+   */
+  if (c.etiquetas.includes("pago_pendiente")) {
+    return { enviar: false, motivo: "aprobó y falta el abono: le toca al negocio pedirlo" };
+  }
+
+  /**
    * EL CLIENTE HABLÓ ÚLTIMO → NO SE LE ESCRIBE.
    *
    * Es la regla que más protege. Si la última palabra es suya, o bien está

@@ -51,7 +51,12 @@ export type ResumenArchivado = {
 export async function archivarPendientes(
   supa = db(),
   max = MAX_POR_PASADA,
+  opts: {
+    /** `Date.now()` después del cual no se empieza otro adjunto (auditoría 3-sep-2026). */
+    fechaLimite?: number;
+  } = {},
 ): Promise<ResumenArchivado> {
+  const fechaLimite = opts.fechaLimite ?? Date.now() + 40_000;
   const out: ResumenArchivado = {
     revisados: 0,
     archivados: 0,
@@ -70,18 +75,29 @@ export async function archivarPendientes(
    * Los más ANTIGUOS primero: son los que están más cerca de vencer. Ordenar al
    * revés dejaría los urgentes para el final y se perderían justo esos.
    */
-  const { data: filas, error } = await supa
+  const { data: candidatas, error } = await supa
     .from("ed_mensajes")
     .select("id, creado_en, media_url, media_mime, media_nombre, ed_empleados!inner(cliente_id)")
     .like("media_url", `${PREFIJO_META}%`)
     .gte("creado_en", desde)
     .order("creado_en", { ascending: true })
-    .limit(max);
+    .limit(max * 3);
 
-  if (error || !filas?.length) return out;
+  if (error || !candidatas?.length) return out;
+
+  /**
+   * ROTACIÓN (auditoría 3-sep-2026). Un adjunto que falla sin marcarse
+   * (fetch caído, subida rechazada) es siempre el más antiguo, así que
+   * encabezaba la tanda en TODAS las pasadas y, con doce como él, el resto
+   * nunca llegaba a archivarse. Se traen más candidatos y cada pasada empieza
+   * en un punto distinto: los que fallan se reintentan, pero no bloquean.
+   */
+  const inicio = Math.floor(Date.now() / 300_000) % candidatas.length;
+  const filas = [...candidatas.slice(inicio), ...candidatas.slice(0, inicio)].slice(0, max);
   out.revisados = filas.length;
 
   for (const f of filas) {
+    if (fechaLimite - Date.now() < 8_000) break;
     const mensajeId = f.id as string;
     const clienteId = (f as { ed_empleados?: { cliente_id?: string } }).ed_empleados?.cliente_id;
     if (!clienteId) {
@@ -141,7 +157,11 @@ export async function archivarPendientes(
       }
       if (decision.accion === "omitir") continue;
 
-      const r = await fetch(res.url, { headers: { Authorization: `Bearer ${cfg.token}` } });
+      // Con tope: una descarga colgada no puede comerse el latido entero.
+      const r = await fetch(res.url, {
+        headers: { Authorization: `Bearer ${cfg.token}` },
+        signal: AbortSignal.timeout(Math.max(5_000, Math.min(25_000, fechaLimite - Date.now()))),
+      });
       if (!r.ok) {
         out.fallidos++;
         continue;
