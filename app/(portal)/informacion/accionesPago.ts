@@ -37,3 +37,30 @@ export async function guardarLinkPago(formData: FormData): Promise<void> {
 
   revalidatePath("/informacion");
 }
+
+/**
+ * CÓMO LLAMA EL NEGOCIO A SU NÚMERO DE TRABAJO.
+ *
+ * «N° de presupuesto» en una imprenta, «N° de OT» en un taller, «N° de pedido»
+ * en una tienda. Tiene que ser la MISMA palabra que el cliente ve en el
+ * formulario de pago: si el mensaje dice una cosa y la pantalla otra, la
+ * persona tiene que traducir justo cuando está por pagar.
+ *
+ * Vacío = el mensaje dice «la referencia», como antes.
+ */
+export async function guardarEtiquetaRef(formData: FormData): Promise<void> {
+  const usuario = await exigirPermisoPortal("editar_conocimiento");
+
+  // Una etiqueta va dentro de una frase: sin saltos de línea y corta.
+  const etiqueta = String(formData.get("etiqueta") ?? "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 40);
+
+  await db()
+    .from("ed_clientes")
+    .update({ pago_ref_etiqueta: etiqueta || null })
+    .eq("id", usuario.clienteId);
+
+  revalidatePath("/informacion");
+}

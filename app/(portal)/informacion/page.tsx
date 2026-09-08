@@ -1,7 +1,7 @@
 import { exigirPermisoPortal } from "@/lib/auth";
 import { listarFichas, listarCorrecciones, type Ficha } from "@/lib/conocimiento";
 import { CATEGORIAS, PLANTILLAS } from "@/lib/plantillasRubro";
-import { guardarLinkPago } from "./accionesPago";
+import { guardarEtiquetaRef, guardarLinkPago } from "./accionesPago";
 import { linkDePago } from "@/lib/pagos";
 import {
   crearFicha,
@@ -84,7 +84,7 @@ export default async function Informacion() {
     listarCorrecciones(usuario.clienteId),
     // Enlace de pago (migración 289). Si la columna no existe aún, null y la
     // tarjeta simplemente muestra el campo vacío.
-    linkDePago(usuario.clienteId).catch(() => ({ link: null, nombre: "" })),
+    linkDePago(usuario.clienteId).catch(() => ({ link: null, nombre: "", etiquetaRef: null })),
   ]);
 
   const vigentes = fichas.filter((f) => f.vigente).length;
@@ -139,6 +139,38 @@ export default async function Informacion() {
             ? "Cobros activados. Deja el campo vacío y guarda para apagarlos."
             : "Sin enlace, el botón Cobrar de la bandeja está apagado."}
         </p>
+
+        {/*
+          CÓMO LLAMA EL NEGOCIO A SU NÚMERO DE TRABAJO (8-sep-2026).
+
+          Antes el mensaje decía «indica la referencia 5292» mientras la
+          pantalla de pago decía «N° de presupuesto»: dos palabras para el
+          mismo número y el cliente traduciendo justo cuando iba a pagar.
+          Acá el negocio declara SU palabra y el mensaje usa esa.
+        */}
+        <div className="mt-5 border-t pt-4" style={{ borderColor: "var(--borde)" }}>
+          <p className="text-[13.5px] font-semibold">¿Cómo le llamas a tu número de trabajo?</p>
+          <p className="mt-1 text-[13px]" style={{ color: "var(--muted)" }}>
+            El número con el que TÚ identificas el trabajo y que tu cliente ya tiene:
+            presupuesto, orden de trabajo, pedido. El mensaje de cobro va a pedirle ese
+            número con esta misma palabra.
+          </p>
+          <form action={guardarEtiquetaRef} className="mt-3 flex flex-wrap gap-2">
+            <input
+              name="etiqueta"
+              defaultValue={pago.etiquetaRef ?? ""}
+              placeholder="N° de presupuesto"
+              maxLength={40}
+              className="campo min-w-[220px] flex-1"
+            />
+            <button className="btn-suave px-4">Guardar</button>
+          </form>
+          <p className="mt-2 text-[12px]" style={{ color: "var(--muted-2)" }}>
+            {pago.etiquetaRef
+              ? `El cobro dirá: «indica el ${pago.etiquetaRef} 5292». Vacío = «indica la referencia».`
+              : "Sin configurar, el mensaje dice «indica la referencia». Ponerlo lo hace más claro."}
+          </p>
+        </div>
       </div>
 
       {/* Agregar */}

@@ -44,7 +44,7 @@ const enVuelo = new Map<string, Promise<DetalleConversacion | null | undefined>>
  * versión acá hace que lo viejo simplemente no se encuentre y se vuelva a pedir.
  * Súbela cada vez que cambies el tipo del detalle.
  */
-const PREFIJO = "respondo:chat:v4:";
+const PREFIJO = "respondo:chat:v5:";
 /**
  * Cuánto se acepta de sessionStorage. Diez minutos: pasado eso, la conversación
  * pudo cambiar tanto que mostrarla completa antes de refrescar sería confuso.

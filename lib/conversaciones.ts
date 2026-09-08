@@ -74,6 +74,12 @@ export type DetalleConversacion = {
   /** Si el rubro usa avisos de pedido (imprenta/tienda): muestra el botón. */
   puedeAvisarPedido: boolean;
   /**
+   * Cómo llama el negocio a su número de trabajo («N° de presupuesto»,
+   * «N° de OT»). Rotula el campo del cobro con la palabra del negocio en vez
+   * de una genérica. Null = el negocio no lo configuró.
+   */
+  etiquetaRef: string | null;
+  /**
    * CONTEXTO de la persona, para el panel lateral del rediseño.
    *
    * Sale todo de ed_contactos, que desde la migración 250 ya trae el total de
@@ -396,7 +402,21 @@ export async function obtenerConversacion(
       .eq("chat_id", chatId),
     // Solo el transporte: decide si la ventana de 24 h aplica. Es una consulta
     // suelta y liviana, así que viaja con el resto en vez de encadenarse.
-    supa.from("ed_clientes").select("transporte, rubro").eq("id", clienteId).maybeSingle(),
+    (async () => {
+      // La etiqueta llega con la 295: si no está, se pide sin ella para no
+      // tumbar la conversación entera por una columna nueva.
+      const conEtiqueta = await supa
+        .from("ed_clientes")
+        .select("transporte, rubro, pago_ref_etiqueta")
+        .eq("id", clienteId)
+        .maybeSingle();
+      if (!conEtiqueta.error) return conEtiqueta;
+      return supa
+        .from("ed_clientes")
+        .select("transporte, rubro")
+        .eq("id", clienteId)
+        .maybeSingle();
+    })(),
     /**
      * Cobros del chat (migración 289). `catch` propio: si la migración no está
      * aplicada, la tabla no existe y eso NO puede tumbar la conversación —
@@ -446,6 +466,9 @@ export async function obtenerConversacion(
     etiquetas: ((contacto.data?.etiquetas as string[] | null) ?? []),
     rubro: (cliente.data?.rubro as string | null) ?? null,
     pagos,
+    etiquetaRef:
+      ((cliente.data as Record<string, unknown> | null)?.pago_ref_etiqueta as string | null)?.trim() ||
+      null,
     puedeAvisarPedido: plantillasParaRubro((cliente.data?.rubro as string | null) ?? null).some(
       (p) => p.nombre === "pedido_listo",
     ),

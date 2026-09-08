@@ -172,14 +172,33 @@ export function mensajeDeCobro(p: {
    * ninguno.
    */
   referenciaExterna?: string | null;
+  /**
+   * Cómo llama el negocio a ese número: «N° de presupuesto», «N° de OT»,
+   * «N° de pedido». Debe ser LA MISMA palabra que el cliente ve en el
+   * formulario de pago.
+   *
+   * POR QUÉ (8-sep-2026): antes el mensaje decía «indica la referencia 5292»
+   * mientras la pantalla de Flow decía «N° de presupuesto». Dos palabras para
+   * el mismo número, y el cliente traduciendo. Además «referencia» a secas es
+   * vago: suena a número de transferencia o a código de boleta. Cuando el
+   * objetivo es que pague sin pensar, cada palabra ambigua cuesta.
+   *
+   * Solo se usa cuando hay folio: al `P-XXXXXX` interno seguirle llamando
+   * «la referencia» es correcto, porque eso es exactamente lo que es.
+   */
+  etiquetaRef?: string | null;
 }): string {
-  const aIndicar = (p.referenciaExterna ?? "").trim() || p.referencia;
+  const folio = (p.referenciaExterna ?? "").trim();
+  const etiqueta = (p.etiquetaRef ?? "").trim();
+  const comoPedirlo =
+    folio && etiqueta ? `el ${etiqueta} ${folio}` : `la referencia ${folio || p.referencia}`;
+
   return (
     `Detalle de tu pago en ${p.nombreNegocio}:\n` +
     `${p.concepto} — ${formatearMonto(p.monto)}\n\n` +
     `Puedes pagar en este enlace:\n` +
     `${p.linkBase.trim()}\n\n` +
-    `Al pagar, indica la referencia ${aIndicar} o respóndenos con el comprobante por acá mismo.`
+    `Al pagar, indica ${comoPedirlo} o respóndenos con el comprobante por acá mismo.`
   );
 }
 

@@ -64,7 +64,7 @@ export async function cobrarEnChat(formData: FormData): Promise<{
   const supa = db();
 
   // El enlace del negocio: sin él, la función no existe para este cliente.
-  const { link, nombre } = await linkDePago(usuario.clienteId, supa);
+  const { link, nombre, etiquetaRef } = await linkDePago(usuario.clienteId, supa);
   const v = validarCobro({ monto, concepto, linkBase: link, referenciaExterna });
   if (!v.ok) return { ok: false, error: v.error };
 
@@ -130,6 +130,7 @@ export async function cobrarEnChat(formData: FormData): Promise<{
     monto: v.monto,
     referencia: creado.referencia,
     referenciaExterna: v.referenciaExterna,
+    etiquetaRef,
     linkBase: link!,
     nombreNegocio: nombre,
   });

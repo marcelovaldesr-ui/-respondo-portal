@@ -45,6 +45,7 @@ export default function InboxConversacion({
   rapidas,
   contacto,
   rubro,
+  etiquetaRef,
 }: {
   empleadoId: string;
   chatId: string;
@@ -62,6 +63,12 @@ export default function InboxConversacion({
   contacto?: string;
   /** Rubro del negocio: decide qué plantillas se ofrecen (ver SelectorPlantilla). */
   rubro?: string | null;
+  /**
+   * Cómo llama el negocio a su número de trabajo («N° de presupuesto»,
+   * «N° de OT»). Rotula el campo del cobro con SU palabra — la misma que el
+   * cliente va a ver en el formulario de pago.
+   */
+  etiquetaRef?: string | null;
 }) {
   const {
     mensajes,
@@ -543,7 +550,7 @@ export default function InboxConversacion({
         rendimiento. El mensaje del cobro aparece en el chat por el stream.
       */}
       <div className="mb-2 flex justify-end">
-        <Cobro empleadoId={empleadoId} chatId={chatId} />
+        <Cobro empleadoId={empleadoId} chatId={chatId} etiquetaRef={etiquetaRef ?? null} />
       </div>
       <Compositor
           enviarTexto={enviarTexto}

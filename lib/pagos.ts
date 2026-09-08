@@ -30,15 +30,24 @@ export type Pago = {
 export async function linkDePago(
   clienteId: string,
   supa: SupabaseClient = db(),
-): Promise<{ link: string | null; nombre: string }> {
-  const { data } = await supa
-    .from("ed_clientes")
-    .select("nombre, pago_link_base")
-    .eq("id", clienteId)
-    .maybeSingle();
+): Promise<{ link: string | null; nombre: string; etiquetaRef: string | null }> {
+  /**
+   * ⚠️ `pago_ref_etiqueta` llega con la 295 y el deploy va antes que la
+   * migración: si se pide la columna y no existe, PostgREST falla la consulta
+   * ENTERA y el negocio se queda sin enlace de pago — o sea, sin poder cobrar.
+   * Por eso se reintenta sin ella.
+   */
+  const pedir = (cols: string) =>
+    supa.from("ed_clientes").select(cols).eq("id", clienteId).maybeSingle();
+
+  let r = await pedir("nombre, pago_link_base, pago_ref_etiqueta");
+  if (r.error) r = await pedir("nombre, pago_link_base");
+
+  const data = r.data as Record<string, unknown> | null;
   return {
     link: (data?.pago_link_base as string | null)?.trim() || null,
     nombre: (data?.nombre as string) ?? "el negocio",
+    etiquetaRef: (data?.pago_ref_etiqueta as string | null)?.trim() || null,
   };
 }
 

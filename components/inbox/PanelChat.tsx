@@ -536,6 +536,7 @@ export default function PanelChat({
             modoInicial={d.modo}
             contacto={d.contacto}
             rubro={d.rubro}
+            etiquetaRef={d.etiquetaRef}
           />
           )}
         </>

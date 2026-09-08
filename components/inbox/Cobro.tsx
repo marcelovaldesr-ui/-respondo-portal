@@ -25,11 +25,18 @@ export function Cobro({
   empleadoId,
   chatId,
   concepto0,
+  etiquetaRef,
 }: {
   empleadoId: string;
   chatId: string;
   /** Sugerencia inicial del concepto (ej: lo último cotizado), si se conoce. */
   concepto0?: string;
+  /**
+   * Cómo llama el negocio a su número de trabajo. Rotula el campo con SU
+   * palabra: «N° presupuesto» en una imprenta, «N° de OT» en un taller. Sin
+   * configurar, el campo se llama «Referencia» y el mensaje también.
+   */
+  etiquetaRef?: string | null;
 }) {
   const [abierto, setAbierto] = useState(false);
   const [monto, setMonto] = useState("");
@@ -144,7 +151,8 @@ export function Cobro({
         </label>
         <label className="flex flex-col gap-1">
           <span className="text-[11.5px]" style={{ color: "var(--muted)" }}>
-            N° presupuesto <span style={{ color: "var(--muted-2)" }}>(opcional)</span>
+            {etiquetaRef || "Referencia"}{" "}
+            <span style={{ color: "var(--muted-2)" }}>(opcional)</span>
           </span>
           <input
             value={refExterna}
@@ -181,9 +189,9 @@ export function Cobro({
         </p>
       )}
       <p className="mt-2 text-[11px]" style={{ color: "var(--muted-2)" }}>
-        El cliente recibe el enlace de pago del negocio. Si escribes el N° de presupuesto,
-        es ese el que se le pide al pagar; si no, se usa la referencia interna. Cuando
-        pague, se marca en el panel de la derecha.
+        El cliente recibe el enlace de pago del negocio. Si escribes el{" "}
+        {etiquetaRef || "número"}, es ese el que se le pide al pagar; si no, se usa la
+        referencia interna. Cuando pague, se marca en el panel de la derecha.
       </p>
     </div>
   );

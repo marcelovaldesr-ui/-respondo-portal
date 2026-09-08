@@ -210,3 +210,77 @@ test("acepta los formatos reales de folio que usa un negocio", () => {
     if (v.ok) assert.equal(v.referenciaExterna, ref);
   }
 });
+
+// ── La etiqueta del folio: la MISMA palabra que ve el cliente en el formulario
+
+test("⭐⭐ con etiqueta, el mensaje usa la palabra del negocio, no «referencia»", () => {
+  const t = mensajeDeCobro({
+    concepto: "Abono presupuesto 5292",
+    monto: 103_530,
+    referencia: "P-8TZ6FH",
+    linkBase: "https://www.flow.cl/btn.php?token=abc",
+    nombreNegocio: "Impresora Color",
+    referenciaExterna: "5292",
+    etiquetaRef: "N° de presupuesto",
+  });
+  assert.match(t, /indica el N° de presupuesto 5292/);
+  assert.doesNotMatch(t, /la referencia/);
+});
+
+test("la etiqueta sirve para cualquier rubro, no solo imprenta", () => {
+  const base = {
+    concepto: "Mantención",
+    monto: 45_000,
+    referencia: "P-AAA111",
+    linkBase: "https://mpago.la/x",
+    nombreNegocio: "RS-Shop",
+    referenciaExterna: "OT-1234",
+  };
+  assert.match(mensajeDeCobro({ ...base, etiquetaRef: "N° de OT" }), /indica el N° de OT OT-1234/);
+  assert.match(
+    mensajeDeCobro({ ...base, etiquetaRef: "N° de pedido" }),
+    /indica el N° de pedido OT-1234/,
+  );
+});
+
+test("sin etiqueta configurada, sigue diciendo «la referencia» (como antes)", () => {
+  const t = mensajeDeCobro({
+    concepto: "Abono presupuesto 5292",
+    monto: 103_530,
+    referencia: "P-8TZ6FH",
+    linkBase: "https://mpago.la/x",
+    nombreNegocio: "Impresora Color",
+    referenciaExterna: "5292",
+  });
+  assert.match(t, /indica la referencia 5292/);
+});
+
+test("⭐ sin folio, la etiqueta se IGNORA: al P-XXXXXX se le dice referencia", () => {
+  // Llamar «N° de presupuesto» a un código interno que el negocio nunca le
+  // mandó sería mandarlo a buscar algo que no tiene.
+  const t = mensajeDeCobro({
+    concepto: "500 tarjetas",
+    monto: 25_000,
+    referencia: "P-8TZ6FH",
+    linkBase: "https://mpago.la/x",
+    nombreNegocio: "Impresora Color",
+    etiquetaRef: "N° de presupuesto",
+  });
+  assert.match(t, /indica la referencia P-8TZ6FH/);
+  assert.doesNotMatch(t, /N° de presupuesto/);
+});
+
+test("una etiqueta en blanco no deja el mensaje cojo", () => {
+  for (const et of [null, undefined, "", "   "]) {
+    const t = mensajeDeCobro({
+      concepto: "x",
+      monto: 25_000,
+      referencia: "P-AAA111",
+      linkBase: "https://mpago.la/x",
+      nombreNegocio: "N",
+      referenciaExterna: "5292",
+      etiquetaRef: et,
+    });
+    assert.match(t, /indica la referencia 5292/, `etiqueta: ${et}`);
+  }
+});
