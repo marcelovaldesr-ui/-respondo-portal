@@ -42,16 +42,35 @@ export const MONTO_MIN = 1_000;
 
 export type EstadoPago = "pendiente" | "pagado" | "anulado";
 
+/**
+ * Tope de la referencia del propio negocio. Un folio es corto por naturaleza
+ * («5292», «OT-1234»); el tope existe para que nadie pegue media cotización
+ * dentro del mensaje que ve el cliente.
+ */
+export const REF_EXTERNA_MAX = 24;
+
 /** Lo que se necesita para crear un cobro. */
 export type SolicitudCobro = {
   monto: number;
   concepto: string;
   /** Enlace de pago del negocio. Sin él, la función no existe para ese cliente. */
   linkBase: string | null | undefined;
+  /**
+   * Número con el que el NEGOCIO identifica el trabajo: folio del presupuesto,
+   * N° de OT, N° de pedido. Opcional.
+   *
+   * POR QUÉ EXISTE (8-sep-2026): la referencia `P-XXXXXX` la genera el portal y
+   * al cliente final no le dice nada — tiene que ir a buscarla a un mensaje. El
+   * número que la persona SÍ tiene en la mano es el del presupuesto que le
+   * mandaron, y es además el único que le sirve al negocio para encontrar el
+   * trabajo en su propio sistema. Cuando viene, es este el que viaja al cliente
+   * y `P-XXXXXX` se queda como identificador interno.
+   */
+  referenciaExterna?: string | null;
 };
 
 export type CobroValidado =
-  | { ok: true; monto: number; concepto: string }
+  | { ok: true; monto: number; concepto: string; referenciaExterna: string | null }
   | { ok: false; error: string };
 
 export function validarCobro(s: SolicitudCobro): CobroValidado {
@@ -89,7 +108,20 @@ export function validarCobro(s: SolicitudCobro): CobroValidado {
     return { ok: false, error: "El concepto es muy largo (máximo 120 caracteres)." };
   }
 
-  return { ok: true, monto, concepto };
+  /**
+   * La referencia del negocio se limpia, no se rechaza: los saltos de línea
+   * romperían el mensaje y los espacios de más se ven como error de tipeo. Si
+   * queda vacía, simplemente no hay referencia externa y manda el `P-XXXXXX`.
+   */
+  const refCruda = (s.referenciaExterna ?? "").replace(/\s+/g, " ").trim();
+  if (refCruda.length > REF_EXTERNA_MAX) {
+    return {
+      ok: false,
+      error: `La referencia es muy larga (máximo ${REF_EXTERNA_MAX} caracteres).`,
+    };
+  }
+
+  return { ok: true, monto, concepto, referenciaExterna: refCruda || null };
 }
 
 /**
@@ -131,13 +163,23 @@ export function mensajeDeCobro(p: {
   referencia: string;
   linkBase: string;
   nombreNegocio: string;
+  /**
+   * Folio del negocio (presupuesto, OT, pedido). Cuando viene, es ESTE el
+   * número que se le pide al cliente: es el que tiene en la mano y el que le
+   * sirve al negocio para encontrar el trabajo. El `P-XXXXXX` sigue existiendo
+   * en el registro, pero deja de aparecer en el mensaje — pedir dos números
+   * distintos en la misma frase es la forma más rápida de que no escriba
+   * ninguno.
+   */
+  referenciaExterna?: string | null;
 }): string {
+  const aIndicar = (p.referenciaExterna ?? "").trim() || p.referencia;
   return (
     `Detalle de tu pago en ${p.nombreNegocio}:\n` +
     `${p.concepto} — ${formatearMonto(p.monto)}\n\n` +
     `Puedes pagar en este enlace:\n` +
     `${p.linkBase.trim()}\n\n` +
-    `Al pagar, indica la referencia ${p.referencia} o respóndenos con el comprobante por acá mismo.`
+    `Al pagar, indica la referencia ${aIndicar} o respóndenos con el comprobante por acá mismo.`
   );
 }
 

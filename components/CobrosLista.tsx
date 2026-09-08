@@ -87,6 +87,7 @@ export function CobrosLista({ pagos: iniciales }: { pagos: PagoListado[] }) {
                 {p.contacto} · {p.concepto}
               </div>
               <div className="cifra text-[11px]" style={{ color: "var(--muted-2)" }}>
+                {p.referenciaExterna ? `N° ${p.referenciaExterna} · ` : ""}
                 {p.referencia} · {fechaCorta(p.creadoEn)}
               </div>
             </div>

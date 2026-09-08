@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   MONTO_MAX,
   MONTO_MIN,
+  REF_EXTERNA_MAX,
   formatearMonto,
   generarReferencia,
   mensajeDeCobro,
@@ -137,4 +138,75 @@ test("desde pendiente se puede pagar o anular", () => {
 
 test("quedarse igual no es una transición", () => {
   assert.equal(puedeCambiar("pendiente", "pendiente"), false);
+});
+
+// ── Referencia del negocio (folio del presupuesto / OT / pedido) ────────────
+//
+// El P-XXXXXX lo genera el portal y al cliente final no le dice nada. El
+// número que él SÍ tiene en la mano es el del presupuesto que recibió.
+
+test("⭐⭐ si hay folio del negocio, ES ESE el que se le pide al cliente", () => {
+  const t = mensajeDeCobro({
+    concepto: "Abono presupuesto 5292",
+    monto: 103_530,
+    referencia: "P-8TZ6FH",
+    linkBase: "https://www.flow.cl/btn.php?token=abc",
+    nombreNegocio: "Impresora Color",
+    referenciaExterna: "5292",
+  });
+  assert.match(t, /indica la referencia 5292/);
+  // Pedir dos números distintos en la misma frase es la forma más rápida de
+  // que el cliente no escriba ninguno.
+  assert.doesNotMatch(t, /P-8TZ6FH/);
+});
+
+test("sin folio, el mensaje sigue igual que siempre (P-XXXXXX)", () => {
+  const t = mensajeDeCobro({
+    concepto: "500 tarjetas",
+    monto: 25_000,
+    referencia: "P-8TZ6FH",
+    linkBase: "https://mpago.la/x",
+    nombreNegocio: "Impresora Color",
+  });
+  assert.match(t, /indica la referencia P-8TZ6FH/);
+});
+
+test("un folio en blanco NO deja el mensaje sin referencia", () => {
+  for (const ref of [null, undefined, "", "   "]) {
+    const t = mensajeDeCobro({
+      concepto: "500 tarjetas",
+      monto: 25_000,
+      referencia: "P-8TZ6FH",
+      linkBase: "https://mpago.la/x",
+      nombreNegocio: "Impresora Color",
+      referenciaExterna: ref,
+    });
+    assert.match(t, /P-8TZ6FH/, `ref: ${ref}`);
+  }
+});
+
+test("el folio se limpia: saltos de línea y espacios de más", () => {
+  // Un salto de línea partiría el mensaje en dos.
+  const v = validarCobro({ ...BASE, referenciaExterna: "  OT-1234\n\n  " });
+  assert.equal(v.ok, true);
+  if (v.ok) assert.equal(v.referenciaExterna, "OT-1234");
+});
+
+test("sin folio, validarCobro devuelve null (no cadena vacía)", () => {
+  const v = validarCobro(BASE);
+  assert.equal(v.ok, true);
+  if (v.ok) assert.equal(v.referenciaExterna, null);
+});
+
+test("un folio absurdamente largo se rechaza", () => {
+  const v = validarCobro({ ...BASE, referenciaExterna: "5".repeat(REF_EXTERNA_MAX + 1) });
+  assert.equal(v.ok, false);
+});
+
+test("acepta los formatos reales de folio que usa un negocio", () => {
+  for (const ref of ["5292", "#5292", "OT-1234", "PRES 5292", "2026/0451"]) {
+    const v = validarCobro({ ...BASE, referenciaExterna: ref });
+    assert.equal(v.ok, true, `ref: ${ref}`);
+    if (v.ok) assert.equal(v.referenciaExterna, ref);
+  }
 });

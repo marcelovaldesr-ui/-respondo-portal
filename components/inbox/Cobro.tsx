@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { cobrarEnChat } from "@/app/(portal)/conversaciones/accionesPagos";
-import { MONTO_MAX, MONTO_MIN, formatearMonto } from "@/lib/pagosCore";
+import { MONTO_MAX, MONTO_MIN, REF_EXTERNA_MAX, formatearMonto } from "@/lib/pagosCore";
 
 /**
  * COBRAR EN LA CONVERSACIÓN — el botón y su formulario.
@@ -11,9 +11,15 @@ import { MONTO_MAX, MONTO_MIN, formatearMonto } from "@/lib/pagosCore";
  * conversación no termina en «te paso los datos de transferencia», termina en
  * un mensaje con enlace de pago y referencia, y un registro con estado.
  *
- * Diseño del formulario: DOS campos, monto y concepto. Cada campo extra en un
- * formulario que se usa veinte veces al día es fricción multiplicada por
- * veinte. La referencia se genera sola; el enlace ya está configurado.
+ * Diseño del formulario: monto, concepto y —opcional— el folio del negocio.
+ * Cada campo extra en un formulario que se usa veinte veces al día es fricción
+ * multiplicada por veinte, así que el folio va al final, angosto y opcional.
+ *
+ * POR QUÉ EL FOLIO (8-sep-2026): la referencia `P-XXXXXX` la genera el portal
+ * y al cliente final no le dice nada — tiene que ir a buscarla a un mensaje.
+ * El número que la persona SÍ tiene en la mano es el del presupuesto que
+ * recibió, y es el único que le sirve al negocio para encontrar el trabajo en
+ * su propio sistema. Cuando se escribe, es ESE el que viaja al cliente.
  */
 export function Cobro({
   empleadoId,
@@ -28,6 +34,7 @@ export function Cobro({
   const [abierto, setAbierto] = useState(false);
   const [monto, setMonto] = useState("");
   const [concepto, setConcepto] = useState(concepto0 ?? "");
+  const [refExterna, setRefExterna] = useState("");
   const [enviando, setEnviando] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [exito, setExito] = useState<string | null>(null);
@@ -49,6 +56,7 @@ export function Cobro({
       fd.set("chatId", chatId);
       fd.set("monto", String(montoNum));
       fd.set("concepto", concepto.trim());
+      fd.set("referenciaExterna", refExterna.trim());
       const r = await cobrarEnChat(fd);
       if (r.ok) {
         // El mensaje aparece en el chat por el stream en ~1 s; acá solo se
@@ -56,6 +64,7 @@ export function Cobro({
         setExito(`Cobro enviado · referencia ${r.referencia}`);
         setMonto("");
         setConcepto("");
+        setRefExterna("");
         // El panel de cobros se entera sin cambiar de chat.
         window.dispatchEvent(new Event("respondo:detalle-cambio"));
         setTimeout(() => {
@@ -133,6 +142,24 @@ export function Cobro({
             }}
           />
         </label>
+        <label className="flex flex-col gap-1">
+          <span className="text-[11.5px]" style={{ color: "var(--muted)" }}>
+            N° presupuesto <span style={{ color: "var(--muted-2)" }}>(opcional)</span>
+          </span>
+          <input
+            value={refExterna}
+            onChange={(e) => setRefExterna(e.target.value)}
+            maxLength={REF_EXTERNA_MAX}
+            placeholder="5292"
+            className="campo w-[110px]"
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                e.preventDefault();
+                void cobrar();
+              }
+            }}
+          />
+        </label>
         <button
           type="button"
           onClick={() => void cobrar()}
@@ -154,8 +181,9 @@ export function Cobro({
         </p>
       )}
       <p className="mt-2 text-[11px]" style={{ color: "var(--muted-2)" }}>
-        El cliente recibe el enlace de pago del negocio con una referencia. Cuando pague, se
-        marca en el panel de la derecha.
+        El cliente recibe el enlace de pago del negocio. Si escribes el N° de presupuesto,
+        es ese el que se le pide al pagar; si no, se usa la referencia interna. Cuando
+        pague, se marca en el panel de la derecha.
       </p>
     </div>
   );

@@ -91,7 +91,10 @@ export function PagosCard({ pagos: iniciales }: { pagos: Pago[] | undefined }) {
               </div>
               <div className="mt-1 flex items-center justify-between">
                 <span className="cifra text-[10.5px]" style={{ color: "var(--muted-2)" }}>
-                  {p.referencia}
+                  {/* El folio del negocio manda: es el que se le pidió al
+                      cliente y con el que se encuentra el trabajo. La
+                      referencia interna queda detrás, para conciliar. */}
+                  {p.referenciaExterna ? `N° ${p.referenciaExterna} · ${p.referencia}` : p.referencia}
                 </span>
                 {p.estado === "pendiente" && (
                   <span className="flex gap-1">

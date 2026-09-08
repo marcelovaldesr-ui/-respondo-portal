@@ -22,6 +22,8 @@ export type Pago = {
   estado: EstadoPago;
   creadoEn: string;
   pagadoEn: string | null;
+  /** Folio del negocio (presupuesto/OT/pedido). Null si no se indicó. */
+  referenciaExterna: string | null;
 };
 
 /** El enlace de pago del negocio, o null si no lo ha configurado. */
@@ -54,9 +56,20 @@ export async function crearPago(p: {
   monto: number;
   concepto: string;
   creadoPor: string;
+  /** Folio del negocio. Opcional: si falta, manda la referencia P-XXXXXX. */
+  referenciaExterna?: string | null;
   supa?: SupabaseClient;
 }): Promise<{ ok: true; id: string; referencia: string } | { ok: false; error: string }> {
   const supa = p.supa ?? db();
+
+  /**
+   * ⚠️ Si la 294 todavía no está aplicada, insertar `referencia_externa`
+   * revienta y el cobro NO SALE. Un cobro que falla por una columna que falta
+   * es el peor final posible: la persona ya le dijo al cliente que se lo
+   * manda. Por eso se reintenta sin el folio — se pierde el número en el
+   * mensaje, no la venta.
+   */
+  let conFolio = Boolean(p.referenciaExterna);
 
   for (let intento = 0; intento < 3; intento++) {
     const referencia = generarReferencia();
@@ -70,11 +83,19 @@ export async function crearPago(p: {
         monto: p.monto,
         concepto: p.concepto,
         creado_por: p.creadoPor,
+        ...(conFolio ? { referencia_externa: p.referenciaExterna } : {}),
       })
       .select("id")
       .maybeSingle();
 
     if (!error && data) return { ok: true, id: data.id as string, referencia };
+
+    // 42703 = columna inexistente (migración 294 pendiente): se reintenta sin
+    // el folio en vez de dejar al cliente sin su cobro.
+    if (conFolio && (error as { code?: string } | null)?.code === "42703") {
+      conFolio = false;
+      continue;
+    }
     // 23505 = unique violation → referencia repetida, se prueba otra.
     if ((error as { code?: string } | null)?.code !== "23505") {
       return { ok: false, error: error?.message ?? "No se pudo registrar el cobro" };
@@ -130,13 +151,28 @@ export async function pagosDeChat(p: {
   supa?: SupabaseClient;
 }): Promise<Pago[]> {
   const supa = p.supa ?? db();
-  const { data } = await supa
-    .from("ed_pagos")
-    .select("id, chat_id, referencia, monto, concepto, estado, creado_en, pagado_en")
-    .eq("cliente_id", p.clienteId)
-    .eq("chat_id", p.chatId)
-    .order("creado_en", { ascending: false })
-    .limit(20);
+
+  /**
+   * ⚠️ `referencia_externa` llega con la migración 294, y el deploy va ANTES
+   * que la migración (regla de la casa). Sin este reintento, entre el deploy y
+   * el SQL PostgREST devuelve error por columna desconocida y el panel de
+   * cobros del chat se ve VACÍO — no roto, vacío, que es peor porque parece
+   * que no hay cobros. Mismo patrón que `datos_extra` en la agenda.
+   */
+  const columnas = "id, chat_id, referencia, monto, concepto, estado, creado_en, pagado_en";
+  const pedir = (cols: string) =>
+    supa
+      .from("ed_pagos")
+      .select(cols)
+      .eq("cliente_id", p.clienteId)
+      .eq("chat_id", p.chatId)
+      .order("creado_en", { ascending: false })
+      .limit(20);
+
+  let r = await pedir(`${columnas}, referencia_externa`);
+  if (r.error) r = await pedir(columnas);
+
+  const data = r.data as Record<string, unknown>[] | null;
   return (data ?? []).map((f) => ({
     id: f.id as string,
     chatId: f.chat_id as string,
@@ -146,6 +182,7 @@ export async function pagosDeChat(p: {
     estado: f.estado as EstadoPago,
     creadoEn: f.creado_en as string,
     pagadoEn: (f.pagado_en as string | null) ?? null,
+    referenciaExterna: (f.referencia_externa as string | null) ?? null,
   }));
 }
 
@@ -166,15 +203,25 @@ export async function listarPagos(p: {
   supa?: SupabaseClient;
 }): Promise<PagoListado[]> {
   const supa = p.supa ?? db();
-  let q = supa
-    .from("ed_pagos")
-    .select("id, empleado_id, chat_id, referencia, monto, concepto, estado, creado_en, pagado_en")
-    .eq("cliente_id", p.clienteId)
-    .order("creado_en", { ascending: false })
-    .limit(200);
-  if (p.estado && p.estado !== "todos") q = q.eq("estado", p.estado);
-  const { data } = await q;
-  const filas = data ?? [];
+
+  // Mismo reintento que en `pagosDeChat`: la 294 puede no estar aplicada aún.
+  const columnas =
+    "id, empleado_id, chat_id, referencia, monto, concepto, estado, creado_en, pagado_en";
+  const pedir = (cols: string) => {
+    let q = supa
+      .from("ed_pagos")
+      .select(cols)
+      .eq("cliente_id", p.clienteId)
+      .order("creado_en", { ascending: false })
+      .limit(200);
+    if (p.estado && p.estado !== "todos") q = q.eq("estado", p.estado);
+    return q;
+  };
+
+  let r = await pedir(`${columnas}, referencia_externa`);
+  if (r.error) r = await pedir(columnas);
+
+  const filas = (r.data as Record<string, unknown>[] | null) ?? [];
   if (!filas.length) return [];
 
   const chatIds = [...new Set(filas.map((f) => f.chat_id as string))];
@@ -196,6 +243,7 @@ export async function listarPagos(p: {
     estado: f.estado as EstadoPago,
     creadoEn: f.creado_en as string,
     pagadoEn: (f.pagado_en as string | null) ?? null,
+    referenciaExterna: (f.referencia_externa as string | null) ?? null,
     // Un chat de Instagram no es un teléfono: «+ig:1436…» confundiría.
     contacto:
       nombreDe.get(f.chat_id as string) ||

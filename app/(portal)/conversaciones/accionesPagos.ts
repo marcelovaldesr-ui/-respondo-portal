@@ -58,13 +58,14 @@ export async function cobrarEnChat(formData: FormData): Promise<{
   const chatId = String(formData.get("chatId") ?? "");
   const monto = Number(formData.get("monto") ?? NaN);
   const concepto = String(formData.get("concepto") ?? "");
+  const referenciaExterna = String(formData.get("referenciaExterna") ?? "");
   if (!empleadoId || !chatId) return { ok: false, error: "Faltan datos" };
 
   const supa = db();
 
   // El enlace del negocio: sin él, la función no existe para este cliente.
   const { link, nombre } = await linkDePago(usuario.clienteId, supa);
-  const v = validarCobro({ monto, concepto, linkBase: link });
+  const v = validarCobro({ monto, concepto, linkBase: link, referenciaExterna });
   if (!v.ok) return { ok: false, error: v.error };
 
   // Aislamiento: el empleado y el contacto tienen que ser de ESTE cliente.
@@ -118,6 +119,7 @@ export async function cobrarEnChat(formData: FormData): Promise<{
     chatId,
     monto: v.monto,
     concepto: v.concepto,
+    referenciaExterna: v.referenciaExterna,
     creadoPor: usuario.email,
     supa,
   });
@@ -127,6 +129,7 @@ export async function cobrarEnChat(formData: FormData): Promise<{
     concepto: v.concepto,
     monto: v.monto,
     referencia: creado.referencia,
+    referenciaExterna: v.referenciaExterna,
     linkBase: link!,
     nombreNegocio: nombre,
   });
