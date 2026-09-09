@@ -230,6 +230,7 @@ function ItemNav({
 export default function Sidebar({
   clienteNombre,
   clienteRubro,
+  logoUrl,
   email,
   rol,
   esperando = 0,
@@ -237,6 +238,8 @@ export default function Sidebar({
 }: {
   clienteNombre: string;
   clienteRubro?: string;
+  /** Logo del negocio (migración 296). Null = se muestra el punto de siempre. */
+  logoUrl?: string | null;
   email: string;
   rol: "dueno" | "staff";
   /** Conversaciones derivadas sin atender. Va en coral: es lo único urgente. */
@@ -347,17 +350,30 @@ export default function Sidebar({
         </form>
       </div>
 
-      {/* Negocio — tarjeta blanca sobre el lienzo, igual que el ítem activo */}
+      {/* Negocio — tarjeta blanca sobre el lienzo, igual que el ítem activo.
+          Con logo (9-sep-2026) deja de verse igual para todos: el dueño entra
+          y ve SU marca, no «el software que contrató». */}
       <div className={`tarjeta mt-3 hidden px-2.5 py-2 ${plegada ? "" : "lg:block"}`}>
         <div className="flex items-center gap-2">
-          <span className="punto-vivo" aria-hidden="true" />
+          {logoUrl ? (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img
+              src={logoUrl}
+              alt=""
+              width={22}
+              height={22}
+              className="h-[22px] w-[22px] shrink-0 rounded-full object-contain"
+            />
+          ) : (
+            <span className="punto-vivo" aria-hidden="true" />
+          )}
           <div className="truncate font-semibold" style={{ fontSize: "var(--t-fila)" }}>
             {clienteNombre}
           </div>
         </div>
         {clienteRubro && (
           <div
-            className="mt-0.5 truncate pl-4 capitalize"
+            className={`mt-0.5 truncate capitalize ${logoUrl ? "pl-[30px]" : "pl-4"}`}
             style={{ fontSize: "var(--t-micro)", color: "var(--muted-2)" }}
           >
             {clienteRubro}

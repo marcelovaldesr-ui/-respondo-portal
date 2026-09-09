@@ -3,6 +3,8 @@ import { listarFichas, listarCorrecciones, type Ficha } from "@/lib/conocimiento
 import { CATEGORIAS, PLANTILLAS } from "@/lib/plantillasRubro";
 import { guardarEtiquetaRef, guardarLinkPago } from "./accionesPago";
 import { linkDePago } from "@/lib/pagos";
+import { db } from "@/lib/db";
+import LogoNegocio from "@/components/LogoNegocio";
 import {
   crearFicha,
   actualizarFicha,
@@ -79,12 +81,20 @@ function TarjetaFicha({ f }: { f: Ficha }) {
 
 export default async function Informacion() {
   const usuario = await exigirPermisoPortal("editar_conocimiento");
-  const [fichas, correcciones, pago] = await Promise.all([
+  const [fichas, correcciones, pago, logoUrl] = await Promise.all([
     listarFichas(usuario.clienteId),
     listarCorrecciones(usuario.clienteId),
     // Enlace de pago (migración 289). Si la columna no existe aún, null y la
     // tarjeta simplemente muestra el campo vacío.
     linkDePago(usuario.clienteId).catch(() => ({ link: null, nombre: "", etiquetaRef: null })),
+    // Logo (migración 296). Mismo criterio: sin columna, sin logo, sin drama.
+    db()
+      .from("ed_clientes")
+      .select("logo_url")
+      .eq("id", usuario.clienteId)
+      .maybeSingle()
+      .then((r) => ((r.data?.logo_url as string | null) ?? "").trim() || null)
+      .catch(() => null),
   ]);
 
   const vigentes = fichas.filter((f) => f.vigente).length;
@@ -109,6 +119,19 @@ export default async function Informacion() {
             {fichas.length - vigentes} apagadas
           </span>
         )}
+      </div>
+
+      {/*
+        LOGO DEL NEGOCIO (9-sep-2026). Va primero porque es lo que cambia cómo
+        se siente el portal completo: el dueño entra y ve su marca, no una
+        pantalla genérica. Cuesta poco y es lo primero que nota.
+      */}
+      <div className="tarjeta mt-7 p-5">
+        <h2 className="text-[16px] font-bold">Logo del negocio</h2>
+        <p className="mt-1 mb-4 text-[13.5px]" style={{ color: "var(--muted)" }}>
+          Aparece arriba en tu menú. Es tu portal — que se vea así.
+        </p>
+        <LogoNegocio actual={logoUrl} />
       </div>
 
       {/*
