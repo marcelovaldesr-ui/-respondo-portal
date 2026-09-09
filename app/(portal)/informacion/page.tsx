@@ -87,14 +87,27 @@ export default async function Informacion() {
     // Enlace de pago (migración 289). Si la columna no existe aún, null y la
     // tarjeta simplemente muestra el campo vacío.
     linkDePago(usuario.clienteId).catch(() => ({ link: null, nombre: "", etiquetaRef: null })),
-    // Logo (migración 296). Mismo criterio: sin columna, sin logo, sin drama.
-    db()
-      .from("ed_clientes")
-      .select("logo_url")
-      .eq("id", usuario.clienteId)
-      .maybeSingle()
-      .then((r) => ((r.data?.logo_url as string | null) ?? "").trim() || null)
-      .catch(() => null),
+    /**
+     * Logo (migración 296). Mismo criterio: sin columna, sin logo, sin drama.
+     *
+     * ⚠️ Va en una función async con try/catch y NO como `.then().catch()`
+     * encadenado sobre la consulta: el builder de supabase-js devuelve un
+     * `PromiseLike`, que no tiene `.catch`. Encadenarlo compila en el editor
+     * pero revienta el build. Costó un deploy fallido el 9-sep.
+     */
+    (async () => {
+      try {
+        const { data, error } = await db()
+          .from("ed_clientes")
+          .select("logo_url")
+          .eq("id", usuario.clienteId)
+          .maybeSingle();
+        if (error) return null;
+        return ((data?.logo_url as string | null) ?? "").trim() || null;
+      } catch {
+        return null;
+      }
+    })(),
   ]);
 
   const vigentes = fichas.filter((f) => f.vigente).length;
