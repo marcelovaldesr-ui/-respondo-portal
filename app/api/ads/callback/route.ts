@@ -85,9 +85,16 @@ export async function GET(request: NextRequest) {
           cliente_id: clienteId,
           proveedor: "meta",
           token_cifrado: cifrar(token.datos, "ads-token"),
-          // Meta entrega tokens largos de ~60 días. Se guarda el vencimiento
-          // para poder avisar ANTES de que se corte, no después.
-          token_vence: new Date(Date.now() + 55 * 86_400_000).toISOString(),
+          /**
+           * `token_vence` va NULO a propósito. El ajuste de Meta está creado
+           * como usuario del sistema **sin caducidad**, así que no hay fecha
+           * que guardar. Poner 60 días «por si acaso» haría que el checklist
+           * avisara de un vencimiento que no existe — y un aviso falso enseña
+           * a ignorar los avisos verdaderos. Si el token muere por otra razón
+           * (lo revocan, cambian la clave), Meta responde 190 y eso ya se
+           * traduce a «Reconectar».
+           */
+          token_vence: null,
           // Con una sola cuenta no hay nada que elegir: se deja lista.
           ...(elegida
             ? {

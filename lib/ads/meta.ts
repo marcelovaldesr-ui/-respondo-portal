@@ -59,9 +59,21 @@ export type ConexionAds = {
   ultimoError: string | null;
 };
 
-/** ¿Está habilitada la conexión con Meta en esta instalación? */
+/**
+ * ¿Está habilitada la conexión con Meta en esta instalación?
+ *
+ * Las TRES variables son obligatorias, incluido el ajuste. Sin `CONFIG_ID` el
+ * diálogo de Meta abre igual —no da error— pero solo pide el nombre y la foto
+ * de perfil: el token vuelve sin acceso a ninguna cuenta publicitaria y la
+ * pantalla diría «conectado» sin poder leer un peso de gasto. Verificado a mano
+ * el 10-sep-2026 contra la app real.
+ */
 export function metaAdsConfigurado(): boolean {
-  return Boolean(process.env.META_ADS_APP_ID && process.env.META_ADS_APP_SECRET);
+  return Boolean(
+    process.env.META_ADS_APP_ID &&
+      process.env.META_ADS_APP_SECRET &&
+      process.env.META_ADS_CONFIG_ID,
+  );
 }
 
 /**
@@ -299,6 +311,16 @@ export const proveedorMeta: ProveedorAds & {
  * capacidad que decidimos no construir.
  * ─────────────────────────────────────────────────────────────────────────── */
 
+/**
+ * ⚠️ LOS PERMISOS NO VIAJAN EN LA URL. Viven en el «ajuste» (configuration) de
+ * Inicio de sesión con Facebook para empresas, y la URL solo lo referencia por
+ * su `config_id`. Esta constante queda como DOCUMENTACIÓN de qué pide ese
+ * ajuste; cambiarla acá no cambia nada en Meta.
+ *
+ * El ajuste de Respondo pide `ads_read` + `business_management` sobre el activo
+ * «cuentas publicitarias» con el permiso de tarea **ANALYZE** (acceder a
+ * informes y ver anuncios). No MANAGE, que es el que Meta pone por defecto.
+ */
 export const SCOPES_ADS = ["ads_read", "business_management"];
 
 const URL_PORTAL = (process.env.NEXT_PUBLIC_URL_PORTAL || "").replace(/\/$/, "");
@@ -312,17 +334,35 @@ export const REDIRECT_URI_ADS = `${URL_PORTAL}/api/ads/callback`;
  * CSRF, y la firma es lo que lo cierra.
  */
 export function urlAutorizacionAds(estadoFirmado: string): string {
+  /**
+   * ⚠️ VA `config_id`, NO `scope`. Este es el detalle que costó una prueba a
+   * mano: con `scope=ads_read,business_management` el diálogo de Meta **abre
+   * sin error** y muestra «Respondo Ads recibirá tu nombre y foto de perfil».
+   * No falla: simplemente ignora los permisos y devuelve un token inútil. Con
+   * `config_id` aparece la pantalla correcta —elegir portafolio y cuenta
+   * publicitaria— que es la que hace falta.
+   *
+   * Un fallo que no da error es peor que uno que sí: la conexión quedaría
+   * guardada, la pantalla diría «conectada» y el gasto nunca aparecería.
+   */
   const p = new URLSearchParams({
     client_id: process.env.META_ADS_APP_ID ?? "",
+    config_id: process.env.META_ADS_CONFIG_ID ?? "",
     redirect_uri: REDIRECT_URI_ADS,
     state: estadoFirmado,
-    scope: SCOPES_ADS.join(","),
     response_type: "code",
   });
   return `https://www.facebook.com/v21.0/dialog/oauth?${p}`;
 }
 
-/** Cambia el `code` del callback por un token de larga duración (60 días). */
+/**
+ * Cambia el `code` del callback por el token.
+ *
+ * El ajuste está configurado como **usuario del sistema, sin caducidad**: el
+ * token que vuelve no vence. Es a propósito — un token de 60 días obliga a cada
+ * negocio a reconectar cada dos meses, y entre medio la columna «Invertido» se
+ * apaga sin que nadie se entere hasta que mira.
+ */
 export async function intercambiarCodigoAds(codigo: string): Promise<ResultadoAds<string>> {
   if (!metaAdsConfigurado()) return fallo("no_configurado");
 
