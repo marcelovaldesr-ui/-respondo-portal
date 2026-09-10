@@ -4,8 +4,12 @@ import test from "node:test";
 import {
   armarConversaciones,
   armarPrompt,
+  armarPromptDestilado,
   clavesDelHilo,
+  correccionesEnTexto,
   hiloEnTexto,
+  normalizarHechos,
+  saberEnTexto,
   normalizarRespuesta,
   palabrasClave,
   panoramaEnTexto,
@@ -589,4 +593,113 @@ test("las sugerencias no desbordan la pantalla", () => {
   s.citas = [{ cuando: "hoy", quien: "D", servicio: "s", estado: "agendada" }];
   s.informes = [{ periodo: "p", resumen: [], problemas: ["algo"], oportunidades: [] }];
   assert.equal(sugerenciasSegunSituacion(s).length, 4);
+});
+
+/* ───────────────────────────────────────────────────────────────────────────
+ * Correcciones del dueño y memoria de largo plazo (destilado nocturno)
+ * ─────────────────────────────────────────────────────────────────────────── */
+
+test("las correcciones entran al prompt con prioridad sobre todo lo demás", () => {
+  const p = armarPrompt({
+    negocio: "Impresora Color",
+    rubro: "imprenta",
+    hoy: "hoy",
+    panorama: "14 ventas",
+    correcciones: correccionesEnTexto([
+      { pregunta: "¿cuántas ventas llevo?", respuestaCorrecta: "Las cotizaciones no son ventas." },
+    ]),
+    fichas: "",
+    conversaciones: "",
+    pregunta: "¿cuántas ventas llevo?",
+  });
+
+  assert.match(p, /MANDA por sobre todo lo demás/);
+  assert.match(p, /Las cotizaciones no son ventas/);
+  assert.ok(!p.includes("{{"));
+});
+
+test("sin correcciones el prompt lo dice, no deja el hueco", () => {
+  const p = armarPrompt({
+    negocio: "x", rubro: "y", hoy: "hoy", panorama: "", fichas: "",
+    conversaciones: "", pregunta: "algo",
+  });
+  assert.match(p, /todavía no te ha corregido nada/);
+  assert.match(p, /recién estás conociendo el negocio/);
+});
+
+test("el saber se agrupa por tipo y ordena por cuántas veces se vio", () => {
+  const t = saberEnTexto([
+    { tipo: "piden", clave: "envio regiones", texto: "Preguntan si envían a regiones", veces: 14 },
+    { tipo: "piden", clave: "pendones pvc", texto: "A los lienzos les dicen pendones", veces: 3 },
+    { tipo: "falla", clave: "horario sabado", texto: "No sabe si abren los sábados", veces: 5 },
+  ]);
+
+  assert.ok(t.indexOf("Preguntan si envían") < t.indexOf("A los lienzos"), "más veces va primero");
+  assert.match(t, /observado 14 veces/);
+  assert.match(t, /LO QUE EL ASISTENTE NO SUPO CONTESTAR/);
+});
+
+test("⭐ un hecho visto una sola vez se marca como anécdota, no se disfraza", () => {
+  const t = saberEnTexto([
+    { tipo: "objecion", clave: "precio alto", texto: "Dicen que está caro", veces: 1 },
+  ]);
+  assert.match(t, /visto una sola vez/);
+});
+
+test("sin saber acumulado no se escribe una sección vacía", () => {
+  assert.equal(saberEnTexto([]), "");
+});
+
+test("el destilado descarta lo que ensuciaría la memoria para siempre", () => {
+  const hechos = normalizarHechos(
+    JSON.stringify({
+      hechos: [
+        { tipo: "piden", clave: "envio regiones", texto: "Preguntan si envían a regiones" },
+        { tipo: "inventado", clave: "x y z", texto: "un tipo que no existe" },
+        { tipo: "piden", clave: "ab", texto: "clave demasiado corta para fusionar" },
+        { tipo: "objecion", clave: "precio alto", texto: "corto" },
+        { tipo: "piden", clave: "ENVÍO Regiones!!", texto: "el mismo hecho escrito distinto" },
+      ],
+    }),
+  );
+
+  assert.equal(hechos.length, 1, "solo el primero sobrevive");
+  assert.equal(hechos[0].clave, "envio regiones");
+  assert.equal(hechos[0].veces, 1);
+});
+
+test("la clave se normaliza para que fusione entre noches", () => {
+  const [h] = normalizarHechos(
+    JSON.stringify([{ tipo: "costumbre", clave: "  Entrega  RÁPIDA!! ", texto: "Urgente significa el mismo día" }]),
+  );
+  assert.equal(h.clave, "entrega rapida");
+});
+
+test("basura del modelo no revienta ni escribe nada", () => {
+  assert.deepEqual(normalizarHechos("no soy json"), []);
+  assert.deepEqual(normalizarHechos("{}"), []);
+  assert.deepEqual(normalizarHechos(JSON.stringify({ hechos: "texto" })), []);
+});
+
+test("el destilado no acepta una lista infinita", () => {
+  const muchos = Array.from({ length: 50 }, (_, i) => ({
+    tipo: "piden",
+    clave: `clave numero ${i}`,
+    texto: `un hecho suficientemente largo ${i}`,
+  }));
+  assert.equal(normalizarHechos(JSON.stringify(muchos)).length, 20);
+});
+
+test("el prompt del destilado distingue un hecho durable de un evento", () => {
+  const p = armarPromptDestilado({
+    negocio: "Impresora Color",
+    rubro: "imprenta",
+    dia: "2026-09-10",
+    conversaciones: "--- Ana ---",
+  });
+
+  assert.match(p, /HECHOS DURABLES/);
+  assert.match(p, /eso es un evento, no un hecho/);
+  assert.match(p, /devuelve la lista vacía/, "sin esto inventa patrones con tres mensajes");
+  assert.ok(!p.includes("{{"));
 });

@@ -10,11 +10,15 @@ import {
   hiloEnTexto,
   normalizarRespuesta,
   palabrasClave,
+  correccionesEnTexto,
   panoramaEnTexto,
   rankearChats,
+  saberEnTexto,
   sinAcentos,
   situacionEnTexto,
   validarPregunta,
+  type CorreccionIsabel,
+  type HechoSabido,
   type MensajeIsabel,
   type PanoramaNegocio,
   type RespuestaIsabel,
@@ -474,6 +478,84 @@ export async function historialDeConsultas(
 }
 
 /**
+ * Las correcciones activas del dueño.
+ *
+ * Van primero en el prompt y con la instrucción de que ganan sobre todo lo
+ * demás. Es lo mismo que hacen las `ed_correcciones` con Tino: lo que una
+ * persona del negocio corrigió a mano vale más que cualquier inferencia.
+ */
+export async function correccionesDeIsabel(clienteId: string): Promise<CorreccionIsabel[]> {
+  try {
+    const { data, error } = await db()
+      .from("ed_isabel_correcciones")
+      .select("pregunta, respuesta_correcta")
+      .eq("cliente_id", clienteId)
+      .eq("activa", true)
+      .order("creado_en", { ascending: false })
+      .limit(20);
+    if (error || !data) return [];
+    return data.map((f) => ({
+      pregunta: String(f.pregunta ?? ""),
+      respuestaCorrecta: String(f.respuesta_correcta ?? ""),
+    }));
+  } catch {
+    // Sin la migración 300 no se la puede corregir; responde igual.
+    return [];
+  }
+}
+
+/** Igual que `correccionesDeIsabel`, pero con id: es lo que la pantalla muestra. */
+export async function listarCorrecciones(
+  clienteId: string,
+): Promise<{ id: string; pregunta: string; respuestaCorrecta: string }[]> {
+  try {
+    const { data, error } = await db()
+      .from("ed_isabel_correcciones")
+      .select("id, pregunta, respuesta_correcta")
+      .eq("cliente_id", clienteId)
+      .eq("activa", true)
+      .order("creado_en", { ascending: false })
+      .limit(20);
+    if (error || !data) return [];
+    return data.map((f) => ({
+      id: f.id as string,
+      pregunta: String(f.pregunta ?? ""),
+      respuestaCorrecta: String(f.respuesta_correcta ?? ""),
+    }));
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * La memoria de largo plazo: los hechos durables que el destilado nocturno fue
+ * acumulando. Se piden los más observados, que son los que describen al negocio
+ * y no a un día suelto.
+ */
+export async function saberDelNegocio(clienteId: string, limite = 40): Promise<HechoSabido[]> {
+  try {
+    const { data, error } = await db()
+      .from("ed_isabel_saber")
+      .select("tipo, clave, texto, veces")
+      .eq("cliente_id", clienteId)
+      .eq("activo", true)
+      .order("veces", { ascending: false })
+      .order("ultima_vez", { ascending: false })
+      .limit(limite);
+    if (error || !data) return [];
+    return data.map((f) => ({
+      tipo: f.tipo as HechoSabido["tipo"],
+      clave: String(f.clave ?? ""),
+      texto: String(f.texto ?? ""),
+      veces: Number(f.veces) || 1,
+    }));
+  } catch {
+    // Sin la migración 301 Isabel no tiene memoria acumulada. Funciona igual.
+    return [];
+  }
+}
+
+/**
  * ⭐ LO QUE ISABEL NO SUPO RESPONDER.
  *
  * Cada «con lo que tengo cargado no puedo saberlo» es un hueco en la
@@ -531,7 +613,8 @@ export async function preguntarAIsabel(
     .maybeSingle();
   if (!cliente) return { ok: false, motivo: "No se pudo identificar el negocio." };
 
-  const [panorama, situacion, historial, fichas, fichasContacto] = await Promise.all([
+  const [panorama, situacion, historial, fichas, fichasContacto, correcciones, saber] =
+    await Promise.all([
     panoramaDelNegocio(clienteId),
     /**
      * Lo que el portal YA interpretó: el informe semanal, las derivaciones
@@ -548,6 +631,8 @@ export async function preguntarAIsabel(
      * sentido calcularla acá.
      */
     fichasDeContactosNombrados(clienteId, pregunta).catch(() => []),
+    correccionesDeIsabel(clienteId),
+    saberDelNegocio(clienteId),
   ]);
 
   const fichasTexto = fichas
@@ -563,6 +648,8 @@ export async function preguntarAIsabel(
     panorama: panoramaEnTexto(panorama),
     situacion: situacionEnTexto({ ...situacion, contactos: fichasContacto }),
     hilo: hiloEnTexto(hilo),
+    correcciones: correccionesEnTexto(correcciones),
+    saber: saberEnTexto(saber),
     fichas: fichasTexto,
     conversaciones: armarConversaciones(historial.mensajes),
     pregunta,

@@ -466,6 +466,162 @@ export function clavesDelHilo(turnos: TurnoIsabel[]): string[] {
   return palabrasClave(previa, 3);
 }
 
+/* ────────────────────────────────────────────────────────────────────────────
+ * CORRECCIONES Y MEMORIA DE LARGO PLAZO
+ * ──────────────────────────────────────────────────────────────────────────── */
+
+/** Lo que el dueño ya le corrigió. Manda por sobre cualquier otra fuente. */
+export type CorreccionIsabel = { pregunta: string; respuestaCorrecta: string };
+
+export function correccionesEnTexto(cs: CorreccionIsabel[]): string {
+  if (!cs.length) return "";
+  return cs
+    .slice(0, 20)
+    .map(
+      (c) =>
+        `· Cuando te preguntan «${String(c.pregunta).replace(/\s+/g, " ").trim().slice(0, 160)}» → ${String(c.respuestaCorrecta).replace(/\s+/g, " ").trim().slice(0, 400)}`,
+    )
+    .join("\n");
+}
+
+/**
+ * Un hecho durable observado en las conversaciones. `veces` es lo que separa
+ * una anécdota de un patrón, y por eso viaja hasta el prompt: el modelo tiene
+ * que poder decir «esto pasa siempre» o «pasó una vez» con fundamento.
+ */
+export type HechoSabido = {
+  tipo: "piden" | "objecion" | "falla" | "precio" | "costumbre";
+  clave: string;
+  texto: string;
+  veces: number;
+};
+
+export const TIPOS_SABER = ["piden", "objecion", "falla", "precio", "costumbre"] as const;
+
+const ROTULO_SABER: Record<HechoSabido["tipo"], string> = {
+  piden: "LO QUE LA GENTE PIDE (y cómo lo llama)",
+  objecion: "LO QUE FRENA LA COMPRA",
+  falla: "LO QUE EL ASISTENTE NO SUPO CONTESTAR",
+  precio: "PRECIOS QUE SE DIJERON EN CONVERSACIONES",
+  costumbre: "CÓMO OPERA ESTE NEGOCIO EN LA PRÁCTICA",
+};
+
+/**
+ * El saber acumulado, agrupado por tipo y ordenado por cuántas veces se
+ * observó. Los hechos vistos UNA sola vez se marcan como tales en vez de
+ * omitirse: a veces la anécdota es justo lo que el dueño está buscando, pero
+ * tiene que quedar claro que es una.
+ */
+export function saberEnTexto(hechos: HechoSabido[]): string {
+  if (!hechos.length) return "";
+  const partes: string[] = [];
+
+  for (const tipo of TIPOS_SABER) {
+    const delTipo = hechos
+      .filter((h) => h.tipo === tipo)
+      .sort((a, b) => b.veces - a.veces)
+      .slice(0, 8);
+    if (!delTipo.length) continue;
+    partes.push(
+      `${ROTULO_SABER[tipo]}:\n` +
+        delTipo
+          .map(
+            (h) =>
+              `· ${h.texto}${h.veces > 1 ? ` (observado ${h.veces} veces)` : " (visto una sola vez)"}`,
+          )
+          .join("\n"),
+    );
+  }
+
+  return partes.join("\n\n");
+}
+
+/**
+ * Normaliza lo que devuelve el modelo en el destilado nocturno.
+ *
+ * Es la puerta de entrada a una tabla que se acumula para siempre, así que es
+ * estricta a propósito: un tipo inventado, una clave vacía o un texto de dos
+ * caracteres entran una vez y se quedan años. Lo que no calza se descarta en
+ * silencio — perder un hecho dudoso cuesta menos que ensuciar la memoria.
+ */
+export function normalizarHechos(crudo: string): HechoSabido[] {
+  let p: unknown;
+  try {
+    p = JSON.parse(crudo);
+  } catch {
+    return [];
+  }
+  const lista = Array.isArray(p) ? p : (p as { hechos?: unknown })?.hechos;
+  if (!Array.isArray(lista)) return [];
+
+  const vistos = new Set<string>();
+  const fuera: HechoSabido[] = [];
+
+  for (const bruto of lista) {
+    if (!bruto || typeof bruto !== "object") continue;
+    const h = bruto as Record<string, unknown>;
+
+    const tipo = String(h.tipo ?? "").trim().toLowerCase() as HechoSabido["tipo"];
+    if (!TIPOS_SABER.includes(tipo)) continue;
+
+    // La clave es la llave de fusión: sin acentos y sin espacios de sobra, o el
+    // mismo hecho se duplicaría por escribirse distinto una noche.
+    const clave = sinAcentos(String(h.clave ?? ""))
+      .replace(/[^a-z0-9ñ ]/g, " ")
+      .replace(/\s+/g, " ")
+      .trim()
+      .slice(0, 60);
+    if (clave.length < 3) continue;
+
+    const texto = String(h.texto ?? "").replace(/\s+/g, " ").trim().slice(0, 300);
+    if (texto.length < 10) continue;
+
+    const id = `${tipo}|${clave}`;
+    if (vistos.has(id)) continue;
+    vistos.add(id);
+
+    fuera.push({ tipo, clave, texto, veces: 1 });
+    if (fuera.length >= 20) break;
+  }
+
+  return fuera;
+}
+
+const PROMPT_DESTILADO = `Eres quien le arma la memoria a Isabel, la asistente interna de {{negocio}} ({{rubro}}).
+
+Abajo van las conversaciones REALES de un día entre este negocio y sus clientes. Tu trabajo NO es resumir el día: es sacar los HECHOS DURABLES que van a seguir siendo ciertos dentro de tres meses.
+
+QUÉ ES UN HECHO DURABLE
+SÍ: «la gente llama "pendones" a los lienzos de PVC» · «casi todos preguntan si hacen envío a regiones» · «el precio que más se cotiza para 500 flyers es $30.000» · «cuando piden urgente, es para el mismo día» · «el asistente no sabe si trabajan los sábados».
+NO: «Ana pidió 500 flyers el martes» (eso es un evento, no un hecho) · «hubo 12 conversaciones» (eso es una cifra) · «el cliente quedó contento» (eso pasa y se va).
+
+REGLAS
+1. Si el día no da para ningún hecho durable, devuelve la lista vacía. Inventar un patrón donde hubo tres mensajes ensucia la memoria para siempre.
+2. La "clave" es una etiqueta corta (2 a 4 palabras, minúsculas, sin acentos) que se va a usar para reconocer el MISMO hecho en otras noches. Elígela pensando en eso: "envio regiones", no "consulta sobre si envian a regiones".
+3. El "texto" va en las palabras que usa la gente del negocio, no en lenguaje de informe.
+4. Máximo 8 hechos. Prefiere pocos y sólidos.
+
+NEGOCIO: {{negocio}} ({{rubro}})
+DÍA: {{dia}}
+
+CONVERSACIONES:
+{{conversaciones}}
+
+Responde SOLO con este JSON, sin texto alrededor:
+{"hechos": [{"tipo": "piden|objecion|falla|precio|costumbre", "clave": "etiqueta corta sin acentos", "texto": "el hecho en una frase"}]}`;
+
+export function armarPromptDestilado(e: {
+  negocio: string;
+  rubro: string;
+  dia: string;
+  conversaciones: string;
+}): string {
+  return PROMPT_DESTILADO.replace(/\{\{negocio\}\}/g, e.negocio || "el negocio")
+    .replace(/\{\{rubro\}\}/g, e.rubro || "sin rubro definido")
+    .replace("{{dia}}", e.dia)
+    .replace("{{conversaciones}}", e.conversaciones);
+}
+
 export type RespuestaIsabel = {
   respuesta: string;
   /** Hechos concretos en los que se apoya. Vacío si no se apoyó en nada. */
@@ -510,6 +666,12 @@ viejo sin pagar, un cliente molesto— dilo aunque no te lo hayan preguntado. Y 
 pregunta es vaga, no pidas que te la aclaren: elige lo más importante que ves y parte por
 ahí.
 
+⚠️ LO QUE EL DUEÑO YA TE CORRIGIÓ (esto MANDA por sobre todo lo demás, incluidas las cifras y las conversaciones. Si algo de abajo lo contradice, gana esto y no lo discutes):
+{{correcciones}}
+
+LO QUE YA SABES DE ESTE NEGOCIO (destilado de meses de conversaciones; «observado N veces» es cuántas noches distintas volvió a aparecer, así que un 1 es una anécdota y un 12 es un patrón):
+{{saber}}
+
 DE QUÉ VENÍAN HABLANDO (lo último que se dijeron; si la pregunta se apoya en esto, úsalo):
 {{hilo}}
 
@@ -552,6 +714,10 @@ export function armarPrompt(e: {
   situacion?: string;
   /** Los últimos turnos de la conversación con Isabel. Ver `hiloEnTexto`. */
   hilo?: string;
+  /** Correcciones del dueño. Ganan por sobre cualquier dato. */
+  correcciones?: string;
+  /** Memoria de largo plazo destilada de las conversaciones. */
+  saber?: string;
   fichas: string;
   conversaciones: string;
   pregunta: string;
@@ -562,6 +728,8 @@ export function armarPrompt(e: {
     .replace("{{panorama}}", e.panorama || "sin datos")
     .replace("{{situacion}}", e.situacion || "(sin novedades: nada pendiente ni detectado)")
     .replace("{{hilo}}", e.hilo || "(es la primera pregunta de esta conversación)")
+    .replace("{{correcciones}}", e.correcciones || "(todavía no te ha corregido nada)")
+    .replace("{{saber}}", e.saber || "(todavía no has destilado nada; recién estás conociendo el negocio)")
     .replace("{{fichas}}", e.fichas || "(no hay fichas cargadas)")
     .replace("{{conversaciones}}", e.conversaciones || "(no se encontraron conversaciones relacionadas)")
     .replace("{{pregunta}}", e.pregunta);

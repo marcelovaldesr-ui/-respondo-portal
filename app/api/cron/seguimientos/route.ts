@@ -17,6 +17,7 @@ import { reconciliarEstados } from "@/lib/reconciliarEstados";
 import { detectarCierres } from "@/lib/cierreVentas";
 import { archivarPendientes } from "@/lib/archivarMedia";
 import { generarSeguimientosCotizacion } from "@/lib/generadorCotizacion";
+import { destilarPendientes } from "@/lib/isabelDestilado";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -149,6 +150,30 @@ export async function GET(request: NextRequest) {
   } catch (e) {
     console.error("[cron] informe semanal falló (no afecta los seguimientos)", e);
     informes = { generados: 0, detalle: ["error"] };
+  }
+
+  /**
+   * EL DESTILADO NOCTURNO DE ISABEL — su memoria de largo plazo.
+   *
+   * Convierte las conversaciones de ayer en hechos durables (cómo llama la
+   * gente a los productos, qué objeción se repite, qué no supo contestar el
+   * asistente) y los acumula en ed_isabel_saber. Sin esto, Isabel relee
+   * mensajes crudos en cada pregunta y no SABE nada del negocio.
+   *
+   * Se engancha acá y no en un cron nuevo, por lo mismo que el informe semanal:
+   * un solo disparador externo que mantener. Corre solo de madrugada; el resto
+   * del día retorna al instante.
+   *
+   * Va en su propio try y después de todo lo que envía mensajes: llama al
+   * modelo, puede demorar, y jamás debe impedir que salga un recordatorio de
+   * cita que un cliente está esperando a una hora concreta.
+   */
+  let destilado = { destilados: 0, detalle: ["no_ejecutado"] as string[] };
+  try {
+    destilado = await destilarPendientes({ fechaLimite: inicioCron + 50_000 });
+  } catch (e) {
+    console.error("[cron] destilado de Isabel falló (no afecta los seguimientos)", e);
+    destilado = { destilados: 0, detalle: ["error"] };
   }
 
   /**
@@ -340,5 +365,7 @@ export async function GET(request: NextRequest) {
     adjuntos,
     // El detalle nombra clientes y chats: va el conteo, no las líneas.
     cotizaciones,
+    // Solo el conteo: el detalle del destilado nombra clientes.
+    destilado: destilado.destilados,
   });
 }

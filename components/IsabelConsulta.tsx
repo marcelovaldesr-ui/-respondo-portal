@@ -1,7 +1,7 @@
 "use client";
 
 import { useRef, useState, useTransition } from "react";
-import { preguntar } from "@/app/(portal)/isabel/acciones";
+import { corregir, olvidarCorreccion, preguntar } from "@/app/(portal)/isabel/acciones";
 import { MAX_PREGUNTA, SUGERENCIAS, type RespuestaIsabel } from "@/lib/isabelCore";
 
 type Turno = { pregunta: string; respuesta: RespuestaIsabel };
@@ -164,6 +164,95 @@ export default function IsabelConsulta({
   );
 }
 
+/**
+ * CORREGIR UNA RESPUESTA.
+ *
+ * Va pegado a la respuesta equivocada y no en una pantalla de configuración,
+ * porque el momento en que alguien sabe que Isabel se equivocó es el segundo
+ * en que lee la respuesta. Si hay que ir a buscar dónde corregirla, no se
+ * corrige nunca y se deja de preguntar.
+ */
+function Corregir({ pregunta }: { pregunta: string }) {
+  const [abierto, setAbierto] = useState(false);
+  const [texto, setTexto] = useState("");
+  const [estado, setEstado] = useState<"" | "guardado" | string>("");
+  const [pendiente, iniciar] = useTransition();
+
+  if (estado === "guardado") {
+    return (
+      <p className="mt-3" style={{ fontSize: "var(--t-micro)", color: "var(--muted-2)" }}>
+        Anotado. Desde la próxima pregunta lo tengo presente.
+      </p>
+    );
+  }
+
+  if (!abierto) {
+    return (
+      <button
+        type="button"
+        onClick={() => setAbierto(true)}
+        className="mt-3 font-semibold underline"
+        style={{ fontSize: "var(--t-micro)", color: "var(--muted-2)" }}
+      >
+        No es así
+      </button>
+    );
+  }
+
+  return (
+    <div className="mt-3">
+      <textarea
+        rows={2}
+        autoFocus
+        value={texto}
+        maxLength={600}
+        disabled={pendiente}
+        onChange={(e) => setTexto(e.target.value)}
+        placeholder="¿Cómo era en realidad? Lo voy a tener presente de aquí en adelante."
+        className="w-full resize-y px-3 py-2"
+        style={{
+          borderRadius: "var(--r-input)",
+          border: "1px solid var(--nav-borde)",
+          fontSize: "var(--t-menor)",
+          background: "#fff",
+        }}
+      />
+      <div className="mt-2 flex flex-wrap items-center gap-2">
+        <button
+          type="button"
+          disabled={pendiente || texto.trim().length < 5}
+          className="font-semibold underline"
+          style={{ fontSize: "var(--t-menor)", color: "var(--indigo)" }}
+          onClick={() =>
+            iniciar(async () => {
+              const fd = new FormData();
+              fd.set("pregunta", pregunta);
+              fd.set("correcta", texto);
+              const r = await corregir(fd);
+              setEstado(r.ok ? "guardado" : (r.motivo ?? "No se pudo guardar."));
+            })
+          }
+        >
+          {pendiente ? "Guardando…" : "Guardar la corrección"}
+        </button>
+        <button
+          type="button"
+          className="font-semibold"
+          style={{ fontSize: "var(--t-menor)", color: "var(--muted-2)" }}
+          onClick={() => setAbierto(false)}
+        >
+          Cancelar
+        </button>
+      </div>
+      {estado && estado !== "guardado" && (
+        <p className="mt-2 font-semibold" style={{ fontSize: "var(--t-micro)", color: "var(--alerta)" }}>
+          {estado}
+        </p>
+      )}
+    </div>
+  );
+}
+
 function Respuesta({ turno, nueva }: { turno: Turno; nueva: boolean }) {
   const { respuesta } = turno;
 
@@ -212,6 +301,46 @@ function Respuesta({ turno, nueva }: { turno: Turno; nueva: boolean }) {
           esto debería saberlo, probablemente falte una ficha en Información.
         </p>
       )}
+
+      <Corregir pregunta={turno.pregunta} />
     </div>
+  );
+}
+
+
+/**
+ * Quitar una corrección.
+ *
+ * Existe por una razón de fondo: una corrección que no se puede deshacer es una
+ * mina. Si el dueño le enseña algo equivocado —o algo que dejó de ser cierto—
+ * y no puede sacarlo, Isabel va a responder mal para siempre y él va a pensar
+ * que se estropeó sola.
+ */
+export function OlvidarCorreccion({ id }: { id: string }) {
+  const [pendiente, iniciar] = useTransition();
+  const [error, setError] = useState<string | null>(null);
+
+  return (
+    <>
+      <button
+        type="button"
+        disabled={pendiente}
+        className="shrink-0 font-semibold underline"
+        style={{ fontSize: "var(--t-micro)", color: "var(--muted-2)" }}
+        onClick={() =>
+          iniciar(async () => {
+            const fd = new FormData();
+            fd.set("id", id);
+            const r = await olvidarCorreccion(fd);
+            if (!r.ok) setError(r.motivo ?? "No se pudo quitar.");
+          })
+        }
+      >
+        {pendiente ? "Quitando…" : "Quitar"}
+      </button>
+      {error && (
+        <span style={{ fontSize: "var(--t-micro)", color: "var(--alerta)" }}>{error}</span>
+      )}
+    </>
   );
 }

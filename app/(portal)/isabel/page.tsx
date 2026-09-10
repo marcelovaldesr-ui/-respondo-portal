@@ -1,9 +1,15 @@
 import { exigirPermisoPortal } from "@/lib/auth";
 import Link from "next/link";
-import { historialDeConsultas, panoramaDelNegocio, preguntasSinRespuesta } from "@/lib/isabel";
+import {
+  historialDeConsultas,
+  listarCorrecciones,
+  panoramaDelNegocio,
+  preguntasSinRespuesta,
+  saberDelNegocio,
+} from "@/lib/isabel";
 import { situacionDelNegocio } from "@/lib/isabelDatos";
 import { sugerenciasSegunSituacion } from "@/lib/isabelCore";
-import IsabelConsulta from "@/components/IsabelConsulta";
+import IsabelConsulta, { OlvidarCorreccion } from "@/components/IsabelConsulta";
 
 export const dynamic = "force-dynamic";
 /**
@@ -16,11 +22,13 @@ export const maxDuration = 60;
 export default async function Isabel() {
   const usuario = await exigirPermisoPortal("preguntar_isabel");
 
-  const [previos, panorama, situacion, sinRespuesta] = await Promise.all([
+  const [previos, panorama, situacion, sinRespuesta, correcciones, saber] = await Promise.all([
     historialDeConsultas(usuario.clienteId),
     panoramaDelNegocio(usuario.clienteId),
     situacionDelNegocio(usuario.clienteId),
     preguntasSinRespuesta(usuario.clienteId),
+    listarCorrecciones(usuario.clienteId),
+    saberDelNegocio(usuario.clienteId, 6),
   ]);
 
   const sugerencias = sugerenciasSegunSituacion(situacion);
@@ -118,6 +126,59 @@ export default async function Isabel() {
           >
             Cargarlo en Información
           </Link>
+        </div>
+      )}
+
+      {/* ⭐ LO QUE APRENDIÓ SOLA. Que se vea es lo que hace que se le crea: sin
+          esto, «Isabel conoce tu negocio» es una promesa; con esto es una lista
+          que el dueño puede leer y contradecir. */}
+      {saber.length > 0 && (
+        <div className="tarjeta mt-6 p-5">
+          <h2 className="h-seccion">Lo que fui aprendiendo de tu negocio</h2>
+          <p className="mt-1 text-[12.5px]" style={{ color: "var(--muted-2)" }}>
+            Sacado de tus propias conversaciones, noche a noche. Lo que aparece más veces es
+            lo que más se repite de verdad.
+          </p>
+          <ul className="mt-3 space-y-2">
+            {saber.map((h, i) => (
+              <li key={i} className="flex gap-2.5 leading-snug" style={{ fontSize: "var(--t-fila)" }}>
+                <span
+                  className="mt-[7px] h-1.5 w-1.5 shrink-0 rounded-full"
+                  style={{ background: "var(--indigo)" }}
+                />
+                <span>
+                  {h.texto}
+                  {h.veces > 1 && (
+                    <span style={{ color: "var(--muted-2)" }}> · {h.veces} veces</span>
+                  )}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {/* Lo que el dueño ya le corrigió. Se muestra para que se pueda revisar y
+          quitar: una corrección que no se puede deshacer es una mina. */}
+      {correcciones.length > 0 && (
+        <div className="tarjeta mt-5 p-5">
+          <h2 className="h-seccion">Lo que ya me corregiste</h2>
+          <p className="mt-1 text-[12.5px]" style={{ color: "var(--muted-2)" }}>
+            Esto pesa más que cualquier dato: si algo lo contradice, hago caso a esto.
+          </p>
+          <ul className="mt-3 space-y-3">
+            {correcciones.map((c) => (
+              <li key={c.id} className="flex items-start gap-3">
+                <div className="min-w-0 flex-1 leading-snug">
+                  <div style={{ fontSize: "var(--t-micro)", color: "var(--muted-2)" }}>
+                    {c.pregunta}
+                  </div>
+                  <div style={{ fontSize: "var(--t-fila)" }}>{c.respuestaCorrecta}</div>
+                </div>
+                <OlvidarCorreccion id={c.id} />
+              </li>
+            ))}
+          </ul>
         </div>
       )}
 
