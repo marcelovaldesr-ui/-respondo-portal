@@ -3,6 +3,15 @@ import { obtenerUsuarioConPermiso } from "@/lib/auth";
 import { firmarEstado } from "@/lib/cifrado";
 import { metaAdsConfigurado, urlAutorizacionAds } from "@/lib/ads/meta";
 
+/**
+ * ⚠️ `new URL(ruta, base)` LANZA si `base` es undefined. Por eso el respaldo va
+ * acá también y no solo en meta.ts: una variable sin definir tumbaría el
+ * endpoint con un 500 en vez de mandar a la pantalla de login.
+ */
+const PORTAL = (
+  process.env.NEXT_PUBLIC_SITE_URL || "https://respondo-portal.vercel.app"
+).replace(/\/+$/, "");
+
 export const dynamic = "force-dynamic";
 
 /**
@@ -20,14 +29,14 @@ export const dynamic = "force-dynamic";
 export async function GET() {
   const usuario = await obtenerUsuarioConPermiso("gestionar_integraciones");
   if (!usuario) {
-    return NextResponse.redirect(new URL("/login", process.env.NEXT_PUBLIC_URL_PORTAL));
+    return NextResponse.redirect(new URL("/login", PORTAL));
   }
 
   if (!metaAdsConfigurado()) {
     // Estado honesto: la app de Meta todavía no está creada en esta
     // instalación. No se manda a nadie a una pantalla de Meta que va a fallar.
     return NextResponse.redirect(
-      new URL("/pauta/conexion?e=no_configurado", process.env.NEXT_PUBLIC_URL_PORTAL),
+      new URL("/pauta/conexion?e=no_configurado", PORTAL),
     );
   }
 

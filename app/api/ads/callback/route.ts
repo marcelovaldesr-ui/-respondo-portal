@@ -5,7 +5,10 @@ import { intercambiarCodigoAds, metaAdsConfigurado, proveedorMeta } from "@/lib/
 
 export const dynamic = "force-dynamic";
 
-const PORTAL = (process.env.NEXT_PUBLIC_URL_PORTAL || "").replace(/\/$/, "");
+/** Misma convención que googleOAuth/instagramOAuth: variable con respaldo a producción. */
+const PORTAL = (
+  process.env.NEXT_PUBLIC_SITE_URL || "https://respondo-portal.vercel.app"
+).replace(/\/+$/, "");
 
 function volver(motivo: string): NextResponse {
   return NextResponse.redirect(new URL(`/pauta/conexion?e=${motivo}`, PORTAL));

@@ -323,7 +323,20 @@ export const proveedorMeta: ProveedorAds & {
  */
 export const SCOPES_ADS = ["ads_read", "business_management"];
 
-const URL_PORTAL = (process.env.NEXT_PUBLIC_URL_PORTAL || "").replace(/\/$/, "");
+/**
+ * La URL pública del portal.
+ *
+ * ⚠️ MISMA CONVENCIÓN QUE `googleOAuth.ts` E `instagramOAuth.ts`, y no es un
+ * detalle de estilo: `NEXT_PUBLIC_SITE_URL` vale `http://localhost:3000` en
+ * desarrollo, así que el valor por defecto a producción es lo que hace que el
+ * `redirect_uri` salga completo igual. Sin él queda la ruta relativa
+ * «/api/ads/callback» y Meta responde «No se puede cargar la URL: el dominio no
+ * está incluido en los dominios de la aplicación» — que fue exactamente lo que
+ * pasó la primera vez que se probó, el 10-sep-2026.
+ */
+const URL_PORTAL = (
+  process.env.NEXT_PUBLIC_SITE_URL || "https://respondo-portal.vercel.app"
+).replace(/\/+$/, "");
 export const REDIRECT_URI_ADS = `${URL_PORTAL}/api/ads/callback`;
 
 /**
