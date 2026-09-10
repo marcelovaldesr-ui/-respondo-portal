@@ -172,6 +172,177 @@ export function panoramaEnTexto(p: PanoramaNegocio): string {
   ].join("\n");
 }
 
+/* ────────────────────────────────────────────────────────────────────────────
+ * LA SITUACIÓN DEL NEGOCIO — lo que ya está interpretado
+ *
+ * Isabel arrancó leyendo mensajes crudos y un puñado de conteos. El problema no
+ * era la cantidad de texto: era que TODO lo que el portal ya había interpretado
+ * —el informe semanal, por qué se derivó una conversación, qué cierre se
+ * detectó y con qué evidencia, qué cobro quedó pendiente— no le llegaba.
+ *
+ * Estos bloques son baratos (decenas de filas, no miles) y vienen ya
+ * destilados, así que se le pasan SIEMPRE. La alternativa que se pensó primero
+ * —un ruteador que decidiera qué bloques cargar según la pregunta— se descartó
+ * al construirlo: pesan poco, y lo único que agregaba el ruteador era una forma
+ * nueva de que Isabel no viera un dato que sí tenía a mano.
+ * ──────────────────────────────────────────────────────────────────────────── */
+
+export type SituacionNegocio = {
+  /** Informes semanales ya generados (ed_insights). Inteligencia ya pagada. */
+  informes: {
+    periodo: string;
+    resumen: string[];
+    problemas: string[];
+    oportunidades: string[];
+  }[];
+  /** Citas por delante, con nombre y servicio. */
+  citas: { cuando: string; quien: string; servicio: string; estado: string }[];
+  /** Cobros emitidos y sin pagar. */
+  cobrosPendientes: { quien: string; monto: number; concepto: string; dias: number }[];
+  /** Derivaciones abiertas: por qué se derivó y el resumen que dejó el asistente. */
+  esperando: { quien: string; motivo: string; resumen: string; dias: number }[];
+  /** Cierres que detectó el sistema, con la evidencia textual que los sostiene. */
+  cierres: { quien: string; estado: string; evidencia: string; cuando: string }[];
+  /** Resultados del período por tipo, con la plata asociada cuando la hay. */
+  resultados: { tipo: string; total: number; valor: number }[];
+  /** Clientes marcados como molestos. Va aparte: es lo que no puede pasarse por alto. */
+  molestos: { quien: string; cuando: string; nota: string }[];
+};
+
+/** Una situación vacía. Sirve de valor por defecto y para las pruebas. */
+export function situacionVacia(): SituacionNegocio {
+  return {
+    informes: [],
+    citas: [],
+    cobrosPendientes: [],
+    esperando: [],
+    cierres: [],
+    resultados: [],
+    molestos: [],
+  };
+}
+
+const pesos = (n: number) => `$${Math.round(n).toLocaleString("es-CL")}`;
+
+/**
+ * La situación en texto plano.
+ *
+ * Cada bloque se omite ENTERO cuando está vacío, en vez de escribir «Citas:
+ * ninguna». Un encabezado sin contenido invita al modelo a comentar sobre la
+ * nada; que el bloque no exista es información más limpia que un cero.
+ */
+export function situacionEnTexto(s: SituacionNegocio): string {
+  const partes: string[] = [];
+
+  if (s.esperando.length) {
+    partes.push(
+      "DERIVACIONES ABIERTAS (nadie las ha atendido):\n" +
+        s.esperando
+          .map(
+            (e) =>
+              `· ${e.quien} — hace ${e.dias} ${e.dias === 1 ? "día" : "días"}, motivo «${e.motivo}». ${e.resumen}`,
+          )
+          .join("\n"),
+    );
+  }
+
+  if (s.molestos.length) {
+    partes.push(
+      "CLIENTES MARCADOS COMO MOLESTOS:\n" +
+        s.molestos.map((m) => `· ${m.quien} (${m.cuando}) ${m.nota}`.trim()).join("\n"),
+    );
+  }
+
+  if (s.citas.length) {
+    partes.push(
+      "PRÓXIMAS CITAS:\n" +
+        s.citas.map((c) => `· ${c.cuando} — ${c.quien}, ${c.servicio} (${c.estado})`).join("\n"),
+    );
+  }
+
+  if (s.cobrosPendientes.length) {
+    const total = s.cobrosPendientes.reduce((t, c) => t + c.monto, 0);
+    partes.push(
+      `COBROS EMITIDOS SIN PAGAR (${pesos(total)} en total):\n` +
+        s.cobrosPendientes
+          .map(
+            (c) =>
+              `· ${c.quien} — ${pesos(c.monto)} por ${c.concepto}, emitido hace ${c.dias} ${c.dias === 1 ? "día" : "días"}`,
+          )
+          .join("\n"),
+    );
+  }
+
+  if (s.cierres.length) {
+    partes.push(
+      "CIERRES DETECTADOS (con la frase que los sostiene):\n" +
+        s.cierres
+          .map((c) => `· ${c.quien} (${c.cuando}) ${c.estado}: «${c.evidencia}»`)
+          .join("\n"),
+    );
+  }
+
+  if (s.resultados.length) {
+    partes.push(
+      "RESULTADOS DEL PERÍODO:\n" +
+        s.resultados
+          .map((r) => `· ${r.tipo}: ${r.total}${r.valor > 0 ? ` (${pesos(r.valor)})` : ""}`)
+          .join("\n"),
+    );
+  }
+
+  for (const i of s.informes) {
+    const lineas = [
+      `INFORME DE LA SEMANA ${i.periodo} (ya analizado por el sistema):`,
+      ...i.resumen.map((x) => `· ${x}`),
+      ...i.problemas.map((x) => `· problema: ${x}`),
+      ...i.oportunidades.map((x) => `· oportunidad: ${x}`),
+    ];
+    partes.push(lineas.join("\n"));
+  }
+
+  return partes.join("\n\n");
+}
+
+/**
+ * RANKEO DE CONVERSACIONES POR RELEVANCIA.
+ *
+ * Antes se tomaban «los primeros 10 chats que aparecieran» al buscar cada
+ * palabra. Eso premiaba a la palabra que se buscó primero, no a la conversación
+ * que más tiene que ver con la pregunta.
+ *
+ * Ahora manda en cuántos TÉRMINOS distintos aparece el chat: si alguien
+ * pregunta «¿qué pasó con la cotización de los pendones?», la conversación que
+ * habla de cotización Y de pendones vale más que diez que solo dicen
+ * «cotización». A igual cantidad de términos, gana la que apareció más arriba
+ * (las listas vienen ordenadas de más reciente a más antigua).
+ *
+ * @param apariciones una lista de chats por término buscado, ya ordenada.
+ */
+export function rankearChats(apariciones: string[][], tope = 12): string[] {
+  const terminos = new Map<string, number>();
+  const mejorPosicion = new Map<string, number>();
+
+  for (const lista of apariciones) {
+    const vistosEnEsteTermino = new Set<string>();
+    lista.forEach((chat, i) => {
+      if (!chat || vistosEnEsteTermino.has(chat)) return;
+      vistosEnEsteTermino.add(chat);
+      terminos.set(chat, (terminos.get(chat) ?? 0) + 1);
+      const previa = mejorPosicion.get(chat);
+      if (previa === undefined || i < previa) mejorPosicion.set(chat, i);
+    });
+  }
+
+  return [...terminos.keys()]
+    .sort((a, b) => {
+      const dif = (terminos.get(b) ?? 0) - (terminos.get(a) ?? 0);
+      if (dif !== 0) return dif;
+      return (mejorPosicion.get(a) ?? 0) - (mejorPosicion.get(b) ?? 0);
+    })
+    .slice(0, tope);
+}
+
 export type RespuestaIsabel = {
   respuesta: string;
   /** Hechos concretos en los que se apoya. Vacío si no se apoyó en nada. */
@@ -190,6 +361,9 @@ HOY ES: {{hoy}}
 PANORAMA (cifras exactas, ya calculadas: úsalas tal cual, no las recalcules):
 {{panorama}}
 
+LA SITUACIÓN AHORA (esto ya lo analizó el sistema; es tan válido como las conversaciones):
+{{situacion}}
+
 LO QUE EL NEGOCIO TIENE CARGADO:
 {{fichas}}
 
@@ -206,6 +380,8 @@ REGLAS
 4. Si te preguntan por cifras, usa las del PANORAMA. No sumes conversaciones a ojo.
 5. Máximo 6 frases en la respuesta. Si hay que enumerar, que sea en los apoyos.
 6. No repitas la pregunta ni empieces con "según los datos".
+7. LA SITUACIÓN AHORA manda sobre las conversaciones cuando se contradicen: son hechos ya verificados por el sistema (un cobro pagado, una cita agendada, una derivación cerrada), y una conversación puede ser anterior a ese hecho.
+8. Si ves una derivación abierta, un cliente molesto o un cobro viejo sin pagar que tenga que ver con la pregunta, dilo aunque no te lo hayan preguntado. Es lo que el dueño necesitaba saber.
 
 Responde SOLO con este JSON, sin texto alrededor:
 {
@@ -220,6 +396,7 @@ export function armarPrompt(e: {
   rubro: string;
   hoy: string;
   panorama: string;
+  situacion?: string;
   fichas: string;
   conversaciones: string;
   pregunta: string;
@@ -228,6 +405,7 @@ export function armarPrompt(e: {
     .replace("{{rubro}}", e.rubro || "sin rubro definido")
     .replace("{{hoy}}", e.hoy)
     .replace("{{panorama}}", e.panorama || "sin datos")
+    .replace("{{situacion}}", e.situacion || "(sin novedades: nada pendiente ni detectado)")
     .replace("{{fichas}}", e.fichas || "(no hay fichas cargadas)")
     .replace("{{conversaciones}}", e.conversaciones || "(no se encontraron conversaciones relacionadas)")
     .replace("{{pregunta}}", e.pregunta);

@@ -8,7 +8,10 @@ import {
   palabrasClave,
   panoramaEnTexto,
   quien,
+  rankearChats,
   sinAcentos,
+  situacionEnTexto,
+  situacionVacia,
   validarPregunta,
   MAX_PREGUNTA,
 } from "../lib/isabelCore.ts";
@@ -216,4 +219,151 @@ test("la pregunta se valida antes de gastar una llamada al modelo", () => {
   const ok = validarPregunta("  ¿alguien   reclamó? ");
   assert.equal(ok.ok, true);
   assert.equal(ok.texto, "¿alguien reclamó?");
+});
+
+/* ───────────────────────────────────────────────────────────────────────────
+ * Ola A: la situación del negocio y el rankeo de conversaciones
+ * ─────────────────────────────────────────────────────────────────────────── */
+
+test("una situación vacía no escribe encabezados sobre la nada", () => {
+  assert.equal(situacionEnTexto(situacionVacia()), "");
+});
+
+test("los bloques vacíos se omiten enteros, no dicen «ninguno»", () => {
+  const s = situacionVacia();
+  s.citas = [{ cuando: "vie 12 sep, 10:30", quien: "Ana", servicio: "Corte", estado: "agendada" }];
+  const t = situacionEnTexto(s);
+
+  assert.match(t, /PRÓXIMAS CITAS/);
+  assert.ok(!t.includes("COBROS"), "no puede aparecer un bloque sin filas");
+  assert.ok(!t.includes("DERIVACIONES"));
+});
+
+test("las derivaciones abiertas llevan quién, hace cuánto y por qué", () => {
+  const s = situacionVacia();
+  s.esperando = [
+    { quien: "Ana Pérez", motivo: "reclamo", resumen: "Llegó mal impreso el pendón.", dias: 3 },
+    { quien: "…4821", motivo: "precio", resumen: "Pide descuento por volumen.", dias: 1 },
+  ];
+  const t = situacionEnTexto(s);
+
+  assert.match(t, /Ana Pérez — hace 3 días, motivo «reclamo»/);
+  assert.match(t, /hace 1 día,/, "un día en singular");
+  assert.match(t, /Llegó mal impreso/);
+});
+
+test("los cobros pendientes traen el total y el detalle en pesos chilenos", () => {
+  const s = situacionVacia();
+  s.cobrosPendientes = [
+    { quien: "Ana", monto: 45000, concepto: "500 flyers", dias: 9 },
+    { quien: "Luis", monto: 120000, concepto: "Pendón 2x1", dias: 2 },
+  ];
+  const t = situacionEnTexto(s);
+
+  assert.match(t, /\$165\.000 en total/);
+  assert.match(t, /\$45\.000 por 500 flyers/);
+});
+
+test("los cierres detectados van con la frase que los sostiene", () => {
+  const s = situacionVacia();
+  s.cierres = [
+    { quien: "Ana", estado: "pagado", evidencia: "ya transferí el total", cuando: "8 sep" },
+  ];
+  assert.match(situacionEnTexto(s), /Ana \(8 sep\) pagado: «ya transferí el total»/);
+});
+
+test("los resultados muestran la plata solo cuando existe", () => {
+  const s = situacionVacia();
+  s.resultados = [
+    { tipo: "venta_confirmada", total: 14, valor: 890000 },
+    { tipo: "agendamiento", total: 22, valor: 0 },
+  ];
+  const t = situacionEnTexto(s);
+
+  assert.match(t, /venta_confirmada: 14 \(\$890\.000\)/);
+  assert.match(t, /agendamiento: 22$/m, "sin valor no se inventa un $0");
+});
+
+test("los clientes molestos van con nombre y fecha, no como un total", () => {
+  const s = situacionVacia();
+  s.molestos = [{ quien: "Ana", cuando: "8 sep", nota: "" }];
+  const t = situacionEnTexto(s);
+
+  assert.match(t, /CLIENTES MARCADOS COMO MOLESTOS/);
+  assert.match(t, /· Ana \(8 sep\)$/m, "sin nota no queda un espacio colgando");
+});
+
+test("el informe semanal ya analizado entra al contexto", () => {
+  const s = situacionVacia();
+  s.informes = [
+    {
+      periodo: "1 sep al 7 sep",
+      resumen: ["Semana floja en cotizaciones."],
+      problemas: ["Nadie retomó las de más de 3 días."],
+      oportunidades: ["Los pendones se piden mucho y no están en la lista."],
+    },
+  ];
+  const t = situacionEnTexto(s);
+
+  assert.match(t, /INFORME DE LA SEMANA 1 sep al 7 sep/);
+  assert.match(t, /· problema: Nadie retomó/);
+  assert.match(t, /· oportunidad: Los pendones/);
+});
+
+test("la situación entra al prompt y no deja huecos", () => {
+  const p = armarPrompt({
+    negocio: "Impresora Color",
+    rubro: "imprenta",
+    hoy: "jueves 10 de septiembre de 2026",
+    panorama: "41 conversaciones",
+    situacion: "DERIVACIONES ABIERTAS:\n· Ana — hace 3 días",
+    fichas: "",
+    conversaciones: "",
+    pregunta: "¿quién está esperando?",
+  });
+
+  assert.ok(p.includes("Ana — hace 3 días"));
+  assert.ok(!p.includes("{{"));
+});
+
+test("sin situación, el prompt lo dice en vez de dejar el hueco", () => {
+  const p = armarPrompt({
+    negocio: "x",
+    rubro: "y",
+    hoy: "hoy",
+    panorama: "",
+    fichas: "",
+    conversaciones: "",
+    pregunta: "algo",
+  });
+  assert.ok(!p.includes("{{"));
+  assert.match(p, /sin novedades/);
+});
+
+test("⭐ gana la conversación que aparece en MÁS términos, no la que salió primero", () => {
+  // Pregunta: «¿qué pasó con la cotización de los pendones?»
+  const porCotizacion = ["chatA", "chatB", "chatC"];
+  const porPendones = ["chatC"];
+
+  const orden = rankearChats([porCotizacion, porPendones]);
+  assert.equal(orden[0], "chatC", "habla de las dos cosas: es la que importa");
+});
+
+test("a igual cantidad de términos, gana la más reciente", () => {
+  // Las listas vienen ordenadas de más reciente a más antigua.
+  const orden = rankearChats([["nuevo", "viejo"]]);
+  assert.deepEqual(orden, ["nuevo", "viejo"]);
+});
+
+test("un chat repetido dentro del mismo término no suma dos veces", () => {
+  const orden = rankearChats([["a", "a", "a"], ["b"]]);
+  // 'a' aparece en 1 término y 'b' en 1: empata, y desempata la posición.
+  assert.equal(orden.length, 2);
+  assert.equal(orden[0], "a");
+});
+
+test("el rankeo respeta el tope y no revienta con listas vacías", () => {
+  assert.deepEqual(rankearChats([]), []);
+  assert.deepEqual(rankearChats([[], []]), []);
+  assert.equal(rankearChats([["a", "b", "c", "d"]], 2).length, 2);
 });

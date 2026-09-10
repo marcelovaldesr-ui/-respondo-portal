@@ -2,13 +2,16 @@ import { db } from "@/lib/db";
 import { generarJSON } from "@/lib/gemini";
 import { listarFichas } from "@/lib/conocimiento";
 import { inicioDeMesChile, ZONA } from "@/lib/fechas";
+import { situacionDelNegocio } from "@/lib/isabelDatos";
 import {
   armarConversaciones,
   armarPrompt,
   normalizarRespuesta,
   palabrasClave,
   panoramaEnTexto,
+  rankearChats,
   sinAcentos,
+  situacionEnTexto,
   validarPregunta,
   type MensajeIsabel,
   type PanoramaNegocio,
@@ -221,7 +224,7 @@ export async function historialRelevante(
   if (!ids.length) return { mensajes: [], porBusqueda: false };
 
   const claves = palabrasClave(pregunta, 3);
-  const chats = new Set<string>();
+  let chats: string[] = [];
 
   if (claves.length) {
     // Con acentos y sin acentos: `ilike` distingue, y la gente escribe de las
@@ -244,15 +247,23 @@ export async function historialRelevante(
           .limit(40),
       ),
     );
-    for (const r of resultados) {
-      for (const f of r.data ?? []) {
-        if (chats.size >= 10) break;
-        chats.add(f.chat_id as string);
-      }
-    }
+
+    /**
+     * ⭐ RANKEO, no «los primeros que aparezcan».
+     *
+     * Antes se recorrían las listas en orden y se cortaba en diez, lo que
+     * premiaba al término que se buscó primero. Ahora manda en cuántos términos
+     * distintos aparece cada conversación: preguntando «¿qué pasó con la
+     * cotización de los pendones?», la que habla de las dos cosas gana sobre
+     * diez que solo dicen «cotización». Ver rankearChats en isabelCore.
+     */
+    chats = rankearChats(
+      resultados.map((r) => (r.data ?? []).map((f) => f.chat_id as string)),
+      12,
+    );
   }
 
-  const porBusqueda = chats.size > 0;
+  const porBusqueda = chats.length > 0;
 
   let filas: Record<string, unknown>[] = [];
   if (porBusqueda) {
@@ -260,7 +271,7 @@ export async function historialRelevante(
       .from("ed_mensajes")
       .select("chat_id, rol, texto, creado_en")
       .in("empleado_id", ids)
-      .in("chat_id", [...chats])
+      .in("chat_id", chats)
       .order("creado_en", { ascending: false })
       .limit(MAX_MENSAJES_CONTEXTO);
     filas = (data ?? []) as Record<string, unknown>[];
@@ -374,8 +385,15 @@ export async function preguntarAIsabel(
     .maybeSingle();
   if (!cliente) return { ok: false, motivo: "No se pudo identificar el negocio." };
 
-  const [panorama, historial, fichas] = await Promise.all([
+  const [panorama, situacion, historial, fichas] = await Promise.all([
     panoramaDelNegocio(clienteId),
+    /**
+     * Lo que el portal YA interpretó: el informe semanal, las derivaciones
+     * abiertas con su motivo, los cierres con su evidencia, los cobros sin
+     * pagar, quién viene y quién quedó molesto. Es la diferencia entre alguien
+     * que relee el archivo cada vez y alguien que trabaja ahí.
+     */
+    situacionDelNegocio(clienteId),
     historialRelevante(clienteId, pregunta),
     listarFichas(clienteId).catch(() => []),
   ]);
@@ -391,6 +409,7 @@ export async function preguntarAIsabel(
     rubro: (cliente.rubro as string) ?? "",
     hoy: hoyEnChile(),
     panorama: panoramaEnTexto(panorama),
+    situacion: situacionEnTexto(situacion),
     fichas: fichasTexto,
     conversaciones: armarConversaciones(historial.mensajes),
     pregunta,

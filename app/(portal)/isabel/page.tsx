@@ -40,9 +40,11 @@ export default async function Isabel() {
             className="mt-1 max-w-2xl leading-relaxed"
             style={{ fontSize: "var(--t-menor)", color: "var(--muted)" }}
           >
-            Isabel no habla con tus clientes. Trabaja para adentro: revisa lo que tienes cargado
-            y el historial completo de conversaciones para contestarte a ti. Si algo no está,
-            te lo dice en vez de inventarlo.
+            Isabel no habla con tus clientes. Trabaja para adentro: revisa lo que tienes
+            cargado, el historial de conversaciones —lo que escriben ellos y lo que responden
+            ustedes— y todo lo que el portal ya detectó: quién quedó esperando, qué cobro no se
+            pagó, qué cierre se dio por hecho y el informe de la semana. Si algo no está, te lo
+            dice en vez de inventarlo.
           </p>
         </div>
       </div>
