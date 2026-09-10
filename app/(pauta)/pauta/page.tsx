@@ -1,233 +1,291 @@
 import Link from "next/link";
-import { exigirUsuarioPortal } from "@/lib/auth";
-import { cargarPauta } from "@/lib/pauta";
-import { formatearMonto } from "@/lib/pagosCore";
-import type { FilaPauta } from "@/lib/pautaCore";
+import { exigirPermisoPortal } from "@/lib/auth";
+import { cargarPauta } from "@/lib/ads/atribucion";
+import { estadoDePauta } from "@/lib/ads/estado";
+import { hallazgos } from "@/lib/ads/insights";
+import { armarMetricas, type DatosPlataforma } from "@/lib/ads/metricas";
+import { formatearMonto, formatearNumero } from "@/lib/ads/moneda";
+import { proveedorMeta } from "@/lib/ads/meta";
+import { resolverRango } from "@/lib/ads/periodos";
+import Metrica from "@/components/pauta/Metrica";
+import SelectorRango from "@/components/pauta/SelectorRango";
 
 export const dynamic = "force-dynamic";
 
-const PERIODOS = [
-  { dias: 30, label: "30 días" },
-  { dias: 90, label: "90 días" },
-  { dias: 365, label: "Un año" },
-];
-
-/** "18 ago" a partir de un ISO. Vacío si no hay fecha. */
-function dia(iso: string): string {
-  if (!iso) return "";
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return "";
-  return new Intl.DateTimeFormat("es-CL", {
-    timeZone: "America/Santiago",
-    day: "numeric",
-    month: "short",
-  }).format(d);
-}
-
-function Cifra({
-  valor,
-  rotulo,
-  detalle,
-  acento,
-}: {
-  valor: string;
-  rotulo: string;
-  detalle?: string;
-  acento?: boolean;
-}) {
-  return (
-    <div className="tarjeta p-4">
-      <div style={{ fontSize: "var(--t-micro)", color: "var(--muted-2)" }}>{rotulo}</div>
-      <div
-        className="cifra mt-1 font-bold"
-        style={{ fontSize: "26px", color: acento ? "var(--indigo)" : "inherit" }}
-      >
-        {valor}
-      </div>
-      {detalle ? (
-        <div className="mt-0.5" style={{ fontSize: "var(--t-micro)", color: "var(--muted-2)" }}>
-          {detalle}
-        </div>
-      ) : null}
-    </div>
-  );
-}
-
-function Fila({ f }: { f: FilaPauta }) {
-  /**
-   * Un aviso que trae conversaciones y cero ventas no se esconde ni se pinta de
-   * rojo: se marca. El rojo es un juicio y todavía no hay con qué juzgar —
-   * pueden ser tres conversaciones de esta semana.
-   */
-  const sinCerrar = f.conversaciones >= 5 && f.ventas === 0;
-
-  return (
-    <tr style={{ borderTop: "1px solid var(--nav-borde)" }}>
-      <td className="py-3 pr-3 align-top">
-        <div className="font-semibold leading-snug" style={{ fontSize: "var(--t-fila)" }}>
-          {f.url ? (
-            <a href={f.url} target="_blank" rel="noopener noreferrer" className="hover:underline">
-              {f.titular}
-            </a>
-          ) : (
-            f.titular
-          )}
-        </div>
-        <div className="mt-0.5" style={{ fontSize: "var(--t-micro)", color: "var(--muted-2)" }}>
-          {f.anuncioId ? `id ${f.anuncioId.slice(-8)}` : "sin id"}
-          {f.primera ? ` · desde el ${dia(f.primera)}` : ""}
-          {f.conClid > 0 ? ` · ${f.conClid} con clic identificado` : ""}
-        </div>
-        {sinCerrar ? (
-          <div className="mt-1.5" style={{ fontSize: "var(--t-micro)", color: "#9A3412" }}>
-            Trae conversaciones y todavía no cierra ninguna venta.
-          </div>
-        ) : null}
-      </td>
-      <td className="cifra py-3 pr-3 text-right align-top tabular-nums">{f.conversaciones}</td>
-      <td className="cifra py-3 pr-3 text-right align-top tabular-nums">{f.cotizaciones}</td>
-      <td className="cifra py-3 pr-3 text-right align-top tabular-nums">{f.agendadas}</td>
-      <td className="cifra py-3 pr-3 text-right align-top tabular-nums font-semibold">{f.ventas}</td>
-      <td
-        className="cifra py-3 text-right align-top font-bold tabular-nums"
-        style={{ color: f.pagado > 0 ? "var(--indigo)" : "var(--muted-2)" }}
-      >
-        {f.pagado > 0 ? formatearMonto(f.pagado) : "—"}
-      </td>
-    </tr>
-  );
-}
-
-export default async function Pauta({
+/**
+ * RESUMEN — la pantalla que responde «¿vamos bien o mal?» en diez segundos.
+ *
+ * ORDEN DE LECTURA, QUE ES LO QUE MÁS SE PENSÓ ACÁ:
+ *   1. Los hallazgos. Lo que hay que hacer algo al respecto va ARRIBA, antes
+ *      que cualquier cifra. Un panel donde primero hay que interpretar veinte
+ *      números para llegar a la conclusión es un panel que nadie abre dos veces.
+ *   2. Las métricas, en cuatro grupos que van de lo que Meta ya te muestra a lo
+ *      que solo nosotros podemos calcular.
+ *   3. Los anuncios que están trayendo la plata.
+ *
+ * Y cuando no hay nada que mostrar, no se muestra un tablero de ceros: se
+ * muestra qué falta para que haya algo.
+ */
+export default async function ResumenPauta({
   searchParams,
 }: {
-  searchParams: Promise<{ dias?: string }>;
+  searchParams: Promise<{ p?: string }>;
 }) {
-  const params = await searchParams;
-  const usuario = await exigirUsuarioPortal();
-  const pedidos = Number(params.dias);
-  const dias = PERIODOS.some((p) => p.dias === pedidos) ? pedidos : 90;
+  const usuario = await exigirPermisoPortal("generar_insights");
+  const rango = resolverRango((await searchParams).p);
 
-  const pauta = await cargarPauta(usuario.clienteId, dias);
-  const { resumen, estado, filas } = pauta;
+  /**
+   * Las tres consultas van en paralelo y **Meta va aparte**: si la Graph API
+   * está lenta o el token venció, las cifras propias tienen que aparecer igual.
+   * Que una integración externa pueda dejar en blanco una pantalla que no la
+   * necesita es el error que hace que un panel se sienta poco confiable.
+   */
+  const [pauta, estado, rendimiento] = await Promise.all([
+    cargarPauta(usuario.clienteId, rango),
+    estadoDePauta(usuario.clienteId),
+    proveedorMeta.rendimiento(usuario.clienteId, rango),
+  ]);
+
+  const plataforma: DatosPlataforma = rendimiento.ok
+    ? rendimiento.datos.reduce<DatosPlataforma>((acc, r) => {
+        if (!acc) {
+          return {
+            impresiones: r.impresiones,
+            clics: r.clics,
+            gasto: { valor: r.gasto.valor, moneda: r.gasto.moneda },
+          };
+        }
+        acc.impresiones += r.impresiones;
+        acc.clics += r.clics;
+        acc.gasto.valor += r.gasto.valor;
+        return acc;
+      }, null)
+    : null;
+
+  const grupos = armarMetricas({
+    plataforma,
+    propios: pauta.propios,
+    anteriores: pauta.propiosAntes ? { plataforma: null, propios: pauta.propiosAntes } : null,
+  });
+
+  const señales = hallazgos({
+    filas: pauta.filas,
+    resumen: pauta.resumen,
+    propios: pauta.propios,
+    propiosAntes: pauta.propiosAntes,
+    periodo: rango.etiqueta.toLowerCase(),
+  });
+
+  const topAnuncios = pauta.filas.slice(0, 5);
 
   return (
     <main className="px-5 py-6 sm:px-7 lg:px-8">
-      <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
-        <h1 className="h-pagina">De dónde viene cada venta</h1>
-        <span className="sub-titulo">
-          Qué anuncio trajo la conversación, y cuál de esas conversaciones terminó en plata
-        </span>
-      </div>
-
-      {/* Período */}
-      <div className="mt-5 flex flex-wrap gap-2">
-        {PERIODOS.map((p) => {
-          const activo = p.dias === dias;
-          return (
-            <Link
-              key={p.dias}
-              href={`/pauta?dias=${p.dias}`}
-              className="rounded-full px-3.5 py-1.5 text-[12.5px] font-bold"
-              style={
-                activo
-                  ? { background: "var(--indigo)", color: "#fff" }
-                  : { background: "#F1F2F7", color: "var(--muted)" }
-              }
-            >
-              {p.label}
-            </Link>
-          );
-        })}
-      </div>
-
-      {/* Estado de la atribución: qué se puede afirmar hoy y qué no */}
-      <div
-        className="tarjeta mt-5 p-4"
-        style={{
-          borderLeft: `3px solid ${estado.nivel === "listo" ? "var(--indigo)" : "#F59E0B"}`,
-        }}
-      >
-        <div style={{ fontSize: "var(--t-menor)", lineHeight: 1.55 }}>{estado.mensaje}</div>
-      </div>
-
-      {resumen.conversaciones === 0 ? (
-        <div className="tarjeta mt-6 p-8 text-center">
-          <h2 className="h-seccion">Todavía no hay conversaciones desde anuncios</h2>
-          <p
-            className="mx-auto mt-2 max-w-lg text-[14px] leading-relaxed"
-            style={{ color: "var(--muted)" }}
-          >
-            Cuando alguien entre por un aviso de Facebook o Instagram, esta tabla se llena sola:
-            no hay nada que instalar ni configurar. Si ya estás pauteando y esto sigue vacío,
-            revisa que los avisos lleven a WhatsApp y no a un formulario o al perfil.
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <h1 className="h-pagina">De dónde viene cada venta</h1>
+          <p className="sub-pagina">
+            Qué anuncio trajo la conversación, y cuál de esas conversaciones terminó en plata
           </p>
         </div>
+        <SelectorRango rango={rango} base="/pauta" />
+      </div>
+
+      {/* Aviso de la conexión, solo cuando hay algo que decir. */}
+      {!rendimiento.ok && rendimiento.error.codigo !== "sin_conexion" && (
+        <div
+          className="tarjeta mt-5 flex flex-wrap items-center justify-between gap-3 p-4"
+          style={{ borderLeft: "3px solid var(--alerta)" }}
+        >
+          <span style={{ fontSize: "var(--t-menor)" }}>{rendimiento.error.mensaje}</span>
+          {rendimiento.error.href && rendimiento.error.accion && (
+            <Link href={rendimiento.error.href} className="btn-suave">
+              {rendimiento.error.accion}
+            </Link>
+          )}
+        </div>
+      )}
+
+      {!estado.hayAtribucion ? (
+        <PrimeraVez estado={estado} />
       ) : (
         <>
-          <div className="mt-5 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-            <Cifra
-              valor={String(resumen.conversaciones)}
-              rotulo="Conversaciones desde anuncios"
-              detalle={`${resumen.avisos} ${resumen.avisos === 1 ? "aviso" : "avisos"} distintos`}
-            />
-            <Cifra valor={String(resumen.agendadas)} rotulo="Terminaron agendando" />
-            <Cifra
-              valor={String(resumen.ventas)}
-              rotulo="Terminaron en venta"
-              detalle={
-                resumen.porVenta > 0
-                  ? `${resumen.porVenta} conversaciones por venta`
-                  : "todavía ninguna"
-              }
-            />
-            <Cifra
-              valor={formatearMonto(resumen.pagado)}
-              rotulo="Cobrado por Flow"
-              detalle="solo pagos confirmados"
-              acento
-            />
-          </div>
-
-          <div className="tarjeta mt-5 overflow-x-auto p-5">
-            <h2 className="h-seccion">Aviso por aviso</h2>
-            <p className="mt-1 text-[12.5px]" style={{ color: "var(--muted-2)" }}>
-              Últimos {dias} días, contados por la fecha en que entró la conversación
-            </p>
-            <table className="mt-4 w-full min-w-[560px] border-collapse text-left">
-              <thead>
-                <tr style={{ fontSize: "var(--t-columna)", color: "var(--muted-2)" }}>
-                  <th className="pb-2 pr-3 font-semibold uppercase">Anuncio</th>
-                  <th className="pb-2 pr-3 text-right font-semibold uppercase">Conv.</th>
-                  <th className="pb-2 pr-3 text-right font-semibold uppercase">Cotiz.</th>
-                  <th className="pb-2 pr-3 text-right font-semibold uppercase">Agenda</th>
-                  <th className="pb-2 pr-3 text-right font-semibold uppercase">Ventas</th>
-                  <th className="pb-2 text-right font-semibold uppercase">Cobrado</th>
-                </tr>
-              </thead>
-              <tbody>
-                {filas.map((f) => (
-                  <Fila key={f.clave} f={f} />
+          {señales.length > 0 && (
+            <section className="mt-5">
+              <h2 className="eyebrow">Lo que conviene mirar</h2>
+              <div className="mt-2 grid gap-3 lg:grid-cols-2">
+                {señales.map((h) => (
+                  <div
+                    key={h.clave}
+                    className="tarjeta p-4"
+                    style={{
+                      borderLeft: `3px solid ${
+                        h.tono === "alerta"
+                          ? "var(--peligro)"
+                          : h.tono === "oportunidad"
+                            ? "var(--ok)"
+                            : "var(--muted-3)"
+                      }`,
+                    }}
+                  >
+                    <div className="h-seccion">{h.titulo}</div>
+                    <p
+                      className="mt-1.5 leading-relaxed"
+                      style={{ fontSize: "var(--t-menor)", color: "var(--muted)" }}
+                    >
+                      {h.evidencia}
+                    </p>
+                    {h.href && (
+                      <Link
+                        href={h.href}
+                        className="mt-2 inline-block font-semibold underline"
+                        style={{ fontSize: "var(--t-micro)", color: "var(--indigo)" }}
+                      >
+                        Ver el detalle
+                      </Link>
+                    )}
+                  </div>
                 ))}
-              </tbody>
-            </table>
-          </div>
+              </div>
+            </section>
+          )}
+
+          {grupos.map((g) => (
+            <section key={g.clave} className="mt-6">
+              <h2 className="eyebrow">{g.titulo}</h2>
+              <p className="mt-0.5" style={{ fontSize: "var(--t-micro)", color: "var(--muted-2)" }}>
+                {g.descripcion}
+              </p>
+              <div className="mt-2.5 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                {g.metricas.map((m) => (
+                  <Metrica key={m.clave} m={m} monedaNegocio="CLP" />
+                ))}
+              </div>
+            </section>
+          ))}
+
+          {topAnuncios.length > 0 && (
+            <section className="mt-6">
+              <div className="flex flex-wrap items-baseline justify-between gap-2">
+                <h2 className="eyebrow">Los que más trajeron</h2>
+                <Link
+                  href="/pauta/anuncios"
+                  className="font-semibold underline"
+                  style={{ fontSize: "var(--t-micro)", color: "var(--indigo)" }}
+                >
+                  Ver todos
+                </Link>
+              </div>
+              <div className="tarjeta mt-2.5 overflow-x-auto">
+                <table className="tabla min-w-[520px]">
+                  <thead>
+                    <tr>
+                      <th>Anuncio</th>
+                      <th className="text-right">Conversaciones</th>
+                      <th className="text-right">Ventas</th>
+                      <th className="text-right">Cobrado</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {topAnuncios.map((f) => (
+                      <tr key={f.clave}>
+                        <td className="max-w-[280px] truncate font-semibold">{f.titular}</td>
+                        <td className="cifra text-right">{formatearNumero(f.conversaciones)}</td>
+                        <td className="cifra text-right">{formatearNumero(f.ventas)}</td>
+                        <td className="cifra text-right font-semibold">
+                          {f.pagado > 0
+                            ? formatearMonto({ valor: f.pagado, moneda: "CLP" })
+                            : "—"}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </section>
+          )}
         </>
       )}
 
-      {/* Letra chica honesta: lo que esta pantalla NO dice */}
-      <div className="mt-5 space-y-2 px-1" style={{ fontSize: "var(--t-micro)", color: "var(--muted-2)" }}>
-        <p>
-          Se cuentan solo las conversaciones que Meta marcó como venidas de un anuncio de
-          Facebook o Instagram (Click-to-WhatsApp). Quien llega por Google, por el perfil o
-          porque ya te conocía no aparece acá
-          {pauta.sinAnuncio > 0 ? `: en este período fueron ${pauta.sinAnuncio} contactos` : ""}.
-        </p>
-        <p>
-          &quot;Cobrado&quot; es lo que se pagó por el enlace de pago. Una venta cobrada por
-          transferencia o en el mesón no la vemos, así que la columna es un piso, no el total.
-        </p>
-      </div>
+      <p
+        className="mt-8 max-w-3xl leading-relaxed"
+        style={{ fontSize: "var(--t-micro)", color: "var(--muted-2)" }}
+      >
+        Se cuentan las conversaciones que Meta marcó como venidas de un anuncio de Facebook o
+        Instagram. Quien llega por Google, por el perfil o porque ya te conocía no aparece acá
+        {pauta.sinAnuncio > 0 ? `: en este período fueron ${pauta.sinAnuncio} contactos` : ""}. La
+        venta se atribuye al primer anuncio que trajo a esa persona, aunque haya comprado semanas
+        después.
+      </p>
     </main>
+  );
+}
+
+/**
+ * LA PRIMERA VEZ.
+ *
+ * Nadie tiene que encontrarse un tablero de ceros. Si todavía no llegó nadie
+ * por un anuncio, lo único útil que se puede mostrar es en qué pie está la
+ * configuración y qué falta — con la parte importante dicha de entrada: la
+ * atribución no hay que configurarla, llega sola.
+ */
+function PrimeraVez({ estado }: { estado: Awaited<ReturnType<typeof estadoDePauta>> }) {
+  return (
+    <div className="tarjeta mt-6 p-6">
+      <h2 className="h-seccion">Todavía no llegó nadie desde un anuncio</h2>
+      <p
+        className="mt-2 max-w-2xl leading-relaxed"
+        style={{ fontSize: "var(--t-menor)", color: "var(--muted)" }}
+      >
+        Esta pantalla se llena sola: cuando alguien entre a WhatsApp apretando un aviso de Facebook
+        o Instagram, queda registrado de qué anuncio vino y qué pasó después. No hay que instalar
+        ni configurar nada para eso. Si ya estás pauteando y esto sigue vacío, revisa que los
+        avisos lleven a WhatsApp y no a un formulario o al perfil.
+      </p>
+
+      <div className="mt-5">
+        <div className="flex items-center justify-between">
+          <span className="eyebrow">Qué hay listo</span>
+          <span style={{ fontSize: "var(--t-micro)", color: "var(--muted-2)" }}>
+            {estado.listos} de {estado.total}
+          </span>
+        </div>
+        <ul className="mt-2 space-y-2.5">
+          {estado.items.map((i) => (
+            <li key={i.titulo} className="flex gap-2.5">
+              <span
+                aria-hidden="true"
+                className="mt-[6px] h-2 w-2 shrink-0 rounded-full"
+                style={{
+                  background:
+                    i.estado === "ok"
+                      ? "var(--ok)"
+                      : i.estado === "atencion"
+                        ? "var(--alerta)"
+                        : "var(--muted-3)",
+                }}
+              />
+              <div className="min-w-0">
+                <div style={{ fontSize: "var(--t-fila)", fontWeight: 600 }}>{i.titulo}</div>
+                <div
+                  className="leading-snug"
+                  style={{ fontSize: "var(--t-menor)", color: "var(--muted)" }}
+                >
+                  {i.detalle}
+                </div>
+                {i.accion && (
+                  <Link
+                    href={i.accion.href}
+                    className="mt-1 inline-block font-semibold underline"
+                    style={{ fontSize: "var(--t-micro)", color: "var(--indigo)" }}
+                  >
+                    {i.accion.texto}
+                  </Link>
+                )}
+              </div>
+            </li>
+          ))}
+        </ul>
+      </div>
+    </div>
   );
 }

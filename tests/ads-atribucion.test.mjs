@@ -7,7 +7,7 @@ import {
   estadoAtribucion,
   nombreDeAviso,
   resumenPauta,
-} from "../lib/pautaCore.ts";
+} from "../lib/ads/atribucionCore.ts";
 
 /**
  * El informe de pauta es de los que se leen una vez y se creen para siempre: si

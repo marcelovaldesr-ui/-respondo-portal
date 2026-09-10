@@ -430,8 +430,12 @@ export default function Sidebar({
           />
         ))}
         {/* Pauta cierra la fila, después de una separación fina: es otra casa */}
-        <span className="my-1 w-px shrink-0" style={{ background: "var(--nav-borde)" }} />
-        <ItemNav item={ENTRADA_PAUTA} activo={ruta.startsWith(ENTRADA_PAUTA.href)} />
+        {rol === "dueno" && (
+          <>
+            <span className="my-1 w-px shrink-0" style={{ background: "var(--nav-borde)" }} />
+            <ItemNav item={ENTRADA_PAUTA} activo={ruta.startsWith(ENTRADA_PAUTA.href)} />
+          </>
+        )}
       </nav>
 
       {/* Escritorio: los cuatro grupos */}
@@ -469,8 +473,12 @@ export default function Sidebar({
         ))}
       </nav>
 
-      {/* Puerta a Pauta (solo escritorio). Tarjeta, no ítem de menú: se ve
-          como lo que es, una salida hacia otra pantalla completa. */}
+      {/* Puerta a Pauta (solo escritorio, solo dueño). Tarjeta y no ítem de
+          menú: se ve como lo que es, una salida hacia otra pantalla completa.
+          ⚠️ Oculta para staff porque Pauta muestra gasto y ventas, igual que
+          Isabel. Sin esto el botón llevaría a /sin-permiso, que es una forma
+          fea de decir que no. */}
+      {rol === "dueno" && (
       <Link
         href={ENTRADA_PAUTA.href}
         title={plegada ? "Pauta · De dónde viene cada venta" : undefined}
@@ -507,6 +515,7 @@ export default function Sidebar({
           </span>
         )}
       </Link>
+      )}
 
       {/* Pie (solo escritorio) */}
       <div

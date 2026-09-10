@@ -36,7 +36,15 @@ import {
  * se reporta en /api/salud en vez de tratarse como "no configurado".
  */
 
-export type Proposito = "gcal-refresh" | "waba-token" | "ig-token" | "ig-estado";
+export type Proposito =
+  | "gcal-refresh"
+  | "waba-token"
+  | "ig-token"
+  | "ig-estado"
+  /** Token de lectura de la cuenta publicitaria de Meta (Pauta). */
+  | "ads-token"
+  /** `state` firmado del OAuth de Pauta, para que el callback no sea falsificable. */
+  | "ads-estado";
 
 function clave(proposito: Proposito): Buffer {
   const base = process.env.SUPABASE_SERVICE_ROLE_KEY;

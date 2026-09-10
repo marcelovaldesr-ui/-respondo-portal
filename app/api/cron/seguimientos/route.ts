@@ -18,6 +18,7 @@ import { detectarCierres } from "@/lib/cierreVentas";
 import { archivarPendientes } from "@/lib/archivarMedia";
 import { generarSeguimientosCotizacion } from "@/lib/generadorCotizacion";
 import { destilarPendientes } from "@/lib/isabelDestilado";
+import { procesarEventos } from "@/lib/ads/colaEventos";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -150,6 +151,26 @@ export async function GET(request: NextRequest) {
   } catch (e) {
     console.error("[cron] informe semanal falló (no afecta los seguimientos)", e);
     informes = { generados: 0, detalle: ["error"] };
+  }
+
+  /**
+   * CONVERSIONES DE PAUTA — devolverle a Meta lo que pasó después del clic.
+   *
+   * Barre los hechos recientes (un cobro pagado, una cita creada, una
+   * cotización enviada), los encola y manda lo pendiente. Es idempotente: el
+   * identificador del evento se deriva del hecho y la base rechaza duplicados,
+   * así que correrlo cada cinco minutos no manda nada dos veces.
+   *
+   * Retorna al instante si ningún negocio tiene configurado el conjunto de
+   * datos, que es el caso hoy. Va en su propio try y después de los envíos:
+   * hablar con Meta puede demorar y no puede frenar un recordatorio de cita.
+   */
+  let conversiones = { encolados: 0, enviados: 0, detalle: ["no_ejecutado"] as string[] };
+  try {
+    conversiones = await procesarEventos({ fechaLimite: inicioCron + 50_000 });
+  } catch (e) {
+    console.error("[cron] conversiones de Pauta fallaron (no afecta los seguimientos)", e);
+    conversiones = { encolados: 0, enviados: 0, detalle: ["error"] };
   }
 
   /**
@@ -367,5 +388,6 @@ export async function GET(request: NextRequest) {
     cotizaciones,
     // Solo el conteo: el detalle del destilado nombra clientes.
     destilado: destilado.destilados,
+    conversiones: { encolados: conversiones.encolados, enviados: conversiones.enviados },
   });
 }
