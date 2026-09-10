@@ -226,7 +226,34 @@ export async function historialRelevante(
   const claves = palabrasClave(pregunta, 3);
   let chats: string[] = [];
 
-  if (claves.length) {
+  /**
+   * ⭐ PRIMERO, BÚSQUEDA POR RELEVANCIA (migración 299).
+   *
+   * `ed_buscar_mensajes_isabel` usa la búsqueda de texto completo de Postgres
+   * en español: reduce «cotizaciones» y «cotización» a la misma raíz, ordena
+   * por `ts_rank` y va por índice en vez de recorrer la tabla entera.
+   *
+   * Si la migración no está aplicada la llamada falla y NO pasa nada: se sigue
+   * al `ilike` de abajo, que es lo que había antes. Isabel funciona igual, solo
+   * encuentra peor. Misma regla que el resto: una mejora no puede ser un
+   * requisito.
+   */
+  if (pregunta.trim()) {
+    try {
+      const { data, error } = await supa.rpc("ed_buscar_mensajes_isabel", {
+        p_cliente_id: clienteId,
+        p_consulta: pregunta,
+        p_limite: 12,
+      });
+      if (!error && Array.isArray(data)) {
+        chats = (data as { chat_id: string }[]).map((r) => r.chat_id).filter(Boolean);
+      }
+    } catch {
+      // Sin la 299: el camino de abajo.
+    }
+  }
+
+  if (!chats.length && claves.length) {
     // Con acentos y sin acentos: `ilike` distingue, y la gente escribe de las
     // dos formas. Son dos consultas baratas contra una que fallaría.
     const terminos = new Set<string>();

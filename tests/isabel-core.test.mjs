@@ -367,3 +367,20 @@ test("el rankeo respeta el tope y no revienta con listas vacías", () => {
   assert.deepEqual(rankearChats([[], []]), []);
   assert.equal(rankearChats([["a", "b", "c", "d"]], 2).length, 2);
 });
+
+test("el prompt le dice qué hacer con un saludo, para no contestarlo con «no sé»", () => {
+  // Caso real visto en producción el 10-sep: «como estas?» devolvía «con lo que
+  // tengo cargado no puedo saber cómo estoy», con la caja ámbar de «no sé». La
+  // barandilla estaba bien; la que faltaba era la regla para lo que no es una
+  // pregunta del negocio.
+  const p = armarPrompt({
+    negocio: "x",
+    rubro: "y",
+    hoy: "hoy",
+    panorama: "",
+    fichas: "",
+    conversaciones: "",
+    pregunta: "como estas?",
+  });
+  assert.match(p, /Nunca respondas un saludo diciendo que no puedes saberlo/);
+});
