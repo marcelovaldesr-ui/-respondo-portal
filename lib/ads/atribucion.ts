@@ -388,6 +388,11 @@ export type PersonaAtribuida = {
   pagado: number;
   /** ¿Se le puede devolver a Meta como conversión? */
   conClid: boolean;
+  /** Cuándo se registró la venta (pago o resultado), si la hubo. */
+  compradoEn: string | null;
+  /** Última línea de la conversación, para reconocer a la persona en la lista de leads. */
+  ultimoMensaje: string;
+  telefono: string;
 };
 
 /**
@@ -435,7 +440,7 @@ export async function personasDeAnuncios(
       tandas.map((t) =>
         supa
           .from("ed_contactos")
-          .select("chat_id, nombre, etapa")
+          .select("chat_id, nombre, etapa, telefono")
           .eq("cliente_id", clienteId)
           .in("chat_id", t),
       ),
@@ -445,7 +450,7 @@ export async function personasDeAnuncios(
           tandas.map((t) =>
             supa
               .from("ed_resultados")
-              .select("chat_id, tipo")
+              .select("chat_id, tipo, creado_en")
               .in("empleado_id", ids)
               .in("chat_id", t),
           ),
@@ -455,7 +460,7 @@ export async function personasDeAnuncios(
       tandas.map((t) =>
         supa
           .from("ed_pagos")
-          .select("chat_id, monto")
+          .select("chat_id, monto, pagado_en")
           .eq("cliente_id", clienteId)
           .in("chat_id", t)
           .eq("estado", "pagado"),
@@ -463,41 +468,77 @@ export async function personasDeAnuncios(
     ),
   ]);
 
-  const etapa = new Map<string, { nombre: string; etapa: string }>();
+  const etapa = new Map<string, { nombre: string; etapa: string; telefono: string }>();
   for (const r of etapasR) {
     for (const f of r.data ?? []) {
       etapa.set(f.chat_id as string, {
         nombre: ((f.nombre as string | null) ?? "").trim(),
         etapa: (f.etapa as string) ?? "nuevo",
+        telefono: ((f.telefono as string | null) ?? "").trim(),
       });
     }
   }
 
-  const marcas = new Map<string, { cotizo: boolean; agendo: boolean; compro: boolean }>();
+  const marcas = new Map<
+    string,
+    { cotizo: boolean; agendo: boolean; compro: boolean; compradoEn: string | null }
+  >();
   for (const r of resR) {
     for (const f of r.data ?? []) {
       const chat = f.chat_id as string;
-      const m = marcas.get(chat) ?? { cotizo: false, agendo: false, compro: false };
+      const m = marcas.get(chat) ?? { cotizo: false, agendo: false, compro: false, compradoEn: null };
       const t = f.tipo as string;
       if (t === "cotizacion_enviada") m.cotizo = true;
       if (t === "agendamiento") m.agendo = true;
-      if (TIPOS_VENTA.has(t)) m.compro = true;
+      if (TIPOS_VENTA.has(t)) {
+        m.compro = true;
+        m.compradoEn = m.compradoEn ?? ((f.creado_en as string | null) ?? null);
+      }
       marcas.set(chat, m);
     }
   }
 
   const pagado = new Map<string, number>();
+  const pagadoEn = new Map<string, string>();
   for (const r of pagR) {
     for (const f of r.data ?? []) {
       const chat = f.chat_id as string;
       pagado.set(chat, (pagado.get(chat) ?? 0) + (Number(f.monto) || 0));
+      const cuando = (f.pagado_en as string | null) ?? null;
+      if (cuando && !pagadoEn.has(chat)) pagadoEn.set(chat, cuando);
     }
+  }
+
+  /**
+   * La última línea de cada conversación, para que la lista de leads se pueda
+   * leer sin abrir cada chat. Una sola consulta ordenada por fecha; nos
+   * quedamos con la primera aparición de cada chat. Es contexto, no dato: si
+   * falla, la lista sigue sirviendo.
+   */
+  const ultimo = new Map<string, string>();
+  try {
+    if (ids.length) {
+      const r = await supa
+        .from("ed_mensajes")
+        .select("chat_id, texto, creado_en")
+        .in("empleado_id", ids)
+        .in("chat_id", chats.slice(0, 400))
+        .order("creado_en", { ascending: false })
+        .limit(1200);
+      for (const m of r.data ?? []) {
+        const chat = m.chat_id as string;
+        if (!ultimo.has(chat)) ultimo.set(chat, String(m.texto ?? "").slice(0, 140));
+      }
+    }
+  } catch {
+    /* sin última línea */
   }
 
   return filtrados
     .map((c) => {
       const info = etapa.get(c.chatId);
-      const m = marcas.get(c.chatId) ?? { cotizo: false, agendo: false, compro: false };
+      const m = marcas.get(c.chatId) ?? { cotizo: false, agendo: false, compro: false, compradoEn: null };
+      const monto = pagado.get(c.chatId) ?? 0;
       return {
         chatId: c.chatId,
         nombre: info?.nombre || c.nombre || `…${c.chatId.slice(-4)}`,
@@ -507,9 +548,13 @@ export async function personasDeAnuncios(
         etapa: info?.etapa ?? "nuevo",
         cotizo: m.cotizo,
         agendo: m.agendo,
-        compro: m.compro,
-        pagado: pagado.get(c.chatId) ?? 0,
+        // Un cobro pagado por el enlace ES una venta, aunque nadie la marcara.
+        compro: m.compro || monto > 0,
+        pagado: monto,
         conClid: Boolean(c.campana.ctwaClid),
+        compradoEn: pagadoEn.get(c.chatId) ?? m.compradoEn,
+        ultimoMensaje: ultimo.get(c.chatId) ?? "",
+        telefono: info?.telefono || c.chatId,
       };
     })
     // Primero quien dejó plata, después quien avanzó más, después lo reciente.

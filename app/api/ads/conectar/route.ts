@@ -36,7 +36,7 @@ export async function GET() {
     // Estado honesto: la app de Meta todavía no está creada en esta
     // instalación. No se manda a nadie a una pantalla de Meta que va a fallar.
     return NextResponse.redirect(
-      new URL("/pauta/conexion?e=no_configurado", PORTAL),
+      new URL("/marketing/integraciones?e=no_configurado", PORTAL),
     );
   }
 

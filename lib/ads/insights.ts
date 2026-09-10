@@ -76,7 +76,7 @@ export function hallazgos(entrada: {
       }`,
       tono: "alerta",
       prioridad: 100,
-      href: "/pauta/anuncios",
+      href: "/marketing/campanas",
     });
   }
 
@@ -99,7 +99,7 @@ export function hallazgos(entrada: {
         }`,
         tono: "oportunidad",
         prioridad: 80,
-        href: "/pauta/anuncios",
+        href: "/marketing/campanas",
       });
     }
   }
@@ -159,7 +159,7 @@ export function hallazgos(entrada: {
       evidencia: `${sinClid} de ${resumen.conversaciones} no traen el identificador del clic. Meta lo manda solo en el primer mensaje: las conversaciones nuevas sí lo van a traer, las viejas no se recuperan.`,
       tono: "neutro",
       prioridad: 40,
-      href: "/pauta/conexion",
+      href: "/marketing/integraciones",
     });
   }
 
@@ -171,7 +171,7 @@ export function hallazgos(entrada: {
       evidencia: `${propios.agendadas} horas tomadas en ${periodo} y ninguna venta registrada. Puede ser real, o puede que las ventas se estén cobrando por fuera del enlace de pago y no las veamos.`,
       tono: "neutro",
       prioridad: 50,
-      href: "/pauta/personas",
+      href: "/marketing/leads",
     });
   }
 

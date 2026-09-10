@@ -11,7 +11,7 @@ const PORTAL = (
 ).replace(/\/+$/, "");
 
 function volver(motivo: string): NextResponse {
-  return NextResponse.redirect(new URL(`/pauta/conexion?e=${motivo}`, PORTAL));
+  return NextResponse.redirect(new URL(`/marketing/integraciones?e=${motivo}`, PORTAL));
 }
 
 /**
@@ -121,5 +121,5 @@ export async function GET(request: NextRequest) {
     return volver("no_se_guardo");
   }
 
-  return NextResponse.redirect(new URL(`/pauta/conexion?ok=${elegida ? "1" : "elegir"}`, PORTAL));
+  return NextResponse.redirect(new URL(`/marketing/integraciones?ok=${elegida ? "1" : "elegir"}`, PORTAL));
 }

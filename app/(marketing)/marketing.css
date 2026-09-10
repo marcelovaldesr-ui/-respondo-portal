@@ -1,0 +1,588 @@
+/* ===========================================================================
+   CENTRO DE MARKETING — extensiones del sistema visual del portal.
+   ---------------------------------------------------------------------------
+   NO es un segundo sistema de diseño. Usa los mismos tokens, radios, sombras y
+   escala tipográfica de app/globals.css. Lo que agrega son COMPOSICIONES que
+   el portal no tenía porque no las necesitaba: un riel lateral propio, tarjetas
+   de métrica con tendencia, gráficos, un embudo, una galería visual, un
+   asistente por pasos y un cajón lateral. Todo sobrio, todo con los colores de
+   marca, nada de brillos.
+   =========================================================================== */
+
+/* ── Riel lateral de Marketing ──────────────────────────────────────────── */
+.mk-riel {
+  width: 236px;
+  flex-shrink: 0;
+  background: var(--nav-bg);
+  border-right: 1px solid var(--nav-borde);
+  display: flex;
+  flex-direction: column;
+  position: sticky;
+  top: 0;
+  height: 100vh;
+  overflow-y: auto;
+}
+.mk-riel-grupo {
+  font-size: var(--t-columna);
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--nav-grupo);
+  padding: 14px 12px 6px;
+}
+.mk-riel-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 10px;
+  margin: 1px 8px;
+  border-radius: var(--r-input);
+  font-size: var(--t-cuerpo);
+  font-weight: 500;
+  color: var(--nav-texto);
+  border: 1px solid transparent;
+  transition: background 0.12s ease, color 0.12s ease;
+}
+.mk-riel-item:hover {
+  background: var(--nav-hover);
+  color: var(--nav-texto-activo);
+}
+.mk-riel-item[aria-current="page"] {
+  background: var(--nav-activo);
+  color: var(--nav-texto-activo);
+  border-color: var(--borde);
+  box-shadow: var(--sombra);
+  font-weight: 600;
+}
+.mk-riel-item svg {
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+  color: var(--muted-2);
+}
+.mk-riel-item[aria-current="page"] svg {
+  color: var(--indigo);
+}
+
+/* ── Contenido ──────────────────────────────────────────────────────────── */
+.mk-contenido {
+  min-width: 0;
+  flex: 1;
+}
+.mk-pagina {
+  max-width: 1320px;
+  margin: 0 auto;
+  padding: 22px 28px 48px;
+}
+@media (max-width: 1024px) {
+  .mk-riel {
+    display: none;
+  }
+  .mk-pagina {
+    padding: 16px 16px 40px;
+  }
+}
+
+/* Cabecera de pantalla: título, contexto y controles en una sola línea. */
+.mk-cabecera {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 12px 20px;
+  padding-bottom: 16px;
+  border-bottom: 1px solid var(--borde);
+  margin-bottom: 20px;
+}
+.mk-titulo {
+  font-size: 17px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  line-height: 1.25;
+}
+
+/* ── Tarjeta de métrica ────────────────────────────────────────────────── */
+.mk-metricas {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+@media (min-width: 720px) {
+  .mk-metricas {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+}
+@media (min-width: 1180px) {
+  .mk-metricas {
+    grid-template-columns: repeat(7, minmax(0, 1fr));
+  }
+}
+.mk-metrica {
+  position: relative;
+  padding: 11px 13px 9px;
+  min-height: 104px;
+  display: flex;
+  flex-direction: column;
+}
+.mk-metrica-etiqueta {
+  font-size: var(--t-micro);
+  font-weight: 500;
+  color: var(--muted);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+}
+.mk-metrica-fila {
+  margin-top: 4px;
+  height: 18px;
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+.mk-metrica-valor {
+  margin-top: 4px;
+  font-size: 20px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 600;
+  letter-spacing: -0.025em;
+  line-height: 1.1;
+  font-variant-numeric: tabular-nums;
+}
+.mk-metrica-valor.sin-dato {
+  color: var(--muted-3);
+  font-weight: 500;
+}
+.mk-metrica-pie {
+  margin-top: auto;
+  padding-top: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  font-size: var(--t-micro);
+  color: var(--muted-2);
+  min-height: 18px;
+}
+.mk-metrica-chispa {
+  width: 100%;
+  height: 18px;
+  opacity: 0.8;
+}
+
+/* ── Píldora de certeza (medida / derivada / piso / no disponible) ────── */
+.mk-certeza {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  padding: 1px 4px;
+  border-radius: var(--r-chico);
+  background: var(--fondo-hundido);
+  color: var(--muted-2);
+}
+.mk-certeza.parcial {
+  background: var(--alerta-suave);
+  color: var(--alerta);
+}
+.mk-certeza.derivada {
+  background: var(--indigo-suave);
+  color: var(--indigo);
+}
+
+/* ── Tarjetas de sección con cabecera ─────────────────────────────────── */
+.mk-seccion {
+  display: flex;
+  flex-direction: column;
+}
+.mk-seccion-cabecera {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--borde);
+}
+.mk-seccion-cabecera .h-seccion {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.mk-seccion-cuerpo {
+  padding: 14px 16px 16px;
+}
+
+/* ── Control segmentado (períodos, series del gráfico, filtros) ───────── */
+.mk-segmentos {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px;
+  border-radius: var(--r-input);
+  background: var(--fondo-hundido);
+  border: 1px solid var(--borde);
+}
+.mk-segmento {
+  padding: 4px 9px;
+  border-radius: 5px;
+  font-size: var(--t-micro);
+  font-weight: 600;
+  color: var(--muted);
+  white-space: nowrap;
+  transition: background 0.12s ease, color 0.12s ease;
+}
+.mk-segmento:hover {
+  color: var(--tinta);
+}
+.mk-segmento[aria-pressed="true"],
+.mk-segmento[aria-current="page"] {
+  background: var(--superficie);
+  color: var(--tinta);
+  box-shadow: var(--sombra-media);
+}
+
+/* ── Hallazgos ─────────────────────────────────────────────────────────── */
+.mk-hallazgo {
+  padding: 12px 14px;
+  border-left: 3px solid var(--muted-3);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.mk-hallazgo.alerta {
+  border-left-color: var(--coral);
+}
+.mk-hallazgo.oportunidad {
+  border-left-color: var(--ok);
+}
+
+/* ── Embudo ────────────────────────────────────────────────────────────── */
+.mk-embudo {
+  display: grid;
+  gap: 6px;
+}
+.mk-embudo-fila {
+  display: grid;
+  grid-template-columns: 150px 1fr 96px;
+  align-items: center;
+  gap: 12px;
+  font-size: var(--t-menor);
+}
+@media (max-width: 720px) {
+  .mk-embudo-fila {
+    grid-template-columns: 110px 1fr 70px;
+  }
+}
+.mk-embudo-barra {
+  height: 22px;
+  border-radius: 4px;
+  background: var(--fondo-hundido);
+  overflow: hidden;
+  position: relative;
+}
+.mk-embudo-barra > span {
+  display: block;
+  height: 100%;
+  border-radius: 4px;
+  background: var(--indigo);
+  min-width: 2px;
+  transition: width 0.35s ease;
+}
+.mk-embudo-fila.meta .mk-embudo-barra > span {
+  background: var(--indigo-tenue);
+}
+.mk-embudo-fila.venta .mk-embudo-barra > span {
+  background: var(--ok);
+}
+
+/* ── Galería de creatividades ──────────────────────────────────────────── */
+.mk-galeria {
+  display: grid;
+  gap: 14px;
+  grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
+}
+.mk-creatividad {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  transition: box-shadow 0.15s ease, transform 0.15s ease, border-color 0.15s ease;
+}
+.mk-creatividad:hover {
+  box-shadow: var(--sombra-alta);
+  border-color: var(--borde-fuerte);
+  transform: translateY(-1px);
+}
+.mk-creatividad-visual {
+  position: relative;
+  background: var(--fondo-hundido);
+  overflow: hidden;
+}
+.mk-creatividad-visual img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+.mk-creatividad-sinimagen {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 16px;
+  text-align: center;
+  color: var(--muted-2);
+  background: linear-gradient(160deg, #eef0fe 0%, #f6f7fb 100%);
+}
+.mk-creatividad-cuerpo {
+  padding: 10px 12px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+/* ── Vista previa de anuncio (Instagram / Facebook) ────────────────────── */
+.mk-anuncio {
+  width: 100%;
+  max-width: 360px;
+  background: #fff;
+  border: 1px solid var(--borde);
+  border-radius: 10px;
+  overflow: hidden;
+  font-size: 12.5px;
+  color: #262626;
+}
+.mk-anuncio-cabecera {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+}
+.mk-anuncio-avatar {
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  background: var(--indigo);
+  color: #fff;
+  display: grid;
+  place-items: center;
+  font-weight: 700;
+  font-size: 12px;
+}
+.mk-anuncio-media {
+  background: var(--fondo-hundido);
+  position: relative;
+}
+.mk-anuncio-media img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+.mk-anuncio-cta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 9px 12px;
+  background: #f5f6f8;
+  border-top: 1px solid #ebedf0;
+  border-bottom: 1px solid #ebedf0;
+  font-weight: 600;
+  font-size: 12.5px;
+}
+.mk-anuncio-texto {
+  padding: 10px 12px 12px;
+  line-height: 1.4;
+}
+
+/* ── Asistente por pasos ───────────────────────────────────────────────── */
+.mk-pasos {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.mk-paso {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 10px;
+  border-radius: var(--r-input);
+  font-size: var(--t-menor);
+  color: var(--muted);
+  text-align: left;
+  width: 100%;
+}
+.mk-paso[aria-current="step"] {
+  background: var(--superficie);
+  border: 1px solid var(--borde);
+  color: var(--tinta);
+  font-weight: 600;
+  box-shadow: var(--sombra);
+}
+.mk-paso-numero {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  font-size: 10.5px;
+  font-weight: 700;
+  background: var(--fondo-hundido);
+  color: var(--muted-2);
+  flex-shrink: 0;
+}
+.mk-paso.listo .mk-paso-numero {
+  background: var(--ok-suave);
+  color: var(--ok);
+}
+.mk-paso[aria-current="step"] .mk-paso-numero {
+  background: var(--indigo);
+  color: #fff;
+}
+
+/* Opción grande seleccionable (objetivo, formato, creatividad). */
+.mk-opcion {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  text-align: left;
+  padding: 12px 14px;
+  border: 1px solid var(--borde-fuerte);
+  border-radius: var(--r-card);
+  background: #fff;
+  transition: border-color 0.12s ease, box-shadow 0.12s ease, background 0.12s ease;
+}
+.mk-opcion:hover {
+  border-color: var(--indigo-borde-2);
+  background: #fbfbfe;
+}
+.mk-opcion[aria-pressed="true"] {
+  border-color: var(--indigo);
+  box-shadow: 0 0 0 3px var(--indigo-suave);
+  background: #fbfbfe;
+}
+
+/* ── Cajón lateral ─────────────────────────────────────────────────────── */
+.mk-cajon-fondo {
+  position: fixed;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.28);
+  z-index: 40;
+}
+.mk-cajon {
+  position: fixed;
+  top: 0;
+  right: 0;
+  height: 100vh;
+  width: min(520px, 100vw);
+  background: var(--superficie);
+  border-left: 1px solid var(--borde);
+  box-shadow: var(--sombra-alta);
+  z-index: 41;
+  overflow-y: auto;
+  animation: mk-entrar 0.18s ease-out;
+}
+@keyframes mk-entrar {
+  from {
+    transform: translateX(16px);
+    opacity: 0;
+  }
+  to {
+    transform: none;
+    opacity: 1;
+  }
+}
+
+/* ── Chat del copiloto ─────────────────────────────────────────────────── */
+.mk-burbuja {
+  max-width: 78ch;
+  padding: 10px 14px;
+  border-radius: 10px;
+  font-size: var(--t-cuerpo);
+  line-height: 1.5;
+  white-space: pre-wrap;
+}
+.mk-burbuja.persona {
+  background: var(--indigo);
+  color: #fff;
+  margin-left: auto;
+  border-bottom-right-radius: 3px;
+}
+.mk-burbuja.copiloto {
+  background: var(--superficie);
+  border: 1px solid var(--borde);
+  border-bottom-left-radius: 3px;
+}
+
+/* ── Tabla con orden ───────────────────────────────────────────────────── */
+.tabla th button {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font: inherit;
+  color: inherit;
+  text-transform: inherit;
+  letter-spacing: inherit;
+}
+.tabla th button:hover {
+  color: var(--tinta);
+}
+.tabla tbody tr.fila-enlace {
+  cursor: pointer;
+}
+.mk-barra {
+  display: inline-block;
+  height: 5px;
+  border-radius: 3px;
+  background: var(--indigo);
+  vertical-align: middle;
+  opacity: 0.85;
+}
+
+/* ── Tooltip simple por atributo data-tip ───────────────────────────────── */
+[data-tip] {
+  position: relative;
+}
+[data-tip]:hover::after {
+  content: attr(data-tip);
+  position: absolute;
+  left: 50%;
+  bottom: calc(100% + 6px);
+  transform: translateX(-50%);
+  background: var(--tinta);
+  color: #fff;
+  padding: 6px 9px;
+  border-radius: 6px;
+  font-size: 11.5px;
+  font-weight: 400;
+  line-height: 1.35;
+  width: max-content;
+  max-width: 260px;
+  white-space: normal;
+  text-align: left;
+  z-index: 30;
+  pointer-events: none;
+  box-shadow: var(--sombra-alta);
+}
+
+/* ── Píldora de demostración ───────────────────────────────────────────── */
+.mk-demo {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 8px;
+  border-radius: var(--r-pill);
+  background: #fff7ed;
+  border: 1px solid var(--alerta-borde);
+  color: var(--alerta);
+  font-size: var(--t-micro);
+  font-weight: 600;
+}

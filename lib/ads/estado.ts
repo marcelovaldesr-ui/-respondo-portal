@@ -129,14 +129,14 @@ export async function estadoDePauta(clienteId: string): Promise<EstadoPauta> {
        * consultando a Meta en vivo.
        */
       detalle: `${conexion.cuentaNombre} · factura en ${conexion.moneda}`,
-      accion: { texto: "Ver la conexión", href: "/pauta/conexion" },
+      accion: { texto: "Ver la conexión", href: "/marketing/integraciones" },
     });
   } else if (conexion && conexion.estado === "token_vencido") {
     items.push({
       titulo: "Cuenta publicitaria de Meta",
       estado: "atencion",
       detalle: "El permiso venció. Mientras tanto se ven los resultados, pero no el gasto.",
-      accion: { texto: "Reconectar", href: "/pauta/conexion" },
+      accion: { texto: "Reconectar", href: "/marketing/integraciones" },
     });
   } else {
     items.push({
@@ -144,7 +144,7 @@ export async function estadoDePauta(clienteId: string): Promise<EstadoPauta> {
       estado: "falta",
       detalle:
         "Conectarla agrega el costo al lado de los resultados: cuánto se invirtió, cuánto costó cada conversación y cada venta.",
-      accion: { texto: "Conectar Meta", href: "/pauta/conexion" },
+      accion: { texto: "Conectar Meta", href: "/marketing/integraciones" },
     });
   }
 
@@ -210,7 +210,7 @@ export async function estadoDePauta(clienteId: string): Promise<EstadoPauta> {
             estado: "falta",
             detalle:
               "Es lo que hace que Meta reparta tu presupuesto hacia los avisos que traen compradores, en vez de hacia los que traen conversaciones.",
-            accion: { texto: "Configurar", href: "/pauta/conexion" },
+            accion: { texto: "Configurar", href: "/marketing/integraciones" },
           },
   );
 

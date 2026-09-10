@@ -54,20 +54,20 @@ export const ERRORES: Record<CodigoErrorAds, ErrorAds> = {
     codigo: "sin_conexion",
     mensaje: "Todavía no conectaste una cuenta publicitaria de Meta.",
     accion: "Conectar Meta",
-    href: "/pauta/conexion",
+    href: "/marketing/integraciones",
   },
   token_vencido: {
     codigo: "token_vencido",
     mensaje: "El permiso que nos diste en Meta venció. Hay que volver a autorizarlo.",
     accion: "Reconectar Meta",
-    href: "/pauta/conexion",
+    href: "/marketing/integraciones",
   },
   sin_permiso: {
     codigo: "sin_permiso",
     mensaje:
       "La conexión con Meta no tiene permiso para leer esta cuenta publicitaria. Suele pasar cuando el usuario que autorizó ya no administra la cuenta.",
     accion: "Revisar la conexión",
-    href: "/pauta/conexion",
+    href: "/marketing/integraciones",
   },
   limite_api: {
     codigo: "limite_api",
@@ -78,7 +78,7 @@ export const ERRORES: Record<CodigoErrorAds, ErrorAds> = {
     codigo: "cuenta_invalida",
     mensaje: "La cuenta publicitaria que teníamos guardada ya no está disponible en Meta.",
     accion: "Elegir otra cuenta",
-    href: "/pauta/conexion",
+    href: "/marketing/integraciones",
   },
   red: {
     codigo: "red",
@@ -122,6 +122,8 @@ export type RendimientoAnuncio = {
   gasto: Monto;
   /** Estado en Meta: sirve para no recomendar pausar algo ya pausado. */
   estado?: string;
+  /** AAAA-MM-DD, solo cuando se pidió el desglose por día. */
+  dia?: string;
 };
 
 export type ProveedorAds = {
@@ -129,9 +131,13 @@ export type ProveedorAds = {
   nombre: string;
   /** Las cuentas publicitarias a las que llegamos con la conexión guardada. */
   cuentas(clienteId: string): Promise<ResultadoAds<CuentaPublicitaria[]>>;
-  /** Rendimiento por anuncio en un rango de fechas (AAAA-MM-DD, inclusive). */
+  /**
+   * Rendimiento por anuncio en un rango de fechas (AAAA-MM-DD, inclusive).
+   * Con `porDia` devuelve una fila por anuncio y por día, con `dia` cargado.
+   */
   rendimiento(
     clienteId: string,
     rango: { desde: string; hasta: string },
+    opciones?: { porDia?: boolean },
   ): Promise<ResultadoAds<RendimientoAnuncio[]>>;
 };

@@ -249,7 +249,7 @@ export const proveedorMeta: ProveedorAds & {
     return cuentasConToken(con.token);
   },
 
-  async rendimiento(clienteId, rango) {
+  async rendimiento(clienteId, rango, opciones) {
     if (!metaAdsConfigurado()) return fallo("no_configurado");
     const con = await conexionDe(clienteId);
     if (!con) return fallo("sin_conexion");
@@ -265,10 +265,15 @@ export const proveedorMeta: ProveedorAds & {
      * Por eso se mandan las fechas tal cual (AAAA-MM-DD) y se muestra la zona
      * de la cuenta en la pantalla de conexión.
      */
+    /**
+     * `porDia` pide una fila por anuncio y por día (`time_increment=1`) en vez
+     * del total del período. Es lo que alimenta el gráfico de tendencia. Vale
+     * hasta 30× más filas, así que solo se pide cuando la pantalla lo dibuja.
+     */
     const params = new URLSearchParams({
       level: "ad",
-      limit: "100",
-      time_increment: "all_days",
+      limit: opciones?.porDia ? "500" : "100",
+      time_increment: opciones?.porDia ? "1" : "all_days",
       time_range: JSON.stringify({ since: rango.desde, until: rango.hasta }),
       fields: [
         "ad_id",
@@ -299,6 +304,8 @@ export const proveedorMeta: ProveedorAds & {
         clics: numero(f.clicks),
         // La moneda es la de la CUENTA. Meta no la repite en cada fila.
         gasto: { valor: numero(f.spend), moneda: con.moneda },
+        // Solo viene con `porDia`; Meta lo entrega en la zona de la cuenta.
+        dia: typeof f.date_start === "string" ? f.date_start : undefined,
       }));
 
     return { ok: true, datos: filas };

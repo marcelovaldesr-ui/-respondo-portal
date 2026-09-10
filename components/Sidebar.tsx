@@ -116,19 +116,19 @@ const GRUPOS: { titulo: string; items: ItemMenu[] }[] = [
 ];
 
 /**
- * PAUTA — la única entrada que NO pertenece a ningún grupo.
+ * MARKETING — la única entrada que NO pertenece a ningún grupo.
  *
- * Vive en su propio grupo de rutas (`app/(pauta)`), sin barra lateral: se entra,
- * se mira y se vuelve. Está fuera de los cuatro grupos a propósito. El menú ya
- * tiene doce entradas y tres de ellas se usan todos los días; una pantalla que
- * se mira una vez por semana, y solo si el negocio pone plata en anuncios, no
- * puede competir por el mismo espacio que Conversaciones.
+ * Vive en su propio grupo de rutas (`app/(marketing)`), con su propio riel: es
+ * una plataforma dentro del portal —campañas, creatividades, atribución,
+ * copiloto— y no una pantalla más. Está fuera de los cuatro grupos a
+ * propósito: el menú ya tiene doce entradas y tres se usan todos los días.
  *
  * Por eso se pinta distinto: no es una sección más del portal, es una puerta.
+ * `/pauta` (el nombre anterior) redirige acá.
  */
 const ENTRADA_PAUTA: ItemMenu = {
-  href: "/pauta",
-  label: "Pauta",
+  href: "/marketing",
+  label: "Marketing",
   icono: Icono.pauta,
 };
 
@@ -429,7 +429,7 @@ export default function Sidebar({
             valor={valorDe(it)}
           />
         ))}
-        {/* Pauta cierra la fila, después de una separación fina: es otra casa */}
+        {/* Marketing cierra la fila, después de una separación fina: es otra casa */}
         {rol === "dueno" && (
           <>
             <span className="my-1 w-px shrink-0" style={{ background: "var(--nav-borde)" }} />
@@ -473,15 +473,15 @@ export default function Sidebar({
         ))}
       </nav>
 
-      {/* Puerta a Pauta (solo escritorio, solo dueño). Tarjeta y no ítem de
+      {/* Puerta a Marketing (solo escritorio, solo dueño). Tarjeta y no ítem de
           menú: se ve como lo que es, una salida hacia otra pantalla completa.
-          ⚠️ Oculta para staff porque Pauta muestra gasto y ventas, igual que
+          ⚠️ Oculta para staff porque Marketing muestra gasto y ventas, igual que
           Isabel. Sin esto el botón llevaría a /sin-permiso, que es una forma
           fea de decir que no. */}
       {rol === "dueno" && (
       <Link
         href={ENTRADA_PAUTA.href}
-        title={plegada ? "Pauta · De dónde viene cada venta" : undefined}
+        title={plegada ? "Marketing · Anuncios, campañas y de dónde viene cada venta" : undefined}
         className={`tarjeta mt-5 hidden items-center gap-2.5 transition-colors lg:flex ${
           plegada ? "justify-center px-0 py-2" : "px-3 py-2.5"
         }`}
@@ -505,12 +505,12 @@ export default function Sidebar({
         </svg>
         {!plegada && (
           <span className="min-w-0 flex-1 leading-tight">
-            <span className="block font-semibold">Pauta</span>
+            <span className="block font-semibold">Marketing</span>
             <span
               className="block truncate"
               style={{ fontSize: "var(--t-micro)", color: "var(--muted-2)" }}
             >
-              De dónde viene cada venta
+              Campañas y de dónde viene cada venta
             </span>
           </span>
         )}
