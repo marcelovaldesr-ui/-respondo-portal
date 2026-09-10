@@ -19,7 +19,18 @@ type Turno = { pregunta: string; respuesta: RespuestaIsabel };
  * persona cree que se colgó y aprieta de nuevo — que es exactamente lo que el
  * tope de uso va a frenar, dejándola sin respuesta y molesta.
  */
-export default function IsabelConsulta({ previos = [] }: { previos?: Turno[] }) {
+export default function IsabelConsulta({
+  previos = [],
+  sugerencias,
+}: {
+  previos?: Turno[];
+  /**
+   * Sugerencias armadas con lo que de verdad está pasando en el negocio. Si
+   * vienen vacías se usan las genéricas: un negocio recién conectado no tiene
+   * nada que avisar todavía.
+   */
+  sugerencias?: string[];
+}) {
   const [pendiente, iniciar] = useTransition();
   const [turnos, setTurnos] = useState<Turno[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -121,7 +132,7 @@ export default function IsabelConsulta({ previos = [] }: { previos?: Turno[] }) 
               Para partir:
             </div>
             <div className="mt-2 flex flex-wrap gap-2">
-              {SUGERENCIAS.map((s) => (
+              {(sugerencias?.length ? sugerencias : [...SUGERENCIAS]).map((s) => (
                 <button
                   key={s}
                   type="button"

@@ -2,7 +2,7 @@ import { db } from "@/lib/db";
 import { generarJSON } from "@/lib/gemini";
 import { listarFichas } from "@/lib/conocimiento";
 import { inicioDeMesChile, ZONA } from "@/lib/fechas";
-import { situacionDelNegocio } from "@/lib/isabelDatos";
+import { fichasDeContactosNombrados, situacionDelNegocio } from "@/lib/isabelDatos";
 import {
   armarConversaciones,
   armarPrompt,
@@ -148,6 +148,76 @@ export async function panoramaDelNegocio(clienteId: string): Promise<PanoramaNeg
       ),
     ]);
 
+  /**
+   * ⭐ COMPARACIÓN CON EL PERÍODO ANTERIOR.
+   *
+   * «14 ventas» no le dice nada a nadie sin saber si el mes pasado fueron 8 o
+   * 25. Se compara el mismo largo de período corrido hacia atrás —últimos 30
+   * contra los 30 anteriores— y no «este mes contra el mes pasado», que a mitad
+   * de mes compara media cancha con una entera.
+   *
+   * Va en su propio try: si falla, el panorama se entrega sin comparación en
+   * vez de no entregarse.
+   */
+  const desdeAnterior = haceDias(DIAS_PANORAMA * 2);
+  let comparacion: PanoramaNegocio["comparacion"];
+  try {
+    const TIPOS_VENTA = ["venta_confirmada", "venta_recuperada"];
+    const [convAntes, ventasAhora, ventasAntes, pagosPeriodo] = await Promise.all([
+      cuenta(
+        supa
+          .from("ed_contactos")
+          .select("id", soloContar)
+          .eq("cliente_id", clienteId)
+          .gte("ultimo_mensaje_en", desdeAnterior)
+          .lt("ultimo_mensaje_en", desde),
+      ),
+      ids.length
+        ? cuenta(
+            supa
+              .from("ed_resultados")
+              .select("id", soloContar)
+              .in("empleado_id", ids)
+              .in("tipo", TIPOS_VENTA)
+              .gte("creado_en", desde),
+          )
+        : Promise.resolve(0),
+      ids.length
+        ? cuenta(
+            supa
+              .from("ed_resultados")
+              .select("id", soloContar)
+              .in("empleado_id", ids)
+              .in("tipo", TIPOS_VENTA)
+              .gte("creado_en", desdeAnterior)
+              .lt("creado_en", desde),
+          )
+        : Promise.resolve(0),
+      supa
+        .from("ed_pagos")
+        .select("monto, pagado_en")
+        .eq("cliente_id", clienteId)
+        .eq("estado", "pagado")
+        .gte("pagado_en", desdeAnterior),
+    ]);
+
+    let cobradoAhora = 0;
+    let cobradoAntes = 0;
+    for (const f of pagosPeriodo.data ?? []) {
+      const monto = Number(f.monto) || 0;
+      if (String(f.pagado_en ?? "") >= desde) cobradoAhora += monto;
+      else cobradoAntes += monto;
+    }
+
+    comparacion = {
+      conversaciones: { ahora: conversaciones, antes: convAntes },
+      ventas: { ahora: ventasAhora, antes: ventasAntes },
+      cobrado: { ahora: cobradoAhora, antes: cobradoAntes },
+    };
+  } catch {
+    comparacion = undefined;
+  }
+
   // Cobrado del mes: son pocas filas, se suman acá.
   let cobradoMes = 0;
   try {
@@ -198,6 +268,7 @@ export async function panoramaDelNegocio(clienteId: string): Promise<PanoramaNeg
     cobradoMes,
     porEtapa: etapasCount.filter((e) => e.total > 0),
     porEtiqueta,
+    comparacion,
   };
 }
 
@@ -403,6 +474,40 @@ export async function historialDeConsultas(
 }
 
 /**
+ * ⭐ LO QUE ISABEL NO SUPO RESPONDER.
+ *
+ * Cada «con lo que tengo cargado no puedo saberlo» es un hueco en la
+ * información del negocio, escrito por el propio dueño en sus palabras. Es la
+ * lista de fichas que le faltan a Información — y esas fichas no alimentan solo
+ * a Isabel: son las MISMAS que lee Tino para contestarle a los clientes.
+ *
+ * O sea: cada pregunta que Isabel no pudo responder es una que Tino tampoco
+ * habría podido. Por eso esto no es una curiosidad, es una cola de trabajo.
+ */
+export async function preguntasSinRespuesta(
+  clienteId: string,
+  limite = 5,
+): Promise<{ pregunta: string; creadoEn: string }[]> {
+  try {
+    const { data, error } = await db()
+      .from("ed_isabel_consultas")
+      .select("pregunta, creado_en, respuesta")
+      .eq("cliente_id", clienteId)
+      .eq("respuesta->>seguridad", "no_se")
+      .order("creado_en", { ascending: false })
+      .limit(limite);
+    if (error || !data) return [];
+    return data.map((f) => ({
+      pregunta: String(f.pregunta ?? ""),
+      creadoEn: f.creado_en as string,
+    }));
+  } catch {
+    // Sin la migración 298 no hay bitácora que mirar.
+    return [];
+  }
+}
+
+/**
  * La consulta completa: pregunta del dueño → respuesta apoyada en datos.
  *
  * Devuelve un resultado explícito (nunca lanza) para que la pantalla pueda
@@ -426,7 +531,7 @@ export async function preguntarAIsabel(
     .maybeSingle();
   if (!cliente) return { ok: false, motivo: "No se pudo identificar el negocio." };
 
-  const [panorama, situacion, historial, fichas] = await Promise.all([
+  const [panorama, situacion, historial, fichas, fichasContacto] = await Promise.all([
     panoramaDelNegocio(clienteId),
     /**
      * Lo que el portal YA interpretó: el informe semanal, las derivaciones
@@ -437,6 +542,12 @@ export async function preguntarAIsabel(
     situacionDelNegocio(clienteId),
     historialRelevante(clienteId, pregunta, hilo),
     listarFichas(clienteId).catch(() => []),
+    /**
+     * Si la pregunta nombra a alguien, su ficha completa. Va aparte del resto
+     * de la situación porque depende de LA PREGUNTA, no del negocio: solo tiene
+     * sentido calcularla acá.
+     */
+    fichasDeContactosNombrados(clienteId, pregunta).catch(() => []),
   ]);
 
   const fichasTexto = fichas
@@ -450,7 +561,7 @@ export async function preguntarAIsabel(
     rubro: (cliente.rubro as string) ?? "",
     hoy: hoyEnChile(),
     panorama: panoramaEnTexto(panorama),
-    situacion: situacionEnTexto(situacion),
+    situacion: situacionEnTexto({ ...situacion, contactos: fichasContacto }),
     hilo: hiloEnTexto(hilo),
     fichas: fichasTexto,
     conversaciones: armarConversaciones(historial.mensajes),

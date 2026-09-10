@@ -142,6 +142,15 @@ export function armarConversaciones(
     .join("\n\n");
 }
 
+/**
+ * Cómo viene esto comparado con el período anterior.
+ *
+ * Es la pregunta que un dueño hace de verdad: no «cuántas ventas tuve», sino
+ * «¿vamos mejor o peor que el mes pasado?». Sin esto, Isabel podía decir «14
+ * ventas» sin tener idea de si eso era bueno o malo.
+ */
+export type Comparacion = { ahora: number; antes: number };
+
 export type PanoramaNegocio = {
   dias: number;
   conversaciones: number;
@@ -152,7 +161,32 @@ export type PanoramaNegocio = {
   cobradoMes: number;
   porEtapa: { etapa: string; total: number }[];
   porEtiqueta: { etiqueta: string; total: number }[];
+  /** Mismo largo de período, corrido hacia atrás. Ausente si no se pudo leer. */
+  comparacion?: {
+    conversaciones: Comparacion;
+    ventas: Comparacion;
+    cobrado: Comparacion;
+  };
 };
+
+/**
+ * Redacta una variación de forma honesta.
+ *
+ * ⭐ EL PORCENTAJE SOLO APARECE CUANDO SIGNIFICA ALGO. Pasar de 2 ventas a 3 no
+ * es «+50%», es una venta más — y decirlo en porcentaje sobre números chicos es
+ * la forma más fácil de que un informe mienta sin equivocarse en la aritmética.
+ * Bajo 10 casos en el período anterior se muestran las cifras y nada más.
+ */
+export function variacion(c: Comparacion | undefined, unidad = ""): string {
+  if (!c) return "";
+  const { ahora, antes } = c;
+  const suf = unidad ? ` ${unidad}` : "";
+  if (antes === 0) return `${ahora}${suf} (antes ninguno)`;
+  if (antes < 10) return `${ahora}${suf} (antes ${antes})`;
+  const pct = Math.round(((ahora - antes) / antes) * 100);
+  const signo = pct > 0 ? "+" : "";
+  return `${ahora}${suf} (antes ${antes}, ${signo}${pct}%)`;
+}
 
 /** El panorama en texto plano, que es como el modelo lo lee mejor. */
 export function panoramaEnTexto(p: PanoramaNegocio): string {
@@ -162,6 +196,16 @@ export function panoramaEnTexto(p: PanoramaNegocio): string {
   const etiquetas = p.porEtiqueta.length
     ? p.porEtiqueta.map((e) => `${e.etiqueta}: ${e.total}`).join(" · ")
     : "sin datos";
+  const comp = p.comparacion;
+  const lineaComparacion = comp
+    ? [
+        `COMPARADO CON LOS ${p.dias} DÍAS ANTERIORES:`,
+        `· Conversaciones: ${variacion(comp.conversaciones)}`,
+        `· Ventas cerradas: ${variacion(comp.ventas)}`,
+        `· Cobrado por enlace de pago: $${Math.round(comp.cobrado.ahora).toLocaleString("es-CL")} (antes $${Math.round(comp.cobrado.antes).toLocaleString("es-CL")})`,
+      ].join("\n")
+    : "";
+
   return [
     `Últimos ${p.dias} días: ${p.conversaciones} conversaciones, ${p.mensajes} mensajes.`,
     `Derivadas sin atender ahora mismo: ${p.esperando}.`,
@@ -169,7 +213,10 @@ export function panoramaEnTexto(p: PanoramaNegocio): string {
     `Cobros pendientes: ${p.cobrosPendientes}. Cobrado en el mes: $${Math.round(p.cobradoMes).toLocaleString("es-CL")}.`,
     `Embudo: ${etapas}.`,
     `Etiquetas más frecuentes: ${etiquetas}.`,
-  ].join("\n");
+    lineaComparacion,
+  ]
+    .filter(Boolean)
+    .join("\n");
 }
 
 /* ────────────────────────────────────────────────────────────────────────────
@@ -207,6 +254,24 @@ export type SituacionNegocio = {
   resultados: { tipo: string; total: number; valor: number }[];
   /** Clientes marcados como molestos. Va aparte: es lo que no puede pasarse por alto. */
   molestos: { quien: string; cuando: string; nota: string }[];
+  /**
+   * Ficha completa de las personas que la pregunta nombra.
+   *
+   * «¿Qué pasa con Ana Pérez?» no se responde bien buscando «Ana» entre los
+   * mensajes: lo que hace falta es lo que el negocio SABE de ella —en qué etapa
+   * está, cuándo vino por última vez, qué le cobraron, qué tiene agendado—.
+   * Eso vive repartido en cuatro tablas y ningún mensaje lo dice.
+   */
+  contactos: {
+    quien: string;
+    etapa: string;
+    etiquetas: string[];
+    ultimaAtencion: string;
+    ultimoMensaje: string;
+    datos: string;
+    pagos: string;
+    citas: string;
+  }[];
 };
 
 /** Una situación vacía. Sirve de valor por defecto y para las pruebas. */
@@ -219,6 +284,7 @@ export function situacionVacia(): SituacionNegocio {
     cierres: [],
     resultados: [],
     molestos: [],
+    contactos: [],
   };
 }
 
@@ -233,6 +299,25 @@ const pesos = (n: number) => `$${Math.round(n).toLocaleString("es-CL")}`;
  */
 export function situacionEnTexto(s: SituacionNegocio): string {
   const partes: string[] = [];
+
+  /**
+   * Las fichas van PRIMERO. Si el dueño nombró a alguien, lo que el negocio
+   * sabe de esa persona importa más que el panorama general — y lo que va
+   * primero es lo que el modelo pondera más.
+   */
+  for (const c of s.contactos) {
+    const lineas = [
+      `FICHA DE ${c.quien.toUpperCase()}:`,
+      `· Etapa en el embudo: ${c.etapa}`,
+      c.etiquetas.length ? `· Etiquetas: ${c.etiquetas.join(", ")}` : "",
+      c.ultimaAtencion ? `· Última atención: ${c.ultimaAtencion}` : "",
+      c.ultimoMensaje ? `· Último mensaje: ${c.ultimoMensaje}` : "",
+      c.datos ? `· Lo que el negocio anotó: ${c.datos}` : "",
+      c.pagos ? `· Cobros: ${c.pagos}` : "",
+      c.citas ? `· Citas: ${c.citas}` : "",
+    ].filter(Boolean);
+    partes.push(lineas.join("\n"));
+  }
 
   if (s.esperando.length) {
     partes.push(
@@ -517,6 +602,49 @@ export function normalizarRespuesta(crudo: string): RespuestaIsabel | null {
     s === "alta" || s === "no_se" ? s : s === "media" ? "media" : "media";
 
   return { respuesta: respuesta.slice(0, 1500), apoyos, seguridad };
+}
+
+/**
+ * ⭐ PREGUNTAS SUGERIDAS SEGÚN LO QUE DE VERDAD ESTÁ PASANDO.
+ *
+ * Las cinco sugerencias fijas de abajo son el respaldo. Cuando hay algo real
+ * —dos personas esperando desde el lunes, un cobro de hace tres semanas sin
+ * pagar— la sugerencia deja de ser un ejemplo y pasa a ser un aviso: quien
+ * entra a la pantalla ve el problema antes de saber que tenía que preguntarlo.
+ *
+ * Es la diferencia entre una herramienta que se usa cuando uno se acuerda y una
+ * que se abre porque siempre tiene algo que decir.
+ */
+export function sugerenciasSegunSituacion(s: SituacionNegocio): string[] {
+  const fuera: string[] = [];
+
+  if (s.esperando.length) {
+    const dias = Math.max(...s.esperando.map((e) => e.dias));
+    fuera.push(
+      s.esperando.length === 1
+        ? `¿Qué pasa con ${s.esperando[0].quien}, que lleva ${dias} ${dias === 1 ? "día" : "días"} esperando?`
+        : `¿Quiénes son los ${s.esperando.length} que están esperando respuesta?`,
+    );
+  }
+
+  if (s.molestos.length) {
+    fuera.push("¿Qué pasó con los clientes que quedaron molestos?");
+  }
+
+  const viejos = s.cobrosPendientes.filter((c) => c.dias >= 7);
+  if (viejos.length) {
+    fuera.push(`¿Qué hago con los ${viejos.length} cobros que llevan más de una semana sin pagarse?`);
+  }
+
+  if (s.citas.length) {
+    fuera.push("¿Quiénes vienen esta semana y a qué?");
+  }
+
+  if (s.informes.length && s.informes[0].problemas.length) {
+    fuera.push("¿Qué se perdió esta semana y por qué?");
+  }
+
+  return fuera.slice(0, 4);
 }
 
 /**

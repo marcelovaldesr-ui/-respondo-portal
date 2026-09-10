@@ -14,6 +14,8 @@ import {
   sinAcentos,
   situacionEnTexto,
   situacionVacia,
+  sugerenciasSegunSituacion,
+  variacion,
   validarPregunta,
   MAX_PREGUNTA,
 } from "../lib/isabelCore.ts";
@@ -467,4 +469,124 @@ test("⭐ una repregunta hereda los términos de la anterior", () => {
 
 test("sin hilo, clavesDelHilo no revienta", () => {
   assert.deepEqual(clavesDelHilo([]), []);
+});
+
+/* ───────────────────────────────────────────────────────────────────────────
+ * Comparación con el período anterior, fichas de contacto y sugerencias vivas
+ * ─────────────────────────────────────────────────────────────────────────── */
+
+test("⭐ el porcentaje NO aparece sobre números chicos", () => {
+  // Pasar de 2 a 3 ventas no es «+50%»: es una venta más. El porcentaje sobre
+  // números chicos es la forma más fácil de mentir sin equivocarse en la suma.
+  assert.equal(variacion({ ahora: 3, antes: 2 }), "3 (antes 2)");
+  assert.equal(variacion({ ahora: 14, antes: 11 }), "14 (antes 11, +27%)");
+});
+
+test("una caída se muestra con signo negativo, no con doble negativo", () => {
+  assert.equal(variacion({ ahora: 8, antes: 20 }), "8 (antes 20, -60%)");
+});
+
+test("sin período anterior no se inventa una división por cero", () => {
+  assert.equal(variacion({ ahora: 5, antes: 0 }), "5 (antes ninguno)");
+  assert.equal(variacion(undefined), "");
+});
+
+test("la comparación entra al panorama solo si existe", () => {
+  const base = {
+    dias: 30,
+    conversaciones: 41,
+    mensajes: 388,
+    esperando: 0,
+    citasProximas: 0,
+    cobrosPendientes: 0,
+    cobradoMes: 0,
+    porEtapa: [],
+    porEtiqueta: [],
+  };
+  assert.ok(!panoramaEnTexto(base).includes("COMPARADO"));
+
+  const con = panoramaEnTexto({
+    ...base,
+    comparacion: {
+      conversaciones: { ahora: 41, antes: 33 },
+      ventas: { ahora: 14, antes: 11 },
+      cobrado: { ahora: 890000, antes: 640000 },
+    },
+  });
+  assert.match(con, /COMPARADO CON LOS 30 DÍAS ANTERIORES/);
+  assert.match(con, /Ventas cerradas: 14 \(antes 11, \+27%\)/);
+  assert.match(con, /\$890\.000 \(antes \$640\.000\)/);
+});
+
+test("la ficha de una persona va PRIMERA en la situación", () => {
+  const s = situacionVacia();
+  s.citas = [{ cuando: "vie 12 sep", quien: "Otro", servicio: "x", estado: "agendada" }];
+  s.contactos = [
+    {
+      quien: "Ana Pérez",
+      etapa: "cotizado",
+      etiquetas: ["posible_comprador"],
+      ultimaAtencion: "3 ago",
+      ultimoMensaje: "«¿me lo dejan en 40?» (8 sep)",
+      datos: "vehiculo: KTM 390",
+      pagos: "$45.000 por 500 flyers — pendiente (2 sep)",
+      citas: "vie 12 sep, 10:30 (agendada)",
+    },
+  ];
+  const t = situacionEnTexto(s);
+
+  assert.ok(t.indexOf("FICHA DE ANA PÉREZ") < t.indexOf("PRÓXIMAS CITAS"));
+  assert.match(t, /Etapa en el embudo: cotizado/);
+  assert.match(t, /vehiculo: KTM 390/);
+});
+
+test("una ficha sin datos opcionales no deja líneas vacías", () => {
+  const s = situacionVacia();
+  s.contactos = [
+    {
+      quien: "Luis",
+      etapa: "nuevo",
+      etiquetas: [],
+      ultimaAtencion: "",
+      ultimoMensaje: "",
+      datos: "",
+      pagos: "",
+      citas: "",
+    },
+  ];
+  const t = situacionEnTexto(s);
+  assert.equal(t.split("\n").length, 2, "solo el título y la etapa");
+});
+
+test("⭐ las sugerencias avisan de lo que está pasando, no dan ejemplos", () => {
+  const s = situacionVacia();
+  s.esperando = [
+    { quien: "Ana", motivo: "reclamo", resumen: "x", dias: 4 },
+    { quien: "Luis", motivo: "precio", resumen: "y", dias: 1 },
+  ];
+  s.cobrosPendientes = [{ quien: "Ana", monto: 45000, concepto: "flyers", dias: 21 }];
+
+  const sug = sugerenciasSegunSituacion(s);
+  assert.match(sug[0], /2 que están esperando/);
+  assert.ok(sug.some((x) => /más de una semana sin pagarse/.test(x)));
+});
+
+test("con una sola persona esperando, la sugerencia la nombra", () => {
+  const s = situacionVacia();
+  s.esperando = [{ quien: "Ana Pérez", motivo: "reclamo", resumen: "x", dias: 1 }];
+  assert.match(sugerenciasSegunSituacion(s)[0], /Ana Pérez, que lleva 1 día esperando/);
+});
+
+test("un negocio sin novedades no recibe sugerencias inventadas", () => {
+  assert.deepEqual(sugerenciasSegunSituacion(situacionVacia()), []);
+});
+
+test("las sugerencias no desbordan la pantalla", () => {
+  const s = situacionVacia();
+  s.esperando = [{ quien: "A", motivo: "m", resumen: "r", dias: 2 }];
+  s.molestos = [{ quien: "B", cuando: "1 sep", nota: "" }];
+  s.cobrosPendientes = [{ quien: "C", monto: 1000, concepto: "x", dias: 30 }];
+  s.citas = [{ cuando: "hoy", quien: "D", servicio: "s", estado: "agendada" }];
+  s.informes = [{ periodo: "p", resumen: [], problemas: ["algo"], oportunidades: [] }];
+  assert.equal(sugerenciasSegunSituacion(s).length, 4);
 });

@@ -1,6 +1,6 @@
 import { db } from "@/lib/db";
 import { LOCALE, ZONA } from "@/lib/fechas";
-import { situacionVacia, type SituacionNegocio } from "@/lib/isabelCore";
+import { palabrasClave, situacionVacia, type SituacionNegocio } from "@/lib/isabelCore";
 
 /**
  * ISABEL — LO QUE EL PORTAL YA INTERPRETÓ.
@@ -131,6 +131,130 @@ function quienEs(chatId: string, nombres: Map<string, string>): string {
  * Los bloques corren en paralelo porque son independientes; el costo real es
  * una ida y vuelta a la base, no seis.
  */
+/**
+ * FICHA DE LAS PERSONAS QUE LA PREGUNTA NOMBRA.
+ *
+ * «¿Qué pasa con Ana Pérez?» no se responde bien buscando «Ana» entre los
+ * mensajes: eso devuelve lo que se DIJO, no lo que el negocio SABE. La etapa
+ * del embudo, la última atención, la ficha por rubro (la moto y su kilometraje,
+ * la raza del perro), los cobros y las citas viven en cuatro tablas distintas y
+ * ningún mensaje los menciona.
+ *
+ * Solo se dispara si alguna palabra de la pregunta calza con el nombre de un
+ * contacto. Si nadie calza, no cuesta nada: son dos consultas cortas que no
+ * devuelven filas.
+ */
+export async function fichasDeContactosNombrados(
+  clienteId: string,
+  pregunta: string,
+): Promise<SituacionNegocio["contactos"]> {
+  const supa = db();
+  // Palabras de 4+ letras: los nombres cortos («Ana») se pierden, y está bien —
+  // buscar por «Ana» traería a media agenda. Con apellido o nombre largo calza.
+  const claves = palabrasClave(pregunta, 4).filter((p) => !/^\d+$/.test(p));
+  if (!claves.length) return [];
+
+  const encontrados = new Map<string, Record<string, unknown>>();
+  try {
+    const porTermino = await Promise.all(
+      claves.slice(0, 3).map((t) =>
+        supa
+          .from("ed_contactos")
+          .select("chat_id, nombre, etapa, etiquetas, ultima_atencion, datos, ultimo_mensaje_texto, ultimo_mensaje_en")
+          .eq("cliente_id", clienteId)
+          .ilike("nombre", `%${t.replace(/[%_\\]/g, "")}%`)
+          .limit(3),
+      ),
+    );
+    for (const r of porTermino) {
+      for (const f of r.data ?? []) {
+        if (encontrados.size >= 3) break;
+        encontrados.set(f.chat_id as string, f as Record<string, unknown>);
+      }
+    }
+  } catch {
+    return [];
+  }
+  if (!encontrados.size) return [];
+
+  const chats = [...encontrados.keys()];
+
+  // Cobros y citas de esas personas, en una consulta cada uno.
+  const [pagosR, citasR] = await Promise.all([
+    seguro(
+      "ficha-pagos",
+      async () => {
+        const { data } = await supa
+          .from("ed_pagos")
+          .select("chat_id, monto, concepto, estado, creado_en")
+          .eq("cliente_id", clienteId)
+          .in("chat_id", chats)
+          .order("creado_en", { ascending: false })
+          .limit(15);
+        return data ?? [];
+      },
+      [] as Record<string, unknown>[],
+    ),
+    seguro(
+      "ficha-citas",
+      async () => {
+        const { data } = await supa
+          .from("ed_citas")
+          .select("chat_id, inicio, estado")
+          .eq("cliente_id", clienteId)
+          .in("chat_id", chats)
+          .order("inicio", { ascending: false })
+          .limit(15);
+        return data ?? [];
+      },
+      [] as Record<string, unknown>[],
+    ),
+  ]);
+
+  const agrupar = (filas: Record<string, unknown>[], armar: (f: Record<string, unknown>) => string) => {
+    const m = new Map<string, string[]>();
+    for (const f of filas) {
+      const k = f.chat_id as string;
+      const arr = m.get(k) ?? [];
+      if (arr.length < 4) arr.push(armar(f));
+      m.set(k, arr);
+    }
+    return m;
+  };
+
+  const pagosPorChat = agrupar(pagosR, (f) => {
+    const monto = `$${Math.round(Number(f.monto) || 0).toLocaleString("es-CL")}`;
+    return `${monto} por ${recorte(f.concepto, 50)} — ${f.estado} (${dia(f.creado_en as string)})`;
+  });
+  const citasPorChat = agrupar(citasR, (f) => `${cuando(f.inicio as string)} (${f.estado})`);
+
+  return chats.map((chat) => {
+    const c = encontrados.get(chat) ?? {};
+    const datos = (c.datos ?? {}) as Record<string, unknown>;
+    // La atribución de campaña ya se muestra en Pauta; acá estorbaría.
+    const propios = Object.entries(datos)
+      .filter(([k]) => k !== "campana")
+      .map(([k, v]) => `${k}: ${recorte(v, 60)}`)
+      .slice(0, 6)
+      .join(" · ");
+
+    const ultimo = c.ultimo_mensaje_texto
+      ? `«${recorte(c.ultimo_mensaje_texto, 140)}» (${dia(c.ultimo_mensaje_en as string)})`
+      : "";
+
+    return {
+      quien: recorte(c.nombre, 60) || `…${chat.slice(-4)}`,
+      etapa: recorte(c.etapa, 20) || "nuevo",
+      etiquetas: Array.isArray(c.etiquetas) ? (c.etiquetas as string[]).slice(0, 6) : [],
+      ultimaAtencion: c.ultima_atencion ? dia(`${c.ultima_atencion}T12:00:00Z`) : "",
+      ultimoMensaje: ultimo,
+      datos: propios,
+      pagos: (pagosPorChat.get(chat) ?? []).join(" · "),
+      citas: (citasPorChat.get(chat) ?? []).join(" · "),
+    };
+  });
+}
+
 export async function situacionDelNegocio(clienteId: string): Promise<SituacionNegocio> {
   const supa = db();
   const situacion = situacionVacia();
