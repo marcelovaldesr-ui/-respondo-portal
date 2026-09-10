@@ -293,10 +293,24 @@ export async function GET(request: NextRequest) {
    * ⚠️ Cada envío es una plantilla de MARKETING (~$85). Nace apagado por cliente
    * y con tope diario: el tope es de GASTO, no de carga.
    */
-  let cotizaciones = { clientes: 0, candidatos: 0, programados: 0 };
+  let cotizaciones = { clientes: 0, candidatos: 0, programados: 0, frenadosPorJuez: 0, propuestos: 0 };
   try {
-    const c = await generarSeguimientosCotizacion(supa);
-    cotizaciones = { clientes: c.clientes, candidatos: c.candidatos, programados: c.programados };
+    /**
+     * Techo de tiempo, igual que el vigilante: desde el 9-sep este generador
+     * consulta a un juez con IA por candidato (ver lib/juezCotizacion.ts), así
+     * que ya no tarda lo mismo siempre. 55 s deja los últimos segundos para el
+     * latido, que es lo único que no se puede saltar: sin él, /api/salud no
+     * puede distinguir un cron muerto de un cron sin trabajo.
+     */
+    const c = await generarSeguimientosCotizacion(supa, { fechaLimite: inicioCron + 55_000 });
+    cotizaciones = {
+      clientes: c.clientes,
+      candidatos: c.candidatos,
+      programados: c.programados,
+      frenadosPorJuez: c.frenadosPorJuez,
+      propuestos: c.propuestos,
+    };
+    if (c.detalle.length) console.log("[cron] cotizaciones:", c.detalle.join(" | "));
   } catch (e) {
     console.error("[cron] seguimiento de cotizaciones falló (no afecta lo demás)", (e as Error).message);
   }

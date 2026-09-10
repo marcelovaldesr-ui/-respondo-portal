@@ -53,9 +53,23 @@ test("revisarAbandonadas (el vigilante) corre contra la base real sin mandar nad
   assert.equal(llamadas.waha.length, 0);
   assert.equal(llamadas.metaTexto.length, 0);
 
-  // Este módulo solo debería tocar ed_contactos y ed_reingresos (bitácora de
-  // reingresos) y ed_mensajes (si guarda el mensaje que mandaría).
-  const tablasEsperadas = new Set(["ed_contactos", "ed_reingresos", "ed_mensajes"]);
+  /**
+   * Este módulo solo debería tocar ed_contactos, ed_reingresos (la bitácora),
+   * ed_mensajes (si guarda el mensaje que mandaría) y ed_chat_estado.
+   *
+   * `ed_chat_estado` se agregó a la lista el 9-sep-2026: la prueba llevaba
+   * tiempo roja porque el vigilante escribe ahí `reingreso_en`, que es la marca
+   * de «ya entré en ESTA espera» — justo la que `reingresoDecision.elegible()`
+   * usa para no insistir dos veces en el mismo episodio. Es una escritura
+   * legítima y la lista estaba vieja, no al revés. (No lo rompió el juez de
+   * cotizaciones: se verificó sacando ese archivo y la prueba seguía roja.)
+   */
+  const tablasEsperadas = new Set([
+    "ed_contactos",
+    "ed_reingresos",
+    "ed_mensajes",
+    "ed_chat_estado",
+  ]);
   for (const e of bitacora) {
     assert.ok(
       tablasEsperadas.has(e.tabla),

@@ -8,6 +8,9 @@ import {
   decidirCotizacion,
   type Candidato,
 } from "@/lib/generadorCotizacionCore";
+import { empleadosDelCliente, juzgarCotizacion } from "@/lib/juezCotizacion";
+import { decidirConJuez } from "@/lib/juezCotizacionCore";
+import { modoDe, proponerSeguimiento } from "@/lib/propuestasSeguimiento";
 
 /**
  * GENERADOR: BETO PERSIGUE LAS COTIZACIONES QUE NADIE CONTESTÓ.
@@ -28,13 +31,36 @@ export type ResumenCotizacion = {
   clientes: number;
   candidatos: number;
   programados: number;
+  /** Frenados por el juez después de pasar la reja. Cada uno son ~$85 no gastados. */
+  frenadosPorJuez: number;
+  /** Propuestas dejadas para que una persona apruebe en /seguimientos. */
+  propuestos: number;
   detalle: string[];
 };
 
 export async function generarSeguimientosCotizacion(
   supa: SupabaseClient = db(),
+  /**
+   * ⚠️ TECHO DE TIEMPO — obligatorio desde que el juez entró al circuito
+   * (9-sep-2026). Antes esto era puro SQL y tardaba lo mismo siempre; ahora
+   * hace hasta `topeDiario` llamadas al modelo. En el peor caso de Gemini
+   * (2 modelos × 2 intentos) diez candidatos se llevarían minutos dentro de una
+   * función que Vercel corta a los 60 s, y el cron moriría ANTES del latido —
+   * que es la señal con la que /api/salud detecta que el cron dejó de correr.
+   * Se vería como "todo bien" mientras nada funciona.
+   *
+   * Lo que no alcanza no se pierde: queda para el siguiente latido, en 5 min.
+   */
+  opciones?: { fechaLimite?: number },
 ): Promise<ResumenCotizacion> {
-  const out: ResumenCotizacion = { clientes: 0, candidatos: 0, programados: 0, detalle: [] };
+  const out: ResumenCotizacion = {
+    clientes: 0,
+    candidatos: 0,
+    programados: 0,
+    frenadosPorJuez: 0,
+    propuestos: 0,
+    detalle: [],
+  };
 
   const { data: clientes } = await supa
     .from("ed_clientes")
@@ -141,7 +167,31 @@ export async function generarSeguimientosCotizacion(
       if (!prev || v > prev) ultimoSeg.set(k, v);
     }
 
-    const elegibles: { chatId: string; nombre: string }[] = [];
+    /**
+     * COBROS PAGADOS EN LA VENTANA (9-sep-2026). La señal de cierre más dura
+     * que hay: no es una etiqueta ni una etapa calculada, es plata confirmada.
+     *
+     * Se pide en UNA consulta para todos los chats, no una por candidato. Si la
+     * migración 289 no está aplicada en algún entorno, la consulta falla y esto
+     * queda como un conjunto vacío: se pierde el cruce, pero el generador sigue
+     * funcionando con el resto de las reglas.
+     */
+    const pagados = new Set<string>();
+    try {
+      const { data: pagos } = await supa
+        .from("ed_pagos")
+        .select("chat_id")
+        .eq("cliente_id", clienteId)
+        .eq("estado", "pagado")
+        .gte("creado_en", desde)
+        .in("chat_id", chatIds)
+        .limit(1000);
+      for (const p of pagos ?? []) pagados.add(p.chat_id as string);
+    } catch {
+      // Sin la tabla, el cruce no aplica. No es motivo para no generar nada.
+    }
+
+    const elegibles: { chatId: string; nombre: string; diasEsperando: number }[] = [];
     for (const c of contactos) {
       const chatId = c.chat_id as string;
       const cand: Candidato = {
@@ -151,9 +201,15 @@ export async function generarSeguimientosCotizacion(
         ultimoMensajeEn: (c.ultimo_mensaje_en as string | null) ?? null,
         ultimoRol: (c.ultimo_mensaje_rol as string | null) ?? null,
         ultimoSeguimientoEn: ultimoSeg.get(chatId) ?? null,
+        pagoPagadoEnVentana: pagados.has(chatId),
       };
-      if (decidirCotizacion(cand, ahora).enviar) {
-        elegibles.push({ chatId, nombre: (c.nombre as string | null) || "" });
+      const v = decidirCotizacion(cand, ahora);
+      if (v.enviar) {
+        elegibles.push({
+          chatId,
+          nombre: (c.nombre as string | null) || "",
+          diasEsperando: v.diasEsperando,
+        });
       }
     }
 
@@ -176,24 +232,109 @@ export async function generarSeguimientosCotizacion(
      * así que `elegibles` conserva ese orden. Son los que están más cerca de
      * salirse de la ventana de 30 días y perderse del todo.
      */
+    /**
+     * SEGUNDA VUELTA: EL JUEZ LEE EL HILO (9-sep-2026).
+     *
+     * La reja de arriba descartó el 99% con metadatos y sin gastar un peso.
+     * Recién sobre los pocos que quedan se le paga al modelo por LEER la
+     * conversación, porque hay falsos positivos que ningún metadato ve: la
+     * cotización que nunca se envió, la que se cerró en el mesón, el «muy caro»
+     * respondido con un «ok», y la etiqueta de julio que nadie borró (las
+     * etiquetas son acumulativas).
+     *
+     * En la simulación contra Impresora Color, de 20 que pasaron la reja el juez
+     * frenó 8 — entre ellos uno que ya había transferido el total y otro que
+     * había pedido la devolución del dinero. Son ~$680 en mensajes que habrían
+     * hecho quedar mal al negocio.
+     */
+    const empleadoIds = await empleadosDelCliente(clienteId, supa);
+    const modo = await modoDe(clienteId, supa);
+
+    let resueltos = 0;
+    let sinTiempo = 0;
     for (const e of elegibles.slice(0, cupo)) {
+      /**
+       * Si no queda tiempo útil, se corta acá y no se marca nada. En el próximo
+       * latido estos mismos candidatos vuelven a aparecer: la reja es
+       * determinista y no consumieron ningún cupo.
+       */
+      if (typeof opciones?.fechaLimite === "number" && Date.now() > opciones.fechaLimite - 9_000) {
+        sinTiempo = cupo - resueltos - out.frenadosPorJuez;
+        break;
+      }
+
+      const v = await juzgarCotizacion({
+        fechaLimite: opciones?.fechaLimite,
+        chatId: e.chatId,
+        negocio: (cli.nombre as string) || "",
+        diasEsperando: e.diasEsperando,
+        empleadoIds,
+        supa,
+      });
+      const d = decidirConJuez(v);
+
+      if (!d.enviar) {
+        out.frenadosPorJuez++;
+        continue;
+      }
+
+      /**
+       * ⭐ `d.cotizado` es la variable {{3}} de la plantilla. Con el juez, el
+       * mensaje pasa de «por la cotización de lo que nos consultaste» a «por la
+       * cotización de 200 carpetas tamaño oficio». Cuando el juez no logra
+       * nombrarlo, `decidirConJuez` deja la fórmula neutra de siempre: nunca se
+       * inventa un producto.
+       */
+      if (modo === "aprobacion") {
+        /**
+         * MODO APROBACIÓN (el default): no sale nada todavía. Queda una
+         * propuesta en /seguimientos con el veredicto y la evidencia, y una
+         * persona decide. Recién al aprobar se llama a `programarSeguimiento`.
+         */
+        const r = await proponerSeguimiento({
+          clienteId,
+          empleadoId: betoId,
+          chatId: e.chatId,
+          tipo: "cotizacion_sin_respuesta",
+          cotizado: d.cotizado,
+          motivoJuez: d.motivo,
+          evidencia: {
+            diasEsperando: e.diasEsperando,
+            mensajesLeidos: v.mensajes.length,
+            nombre: e.nombre,
+          },
+          supa,
+        });
+        if (r.ok) {
+          out.propuestos++;
+          resueltos++;
+        } else {
+          out.detalle.push(`${e.chatId}: no se pudo proponer (${r.error})`);
+        }
+        continue;
+      }
+
       const r = await programarSeguimiento({
         empleadoId: betoId,
         chatId: e.chatId,
         tipo: "cotizacion_sin_respuesta",
-        // La plantilla pide: nombre, negocio, y de qué era la cotización. Lo
-        // último no se sabe con certeza, así que va una fórmula neutra en vez de
-        // inventar un producto — que es exactamente lo que no debe hacer.
-        paramsPlantilla: [e.nombre || "hola", (cli.nombre as string) || "", "lo que nos consultaste"],
+        // La plantilla pide: nombre, negocio, y de qué era la cotización.
+        paramsPlantilla: [e.nombre || "hola", (cli.nombre as string) || "", d.cotizado],
         programadoPara: new Date(),
         supa,
       });
-      if (r.ok) out.programados++;
-      else out.detalle.push(`${e.chatId}: no se pudo programar (${r.error})`);
+      if (r.ok) {
+        out.programados++;
+        resueltos++;
+      } else {
+        out.detalle.push(`${e.chatId}: no se pudo programar (${r.error})`);
+      }
     }
 
     out.detalle.unshift(
-      `${cli.nombre}: ${elegibles.length} elegibles · ${Math.min(cupo, elegibles.length)} programados`,
+      `${cli.nombre}: ${elegibles.length} elegibles · ${out.frenadosPorJuez} frenados por el juez · ` +
+        `${resueltos} ${modo === "aprobacion" ? "propuestos para aprobar" : "programados"}` +
+        (sinTiempo > 0 ? ` · ${sinTiempo} quedaron para el próximo latido (sin tiempo)` : ""),
     );
   }
 

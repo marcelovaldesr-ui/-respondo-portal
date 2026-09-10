@@ -153,3 +153,30 @@ test("tope en cero = apagado", () => {
 test("si hay menos candidatos que cupo, manda la cantidad real", () => {
   assert.equal(cuposDisponibles({ topeDiario: 10, enviadosHoy: 0, candidatos: 3 }), 3);
 });
+
+// ── El cruce con los cobros (9-sep-2026) ────────────────────────────────────
+
+test("⭐ un cobro PAGADO en la conversación cierra el caso: no se insiste", () => {
+  // La etapa la calcula un modelo y la etiqueta la pone alguien a mano; las dos
+  // se atrasan. Un pago confirmado es plata que llegó. Escribirle «¿sigue en
+  // pie tu cotización?» a quien ya pagó es el peor falso positivo posible, y
+  // encima cuesta $85.
+  const v = decidirCotizacion({ ...BASE, pagoPagadoEnVentana: true }, AHORA);
+  assert.equal(v.enviar, false);
+  assert.match(v.motivo, /pagado/i);
+});
+
+test("un cobro pendiente o anulado NO frena nada", () => {
+  // Solo `pagado` cierra. Quien tiene un cobro pendiente y no responde hace
+  // meses sigue siendo exactamente a quien hay que perseguir.
+  assert.equal(decidirCotizacion({ ...BASE, pagoPagadoEnVentana: false }, AHORA).enviar, true);
+  assert.equal(decidirCotizacion({ ...BASE }, AHORA).enviar, true);
+});
+
+test("el pago manda por encima de la etiqueta de cotización", () => {
+  const v = decidirCotizacion(
+    { ...BASE, etiquetas: ["cotizacion", "posible_comprador"], pagoPagadoEnVentana: true },
+    AHORA,
+  );
+  assert.equal(v.enviar, false);
+});

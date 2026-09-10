@@ -61,6 +61,14 @@ export type Candidato = {
   ultimoRol: string | null;
   /** Cuándo se le mandó el último seguimiento de este tipo, si hubo. */
   ultimoSeguimientoEn?: string | null;
+  /**
+   * ¿Hay un cobro en estado `pagado` en esta conversación dentro de la ventana?
+   *
+   * Es la señal de cierre más dura que existe en la base: no es una etiqueta que
+   * alguien puso ni una etapa que calculó un modelo — es plata que llegó. Ver la
+   * regla más abajo.
+   */
+  pagoPagadoEnVentana?: boolean;
 };
 
 export type Veredicto =
@@ -88,6 +96,24 @@ export function decidirCotizacion(
   // Ya se cerró: ni perseguir a quien compró ni a quien dijo que no.
   if (c.etapa === "ganado" || c.etapa === "perdido") {
     return { enviar: false, motivo: `la oportunidad ya está ${c.etapa}` };
+  }
+
+  /**
+   * PAGÓ → SE ACABÓ. (9-sep-2026)
+   *
+   * La etapa `ganado` la calcula el detector de cierres leyendo el texto, y la
+   * etiqueta la pone alguien a mano: las dos se pueden equivocar o quedar sin
+   * actualizar. Un cobro en estado `pagado` es otra cosa: alguien del negocio
+   * confirmó que la plata llegó. Preguntarle «¿sigue en pie tu cotización?» a
+   * quien ya pagó es el peor de todos los falsos positivos —y encima cuesta
+   * $85— porque el cliente sabe con certeza que le escribieron sin mirar.
+   *
+   * Va acá, en la reja gratis, y no en el juez: el juez lee texto y podría no
+   * ver el pago (se registró desde el portal, no en el chat). Esto es un dato
+   * duro y descartar con él no cuesta nada.
+   */
+  if (c.pagoPagadoEnVentana) {
+    return { enviar: false, motivo: "hay un cobro pagado en esta conversación" };
   }
 
   /**
