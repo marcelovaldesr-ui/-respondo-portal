@@ -8,7 +8,14 @@ export type PermisoPortal =
   | "configurar_agenda"
   | "editar_conocimiento"
   | "generar_insights"
-  | "gestionar_integraciones";
+  | "gestionar_integraciones"
+  /**
+   * Preguntarle a Isabel. Queda FUERA de STAFF a propósito: para responder,
+   * Isabel lee el historial completo de conversaciones del negocio —reclamos,
+   * precios, lo que un cliente dijo de otro— y eso es del dueño, no de quien
+   * atiende el mesón. No es jerarquía, es alcance de lectura.
+   */
+  | "preguntar_isabel";
 
 const STAFF: ReadonlySet<PermisoPortal> = new Set([
   "operar_conversaciones",

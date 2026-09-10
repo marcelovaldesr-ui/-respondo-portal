@@ -97,6 +97,20 @@ export type Referencia = {
   cuerpo?: string;
   /** `source_url`: a dónde apuntaba. */
   url?: string;
+  /**
+   * `ctwa_clid`: el identificador de ESTE clic, único por persona y por aviso.
+   *
+   * Es distinto de `anuncioId`: el id del anuncio dice de qué aviso vino,
+   * el clid dice QUÉ CLIC fue. Sin él se puede informar «este anuncio trajo 14
+   * conversaciones», pero NO se le puede devolver a Meta «esta persona compró»,
+   * que es lo único que hace que Meta reparta la plata hacia los avisos que
+   * traen compradores en vez de curiosos (Conversions API para mensajería).
+   *
+   * ⚠️ Llega en el MISMO sitio y con la MISMA regla que el resto de la
+   * referencia: solo en el primer mensaje de la conversación. Lo que no se
+   * guarda cuando llega, no se recupera nunca.
+   */
+  ctwaClid?: string;
 };
 
 /**
@@ -178,6 +192,8 @@ export function parsearWebhook(payload: unknown): EntranteNormalizado[] {
               source_url?: string;
               headline?: string;
               body?: string;
+              /** Identificador del CLIC. Ver `Referencia.ctwaClid`. */
+              ctwa_clid?: string;
             };
           }[];
         };
@@ -271,13 +287,14 @@ export function parsearWebhook(payload: unknown): EntranteNormalizado[] {
         // código puede preguntar `if (m.referencia)` sin falsos positivos.
         const ref = m.referral;
         const referencia: Referencia | undefined =
-          ref && (ref.source_id || ref.headline || ref.source_url)
+          ref && (ref.source_id || ref.headline || ref.source_url || ref.ctwa_clid)
             ? {
                 ...(ref.source_id ? { anuncioId: ref.source_id } : {}),
                 ...(ref.source_type ? { tipo: ref.source_type } : {}),
                 ...(ref.headline ? { titular: ref.headline } : {}),
                 ...(ref.body ? { cuerpo: ref.body } : {}),
                 ...(ref.source_url ? { url: ref.source_url } : {}),
+                ...(ref.ctwa_clid ? { ctwaClid: ref.ctwa_clid } : {}),
               }
             : undefined;
 

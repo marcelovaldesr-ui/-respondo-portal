@@ -226,3 +226,62 @@ test("cada mensaje toma el nombre de SU remitente cuando el payload trae varios 
   );
   assert.equal(r[0].nombre, "Beto");
 });
+
+/**
+ * `ctwa_clid` (10-sep-2026). Venía llegando en el mismo objeto `referral` y lo
+ * estábamos descartando, igual que descartábamos `source_id` antes de la
+ * migración 282. Sin él se puede informar de qué aviso vino una conversación,
+ * pero NO se le puede devolver a Meta que esa persona compró.
+ *
+ * Llega SOLO en el primer mensaje: lo que no se captura acá no se recupera.
+ */
+test("se captura el identificador del clic (ctwa_clid)", () => {
+  const [m] = parsearWebhook(
+    sobre({
+      id: "wamid.9",
+      from: "56900000000",
+      type: "text",
+      text: { body: "Hola" },
+      referral: {
+        source_id: "120210000000000000",
+        source_type: "ad",
+        headline: "Flyers desde $30",
+        ctwa_clid: "ARAxYzExample_clid",
+      },
+    }),
+  );
+
+  assert.equal(m.referencia?.ctwaClid, "ARAxYzExample_clid");
+  assert.equal(m.referencia?.anuncioId, "120210000000000000");
+});
+
+test("un referral que SOLO trae el clid igual se guarda", () => {
+  // Caso real posible: Meta manda el clic pero no el titular ni la url. Si se
+  // exigiera source_id/headline, se perdería lo único que sirve para devolver
+  // la conversión.
+  const [m] = parsearWebhook(
+    sobre({
+      id: "wamid.10",
+      from: "56900000000",
+      type: "text",
+      text: { body: "Hola" },
+      referral: { ctwa_clid: "ARAsolo" },
+    }),
+  );
+
+  assert.equal(m.referencia?.ctwaClid, "ARAsolo");
+});
+
+test("sin ctwa_clid el campo queda ausente, no vacío", () => {
+  const [m] = parsearWebhook(
+    sobre({
+      id: "wamid.11",
+      from: "56900000000",
+      type: "text",
+      text: { body: "Hola" },
+      referral: { source_id: "120", headline: "Flyers" },
+    }),
+  );
+
+  assert.equal(m.referencia?.ctwaClid, undefined);
+});

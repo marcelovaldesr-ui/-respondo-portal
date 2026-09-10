@@ -25,6 +25,14 @@ const Icono = {
   informe: (
     <path d="M9 4h6a1 1 0 0 1 1 1v1h2a1 1 0 0 1 1 1v13a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h2V5a1 1 0 0 1 1-1zM9 12h6M9 16h4" />
   ),
+  /* Isabel: preguntar. Un globo con signo de interrogación. */
+  preguntar: (
+    <path d="M21 11.5a8 8 0 0 1-8 8H4l1.8-3.2A8 8 0 1 1 21 11.5zM9.8 9.2a2.4 2.4 0 0 1 4.6.8c0 1.6-2.3 1.9-2.3 3.3M12.1 16.1h.01" />
+  ),
+  /* Pauta: un objetivo con la flecha al centro — "a dónde fue la plata". */
+  pauta: (
+    <path d="M12 21a9 9 0 1 1 6.4-2.6M12 16a4 4 0 1 1 2.8-1.2M12 12l9-9M15 3h6v6" />
+  ),
   /* Plegar / desplegar la barra (solo escritorio). */
   plegar: <path d="M11 17l-5-5 5-5M18 17l-5-5 5-5" />,
   desplegar: <path d="M13 17l5-5-5-5M6 17l5-5-5-5" />,
@@ -88,6 +96,13 @@ const GRUPOS: { titulo: string; items: ItemMenu[] }[] = [
     items: [
       { href: "/analitica", label: "Analítica", icono: Icono.analitica },
       { href: "/insights", label: "Informe", icono: Icono.informe },
+      /**
+       * Isabel va acá y no en un grupo propio: es la misma pregunta que ya
+       * responden Analítica ("cuánto") e Informe ("qué pasó la semana"), pero
+       * sin que el dueño tenga que adivinar en cuál de las dos pantallas está
+       * lo que busca. Entra al grupo, no lo abre.
+       */
+      { href: "/isabel", label: "Isabel", icono: Icono.preguntar },
     ],
   },
   {
@@ -99,6 +114,23 @@ const GRUPOS: { titulo: string; items: ItemMenu[] }[] = [
     ],
   },
 ];
+
+/**
+ * PAUTA — la única entrada que NO pertenece a ningún grupo.
+ *
+ * Vive en su propio grupo de rutas (`app/(pauta)`), sin barra lateral: se entra,
+ * se mira y se vuelve. Está fuera de los cuatro grupos a propósito. El menú ya
+ * tiene doce entradas y tres de ellas se usan todos los días; una pantalla que
+ * se mira una vez por semana, y solo si el negocio pone plata en anuncios, no
+ * puede competir por el mismo espacio que Conversaciones.
+ *
+ * Por eso se pinta distinto: no es una sección más del portal, es una puerta.
+ */
+const ENTRADA_PAUTA: ItemMenu = {
+  href: "/pauta",
+  label: "Pauta",
+  icono: Icono.pauta,
+};
 
 /** Lista plana. La usa el móvil, donde el menú es una fila desplazable y los
     rótulos de grupo no caben ni aportan. */
@@ -278,8 +310,14 @@ export default function Sidebar({
     });
   }
 
+  /**
+   * Isabel entra a la lista de solo-dueño junto con Información y WhatsApp.
+   * No es por jerarquía: Isabel lee TODAS las conversaciones del negocio para
+   * responder, incluidas las de reclamos y las de precios. Eso es del dueño,
+   * no de quien atiende el mesón.
+   */
   const visible = (it: ItemMenu) =>
-    rol === "dueno" || !["/informacion", "/whatsapp"].includes(it.href);
+    rol === "dueno" || !["/informacion", "/whatsapp", "/isabel"].includes(it.href);
   const contadores = { esperando, porCerrar } as const;
   const valorDe = (it: ItemMenu) => (it.contador ? contadores[it.contador] : undefined);
 
@@ -391,6 +429,9 @@ export default function Sidebar({
             valor={valorDe(it)}
           />
         ))}
+        {/* Pauta cierra la fila, después de una separación fina: es otra casa */}
+        <span className="my-1 w-px shrink-0" style={{ background: "var(--nav-borde)" }} />
+        <ItemNav item={ENTRADA_PAUTA} activo={ruta.startsWith(ENTRADA_PAUTA.href)} />
       </nav>
 
       {/* Escritorio: los cuatro grupos */}
@@ -427,6 +468,45 @@ export default function Sidebar({
           </div>
         ))}
       </nav>
+
+      {/* Puerta a Pauta (solo escritorio). Tarjeta, no ítem de menú: se ve
+          como lo que es, una salida hacia otra pantalla completa. */}
+      <Link
+        href={ENTRADA_PAUTA.href}
+        title={plegada ? "Pauta · De dónde viene cada venta" : undefined}
+        className={`tarjeta mt-5 hidden items-center gap-2.5 transition-colors lg:flex ${
+          plegada ? "justify-center px-0 py-2" : "px-3 py-2.5"
+        }`}
+        style={{
+          color: ruta.startsWith(ENTRADA_PAUTA.href) ? "var(--indigo)" : "var(--nav-texto)",
+          fontSize: "var(--t-fila)",
+        }}
+      >
+        <svg
+          width="18"
+          height="18"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.6"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          className="shrink-0 opacity-70"
+        >
+          {Icono.pauta}
+        </svg>
+        {!plegada && (
+          <span className="min-w-0 flex-1 leading-tight">
+            <span className="block font-semibold">Pauta</span>
+            <span
+              className="block truncate"
+              style={{ fontSize: "var(--t-micro)", color: "var(--muted-2)" }}
+            >
+              De dónde viene cada venta
+            </span>
+          </span>
+        )}
+      </Link>
 
       {/* Pie (solo escritorio) */}
       <div

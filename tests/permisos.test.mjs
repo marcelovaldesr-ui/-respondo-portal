@@ -13,6 +13,7 @@ test("el dueño conserva todas las capacidades", () => {
     "editar_conocimiento",
     "generar_insights",
     "gestionar_integraciones",
+    "preguntar_isabel",
   ]) {
     assert.equal(tienePermiso({ rol: "dueno" }, permiso), true);
   }
@@ -25,4 +26,6 @@ test("staff opera clientes y agenda sin administrar configuración", () => {
   assert.equal(tienePermiso({ rol: "staff" }, "configurar_agenda"), false);
   assert.equal(tienePermiso({ rol: "staff" }, "editar_conocimiento"), false);
   assert.equal(tienePermiso({ rol: "staff" }, "gestionar_integraciones"), false);
+  // Isabel lee TODO el historial del negocio: es del dueño, no del mesón.
+  assert.equal(tienePermiso({ rol: "staff" }, "preguntar_isabel"), false);
 });
