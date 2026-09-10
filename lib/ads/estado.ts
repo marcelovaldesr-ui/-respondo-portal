@@ -119,9 +119,16 @@ export async function estadoDePauta(clienteId: string): Promise<EstadoPauta> {
     items.push({
       titulo: "Cuenta publicitaria de Meta",
       estado: "ok",
-      detalle: `${conexion.cuentaNombre} · factura en ${conexion.moneda}${
-        conexion.ultimaSync ? "" : " · sin sincronizar todavía"
-      }`,
+      /**
+       * ⚠️ Acá decía «· sin sincronizar todavía» cuando `ultima_sync` venía
+       * nula, y NADA escribe esa columna: la etiqueta iba a quedar puesta para
+       * siempre, avisando de un problema inexistente. Un aviso permanentemente
+       * falso enseña a ignorar los avisos de verdad. La columna se deja en la
+       * tabla para cuando exista una sincronización real que la escriba; la
+       * prueba de que la conexión lee se muestra en la pantalla de Conexión,
+       * consultando a Meta en vivo.
+       */
+      detalle: `${conexion.cuentaNombre} · factura en ${conexion.moneda}`,
       accion: { texto: "Ver la conexión", href: "/pauta/conexion" },
     });
   } else if (conexion && conexion.estado === "token_vencido") {

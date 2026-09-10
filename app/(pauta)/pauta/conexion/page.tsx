@@ -3,6 +3,8 @@ import { exigirPermisoPortal } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { conexionDe, metaAdsConfigurado, proveedorMeta } from "@/lib/ads/meta";
 import { estadoDePauta } from "@/lib/ads/estado";
+import { formatearMonto, formatearNumero } from "@/lib/ads/moneda";
+import { resolverRango } from "@/lib/ads/periodos";
 import { EVENTOS } from "@/lib/ads/eventos";
 import FormularioDataset from "@/components/pauta/FormularioDataset";
 import SelectorCuenta from "@/components/pauta/SelectorCuenta";
@@ -105,6 +107,33 @@ export default async function Conexion({
    */
   const necesitaElegir = Boolean(conexion && !conexion.cuentaId);
   const cuentas = necesitaElegir ? await proveedorMeta.cuentas(usuario.clienteId) : null;
+
+  /**
+   * ⭐ LA PRUEBA DE QUE LA CONEXIÓN SIRVE, NO LA PROMESA.
+   *
+   * Decir «Conectada» es una afirmación; mostrar cuántos anuncios leímos y
+   * cuánto se invirtió es un hecho verificable contra el Administrador de
+   * Anuncios. Sin esto, alguien que conecta su cuenta y todavía no tiene
+   * conversaciones atribuidas no ve NADA que confirme que funcionó — ni acá ni
+   * en el Resumen, que muestra el estado de primera vez. Quedaría con una
+   * pantalla que dice «Conectada» y cero evidencia, que es exactamente lo que
+   * esta sección promete no hacer.
+   */
+  const rango30 = resolverRango("30d");
+  const prueba =
+    conexion && conexion.cuentaId
+      ? await proveedorMeta.rendimiento(usuario.clienteId, rango30)
+      : null;
+
+  const leido = prueba?.ok
+    ? prueba.datos.reduce(
+        (acc, r) => ({
+          anuncios: acc.anuncios + 1,
+          gasto: acc.gasto + r.gasto.valor,
+        }),
+        { anuncios: 0, gasto: 0 },
+      )
+    : null;
 
   /** Estado de la cola de eventos. Tolerante a que la 302 no esté aplicada. */
   let cola = { pendientes: 0, enviados: 0, descartados: 0, fallidos: 0 };
@@ -255,6 +284,44 @@ export default async function Conexion({
                 equivocado.
               </p>
             )}
+            {/* Lo que efectivamente leímos, para que no haya que creernos. */}
+            {prueba && (
+              <div
+                className="tarjeta-plana mt-4 p-3"
+                style={{ fontSize: "var(--t-menor)" }}
+              >
+                {prueba.ok && leido ? (
+                  leido.anuncios > 0 ? (
+                    <>
+                      <span style={{ color: "var(--ok)", fontWeight: 600 }}>
+                        Leyendo bien.
+                      </span>{" "}
+                      En los últimos 30 días: {formatearNumero(leido.anuncios)}{" "}
+                      {leido.anuncios === 1 ? "anuncio" : "anuncios"} con actividad y{" "}
+                      <strong>
+                        {formatearMonto(
+                          { valor: leido.gasto, moneda: conexion.moneda },
+                          { monedaDelNegocio: "CLP" },
+                        )}
+                      </strong>{" "}
+                      invertidos. Esta cifra tiene que cuadrar con tu Administrador de
+                      Anuncios.
+                    </>
+                  ) : (
+                    <>
+                      <span style={{ fontWeight: 600 }}>La conexión funciona</span>, pero esta
+                      cuenta no tuvo anuncios con actividad en los últimos 30 días. Si
+                      esperabas ver gasto, revisa que sea la cuenta correcta.
+                    </>
+                  )
+                ) : (
+                  <span style={{ color: "var(--alerta)" }}>
+                    {prueba.ok ? "" : prueba.error.mensaje}
+                  </span>
+                )}
+              </div>
+            )}
+
             {conexion.ultimoError && (
               <p className="mt-3" style={{ fontSize: "var(--t-micro)", color: "var(--alerta)" }}>
                 Último problema: {conexion.ultimoError}
