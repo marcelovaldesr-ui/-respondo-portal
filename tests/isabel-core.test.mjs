@@ -4,6 +4,8 @@ import test from "node:test";
 import {
   armarConversaciones,
   armarPrompt,
+  clavesDelHilo,
+  hiloEnTexto,
   normalizarRespuesta,
   palabrasClave,
   panoramaEnTexto,
@@ -382,5 +384,87 @@ test("el prompt le dice qué hacer con un saludo, para no contestarlo con «no s
     conversaciones: "",
     pregunta: "como estas?",
   });
-  assert.match(p, /Nunca respondas un saludo diciendo que no puedes saberlo/);
+  assert.match(p, /TE HABLAN A TI/);
+  assert.match(p, /NO corresponde decir que no puedes saberlo/);
+});
+
+/* ───────────────────────────────────────────────────────────────────────────
+ * Isabel como persona: identidad, criterio y memoria del hilo
+ * ─────────────────────────────────────────────────────────────────────────── */
+
+test("el prompt le da una identidad, no solo una tarea", () => {
+  const p = armarPrompt({
+    negocio: "Impresora Color",
+    rubro: "imprenta",
+    hoy: "hoy",
+    panorama: "",
+    fichas: "",
+    conversaciones: "",
+    pregunta: "hola",
+  });
+
+  assert.match(p, /Eres Isabel y trabajas en Impresora Color/);
+  assert.match(p, /TU CRITERIO SÍ VALE/, "sin esto vuelve a ser un buscador con cara de persona");
+  assert.match(p, /INICIATIVA/);
+});
+
+test("el rigor se aplica al negocio, no a la conversación", () => {
+  const p = armarPrompt({
+    negocio: "x",
+    rubro: "y",
+    hoy: "hoy",
+    panorama: "",
+    fichas: "",
+    conversaciones: "",
+    pregunta: "hola",
+  });
+
+  // Las dos cosas conviven: puede conversar Y no puede inventar cifras.
+  assert.match(p, /TE PREGUNTAN POR EL NEGOCIO/);
+  assert.match(p, /Nunca sumes conversaciones a ojo/);
+});
+
+test("el hilo se arma del más viejo al más nuevo, que es como se lee", () => {
+  const t = hiloEnTexto([
+    { pregunta: "¿y qué le respondimos?", respuesta: "Que llegaba el jueves." },
+    { pregunta: "¿qué pidió Ana?", respuesta: "500 flyers." },
+  ]);
+
+  assert.ok(t.indexOf("¿qué pidió Ana?") < t.indexOf("¿y qué le respondimos?"));
+  assert.match(t, /EL DUEÑO: ¿qué pidió Ana\?/);
+  assert.match(t, /TÚ: 500 flyers\./);
+});
+
+test("el hilo se corta en pocos turnos y no arrastra la sesión entera", () => {
+  const muchos = Array.from({ length: 10 }, (_, i) => ({
+    pregunta: `pregunta ${i}`,
+    respuesta: `respuesta ${i}`,
+  }));
+  const t = hiloEnTexto(muchos);
+  assert.equal(t.split("EL DUEÑO:").length - 1, 3);
+});
+
+test("sin hilo no se inventa una conversación previa", () => {
+  assert.equal(hiloEnTexto([]), "");
+});
+
+test("una respuesta kilométrica del hilo se recorta", () => {
+  const t = hiloEnTexto([{ pregunta: "p", respuesta: "x".repeat(3000) }]);
+  assert.ok(t.length < 700);
+});
+
+test("⭐ una repregunta hereda los términos de la anterior", () => {
+  // «¿y qué le respondimos?» no tiene con qué buscar: sin esto Isabel
+  // contestaría a ciegas justo cuando el dueño está profundizando.
+  assert.deepEqual(palabrasClave("¿y qué le respondimos?"), ["respondimos"]);
+
+  const claves = clavesDelHilo([
+    { pregunta: "¿qué pidió Ana Pérez?", respuesta: "500 flyers" },
+  ]);
+  assert.ok(claves.includes("pidió"));
+  assert.ok(claves.includes("Pérez"));
+});
+
+test("sin hilo, clavesDelHilo no revienta", () => {
+  assert.deepEqual(clavesDelHilo([]), []);
 });

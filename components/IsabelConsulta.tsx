@@ -33,6 +33,18 @@ export default function IsabelConsulta({ previos = [] }: { previos?: Turno[] }) 
     iniciar(async () => {
       const fd = new FormData();
       fd.set("pregunta", limpia);
+      /**
+       * Los últimos turnos van con la pregunta, para que Isabel entienda una
+       * repregunta («¿y qué le respondimos?») sin tener que repetirle de quién
+       * se estaba hablando. Es lo que separa una conversación de una serie de
+       * consultas sueltas.
+       */
+      fd.set(
+        "hilo",
+        JSON.stringify(
+          todos.slice(0, 3).map((t) => ({ pregunta: t.pregunta, respuesta: t.respuesta.respuesta })),
+        ),
+      );
       const r = await preguntar(fd);
       if (!r.ok || !r.consulta) {
         setError(r.motivo ?? "Isabel no pudo responder.");

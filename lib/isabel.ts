@@ -6,6 +6,8 @@ import { situacionDelNegocio } from "@/lib/isabelDatos";
 import {
   armarConversaciones,
   armarPrompt,
+  clavesDelHilo,
+  hiloEnTexto,
   normalizarRespuesta,
   palabrasClave,
   panoramaEnTexto,
@@ -16,6 +18,7 @@ import {
   type MensajeIsabel,
   type PanoramaNegocio,
   type RespuestaIsabel,
+  type TurnoIsabel,
 } from "@/lib/isabelCore";
 
 /**
@@ -214,6 +217,7 @@ export async function panoramaDelNegocio(clienteId: string): Promise<PanoramaNeg
 export async function historialRelevante(
   clienteId: string,
   pregunta: string,
+  hilo: TurnoIsabel[] = [],
 ): Promise<{ mensajes: MensajeIsabel[]; porBusqueda: boolean }> {
   const supa = db();
   const { data: empleados } = await supa
@@ -223,7 +227,14 @@ export async function historialRelevante(
   const ids = (empleados ?? []).map((e) => e.id as string);
   if (!ids.length) return { mensajes: [], porBusqueda: false };
 
-  const claves = palabrasClave(pregunta, 3);
+  /**
+   * Si la pregunta actual no trae ningún término propio —«¿y qué le
+   * respondimos?»— se buscan los de la pregunta anterior. Sin esto, una
+   * repregunta se queda sin conversaciones y Isabel contesta a ciegas
+   * justamente cuando el dueño está profundizando en algo.
+   */
+  const propias = palabrasClave(pregunta, 3);
+  const claves = propias.length ? propias : clavesDelHilo(hilo);
   let chats: string[] = [];
 
   /**
@@ -242,7 +253,8 @@ export async function historialRelevante(
     try {
       const { data, error } = await supa.rpc("ed_buscar_mensajes_isabel", {
         p_cliente_id: clienteId,
-        p_consulta: pregunta,
+        // Con la repregunta sola no hay nada que buscar: se le suma la anterior.
+        p_consulta: propias.length ? pregunta : `${hilo[0]?.pregunta ?? ""} ${pregunta}`.trim(),
         p_limite: 12,
       });
       if (!error && Array.isArray(data)) {
@@ -399,6 +411,8 @@ export async function historialDeConsultas(
 export async function preguntarAIsabel(
   clienteId: string,
   preguntaCruda: string,
+  /** Últimos turnos, del más nuevo al más viejo. Ver `hiloEnTexto`. */
+  hilo: TurnoIsabel[] = [],
 ): Promise<{ ok: boolean; motivo?: string; consulta?: ConsultaIsabel }> {
   const v = validarPregunta(preguntaCruda);
   if (!v.ok) return { ok: false, motivo: v.motivo };
@@ -421,7 +435,7 @@ export async function preguntarAIsabel(
      * que relee el archivo cada vez y alguien que trabaja ahí.
      */
     situacionDelNegocio(clienteId),
-    historialRelevante(clienteId, pregunta),
+    historialRelevante(clienteId, pregunta, hilo),
     listarFichas(clienteId).catch(() => []),
   ]);
 
@@ -437,6 +451,7 @@ export async function preguntarAIsabel(
     hoy: hoyEnChile(),
     panorama: panoramaEnTexto(panorama),
     situacion: situacionEnTexto(situacion),
+    hilo: hiloEnTexto(hilo),
     fichas: fichasTexto,
     conversaciones: armarConversaciones(historial.mensajes),
     pregunta,

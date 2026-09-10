@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { obtenerUsuarioConPermiso } from "@/lib/auth";
 import { preguntarAIsabel, type ConsultaIsabel } from "@/lib/isabel";
+import type { TurnoIsabel } from "@/lib/isabelCore";
 import { limitarDistribuido } from "@/lib/seguridad";
 
 /**
@@ -29,7 +30,36 @@ export async function preguntar(
     };
   }
 
-  const r = await preguntarAIsabel(usuario.clienteId, String(formData.get("pregunta") ?? ""));
+  /**
+   * EL HILO viene del navegador, no de la base: así funciona con o sin la
+   * migración 298, y es la misma pantalla la que lo tiene en pantalla.
+   *
+   * Igual se sanea acá y no se confía en la forma: es texto que entra a un
+   * prompt. Se recortan los turnos, el largo de cada uno, y cualquier cosa que
+   * no sea un par pregunta/respuesta se descarta en silencio.
+   */
+  let hilo: TurnoIsabel[] = [];
+  try {
+    const crudo = JSON.parse(String(formData.get("hilo") ?? "[]")) as unknown;
+    if (Array.isArray(crudo)) {
+      hilo = crudo
+        .filter((t): t is Record<string, unknown> => Boolean(t) && typeof t === "object")
+        .slice(0, 3)
+        .map((t) => ({
+          pregunta: String(t.pregunta ?? "").slice(0, 300),
+          respuesta: String(t.respuesta ?? "").slice(0, 600),
+        }))
+        .filter((t) => t.pregunta || t.respuesta);
+    }
+  } catch {
+    // Sin hilo: Isabel contesta como si fuera la primera pregunta.
+  }
+
+  const r = await preguntarAIsabel(
+    usuario.clienteId,
+    String(formData.get("pregunta") ?? ""),
+    hilo,
+  );
 
   // Para que la próxima carga de la página muestre la pregunta en el historial.
   revalidatePath("/isabel");
