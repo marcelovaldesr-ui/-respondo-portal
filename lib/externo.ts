@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { db } from "@/lib/db";
+import { auditarSistema } from "@/lib/auditoria";
 import { firmaValidaCon, limitarDistribuido } from "@/lib/seguridad";
 
 /**
@@ -28,8 +29,8 @@ import { firmaValidaCon, limitarDistribuido } from "@/lib/seguridad";
  *   - el reloj tiene que estar a menos de 5 minutos;
  *   - el nonce se consume UNA vez (se reutiliza el limitador distribuido con
  *     tope 1 en 10 minutos: sin tabla nueva);
- * La firma vieja (solo cuerpo) se sigue aceptando mientras Gestión se
- * actualiza, dejando una advertencia en el log. Ver `MODO_FIRMA_VIEJA`.
+ * La firma vieja (solo cuerpo) se acepta hasta una FECHA, no hasta que alguien
+ * se acuerde de apagarla. Ver `FIN_FIRMA_VIEJA`.
  *
  * ORDEN DE LAS BARRERAS: límite por IP → firma → límite por cliente. Antes el
  * límite por cliente se consumía ANTES de verificar la firma, así que
@@ -47,13 +48,41 @@ type Exito = { ok: true; clienteId: string; cuerpo: Record<string, unknown> };
 /** Tolerancia de reloj entre el sistema del cliente y este servidor. */
 const TOLERANCIA_SEG = 5 * 60;
 /**
- * Mientras esté en true se acepta la firma sin ts/nonce. Bajar a false cuando
- * todos los sistemas conectados manden la firma nueva (Gestión ya lo hace desde
- * el 3-sep-2026).
+ * FIN DE LA FIRMA VIEJA — una FECHA, no un interruptor.
+ *
+ * Reproducido el 11-sep-2026 contra el servidor: una petición firmada con el
+ * esquema viejo se acepta las veces que se quiera, para siempre. En
+ * /api/externo/pendientes y /api/externo/conversacion eso es una copia de la
+ * conversación cada vez que al que la capturó se le antoje. En
+ * /api/externo/responder y /api/externo/adjunto es peor: `enviarComoHumano` no
+ * tiene guarda de idempotencia, así que reenvía de verdad —el mismo WhatsApp,
+ * al mismo cliente final, otra vez—. Una firma vieja capturada no es un dato
+ * viejo: es una credencial permanente.
+ *
+ * Por qué una fecha y no `const MODO_FIRMA_VIEJA = false`. Apagarlo hoy a
+ * ciegas deja al negocio sin poder responderle a sus clientes desde su propia
+ * app si su sistema todavía no migró, y eso no se puede comprobar desde este
+ * repositorio: el único emisor —la app de Gestión— vive fuera. Dejarlo en un
+ * booleano tampoco sirve: es exactamente la seguridad que depende de que
+ * alguien se acuerde para siempre. Una ventana con fecha se cierra sola.
+ *
+ * `RESPONDO_FIRMA_VIEJA_HASTA` permite correr la fecha desde la configuración
+ * —sin volver a compilar— si el día de la verdad Gestión todavía no migró. Una
+ * fecha ilegible no abre la ventana: la cierra.
+ *
+ * Para saber si alguien sigue usándola antes de la fecha, cada aceptación
+ * queda registrada en `ed_auditoria_portal` como `firma_vieja_aceptada`
+ * (máximo una por cliente por hora: es una señal, no un log de tráfico).
  */
-const MODO_FIRMA_VIEJA = true;
+const FIN_FIRMA_VIEJA = "2026-09-30T00:00:00Z";
 
-let ultimoAvisoFirmaVieja = 0;
+export function ventanaViejaAbierta(): boolean {
+  const hasta = Date.parse(process.env.RESPONDO_FIRMA_VIEJA_HASTA || FIN_FIRMA_VIEJA);
+  if (!Number.isFinite(hasta)) return false;
+  return Date.now() < hasta;
+}
+
+const ultimoAvisoFirmaVieja = new Map<string, number>();
 
 function no(status: number, error: string): Fallo {
   return { ok: false, respuesta: Response.json({ ok: false, error }, { status }) };
@@ -117,13 +146,25 @@ async function firmaCorrecta(
     return unico.ok;
   }
 
-  if (!MODO_FIRMA_VIEJA) return false;
+  if (!ventanaViejaAbierta()) return false;
   const ok = secretos.some((s) => firmaValidaCon(s, material, firma));
-  if (ok && Date.now() - ultimoAvisoFirmaVieja > 3_600_000) {
-    ultimoAvisoFirmaVieja = Date.now();
-    console.warn(`[externo] ${clienteId} sigue firmando sin ts/nonce: actualizar su integración`);
-  }
+  if (ok) await avisarFirmaVieja(clienteId);
   return ok;
+}
+
+/** Deja rastro de que alguien todavía firma sin ts/nonce. Una vez por hora. */
+async function avisarFirmaVieja(clienteId: string): Promise<void> {
+  const ahora = Date.now();
+  if (ahora - (ultimoAvisoFirmaVieja.get(clienteId) ?? 0) < 3_600_000) return;
+  ultimoAvisoFirmaVieja.set(clienteId, ahora);
+  console.warn(
+    JSON.stringify({
+      evento: "externo.firma_vieja",
+      cliente: clienteId,
+      hasta: process.env.RESPONDO_FIRMA_VIEJA_HASTA || FIN_FIRMA_VIEJA,
+    }),
+  );
+  await auditarSistema(clienteId, "firma_vieja_aceptada");
 }
 
 /**

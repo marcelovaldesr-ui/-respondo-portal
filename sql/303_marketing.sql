@@ -42,8 +42,9 @@ create table if not exists ed_mk_creatividades (
   texto          text not null default '',
   cta            text not null default '',
 
-  -- Imagen: URL pública del bucket, y el prompt con que se generó (para
-  -- poder regenerar o variar sin volver a escribirlo).
+  -- Imagen: puntero `sb:<ruta>` al bucket privado (la 304 migró las URLs
+  -- públicas que guardaba antes), y el prompt con que se generó (para poder
+  -- regenerar o variar sin volver a escribirlo).
   imagen_url     text,
   imagen_prompt  text,
 
@@ -107,11 +108,24 @@ comment on table ed_mk_campanas is
   'Borradores de campaña del asistente de Marketing. estado=publicada solo lo escribe una publicación real por API.';
 
 -- ── 3. El bucket de imágenes ────────────────────────────────────────────────
--- Público como `logos` (296): una creatividad es material que el negocio va a
--- publicar en Meta. 4 MB de tope: una imagen generada pesa 60-200 KB en JPEG.
+-- PRIVADO. 4 MB de tope: una imagen generada pesa 60-200 KB en JPEG.
+--
+-- Esta migración decía `public = true` —el razonamiento era que una creatividad
+-- termina publicada en Meta de todos modos—. Estaba mal: entre que se genera y
+-- que se publica es un borrador del negocio, y una URL de bucket público no
+-- caduca ni pide sesión, así que una sola filtración dejaba el archivo expuesto
+-- para siempre. La 304 lo cerró y movió las imágenes detrás de
+-- /api/marketing/imagen.
+--
+-- Corregido acá, en el origen, y no solo en la 304 (auditoría 11-sep-2026):
+-- el `on conflict do update set public = true` volvía a ABRIR el bucket cada
+-- vez que alguien re-ejecutara este archivo. Una política de seguridad que
+-- depende de que nadie vuelva a correr una migración no es una política.
+-- Corriendo 303 y 304 en orden desde cero el resultado es el mismo; corriendo
+-- 303 sola, hoy, el bucket queda cerrado en vez de abierto.
 insert into storage.buckets (id, name, public, file_size_limit)
-values ('creatividades', 'creatividades', true, 4194304)
-on conflict (id) do update set public = true, file_size_limit = 4194304;
+values ('creatividades', 'creatividades', false, 4194304)
+on conflict (id) do update set public = false, file_size_limit = 4194304;
 
 -- ── Verificación ────────────────────────────────────────────────────────────
 select

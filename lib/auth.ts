@@ -1,15 +1,14 @@
 import { redirect } from "next/navigation";
-import { correoVerificadoDeSesion } from "@/lib/authCore";
 import { db } from "@/lib/db";
 import { supabaseServidor } from "@/lib/supabaseAuth";
-import { tienePermiso, type PermisoPortal } from "@/lib/permisos";
+import { esRolValido, tienePermiso, type PermisoPortal, type RolPortal } from "@/lib/permisos";
 
 export type UsuarioPortal = {
   email: string;
   clienteId: string;
   clienteNombre: string;
   clienteRubro: string;
-  rol: "dueno" | "staff";
+  rol: RolPortal;
 };
 
 /**
@@ -28,8 +27,7 @@ export async function obtenerUsuarioPortal(): Promise<UsuarioPortal | null> {
     data: { user },
   } = await auth.auth.getUser();
 
-  // Solo correos verificados (Fase 0): ver lib/authCore.ts.
-  const email = correoVerificadoDeSesion(user);
+  const email = user?.email?.toLowerCase().trim();
   if (!email) return null;
 
   const { data, error } = await db()
@@ -41,6 +39,25 @@ export async function obtenerUsuarioPortal(): Promise<UsuarioPortal | null> {
 
   if (error || !data) return null;
 
+  // FAIL CLOSED. Antes esta línea decía `(data.rol as "dueno" | "staff") ?? "dueno"`:
+  // un `as` no valida nada en tiempo de ejecución —solo silencia al compilador— y
+  // el `??` convertía la ausencia de dato en el rol MÁS privilegiado del portal.
+  // Hoy la columna es `not null check (rol in ('dueno','staff'))`, así que ninguna
+  // de las dos ramas llega a ejecutarse; el problema era que la seguridad
+  // dependiera de eso sin decirlo. Un rol que no reconocemos no es un rol con
+  // menos permisos: es un dato de autorización roto, y no abre sesión.
+  if (!esRolValido(data.rol)) {
+    console.error(
+      JSON.stringify({
+        evento: "auth.rol_invalido",
+        email,
+        cliente: data.cliente_id,
+        rol: typeof data.rol === "string" ? data.rol.slice(0, 40) : String(data.rol),
+      }),
+    );
+    return null;
+  }
+
   const cliente = data.ed_clientes as unknown as {
     nombre: string;
     rubro: string;
@@ -51,7 +68,7 @@ export async function obtenerUsuarioPortal(): Promise<UsuarioPortal | null> {
     clienteId: data.cliente_id as string,
     clienteNombre: cliente?.nombre ?? "Tu negocio",
     clienteRubro: cliente?.rubro ?? "",
-    rol: (data.rol as "dueno" | "staff") ?? "dueno",
+    rol: data.rol,
   };
 }
 

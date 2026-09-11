@@ -18,7 +18,12 @@ create table if not exists portal_usuarios (
   id          uuid primary key default gen_random_uuid(),
   email       text not null unique,                 -- SIEMPRE en minúsculas
   cliente_id  uuid not null references ed_clientes(id) on delete cascade,
-  rol         text not null default 'dueno' check (rol in ('dueno','staff')),
+  -- Por omisión STAFF, no dueño (auditoría 11-sep-2026 / migración 305). Los
+  -- usuarios del portal se insertan a mano por SQL, y un insert apurado sin la
+  -- columna `rol` creaba en silencio un DUEÑO: integraciones, publicidad e
+  -- historial completo de conversaciones. Olvidar una columna no puede otorgar
+  -- permisos. Si hacía falta un dueño, se nota enseguida y se corrige.
+  rol         text not null default 'staff' check (rol in ('dueno','staff')),
   activo      boolean not null default true,
   creado_en   timestamptz not null default now()
 );
