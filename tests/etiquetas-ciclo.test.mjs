@@ -7,6 +7,8 @@ import {
   conEtiqueta,
   etiquetasTrasAtencion,
   etiquetasTrasCierre,
+  etiquetasTrasPagoConfirmado,
+  etiquetasTrasPagoInformado,
   sinEtiqueta,
   tieneAbiertas,
 } from "../lib/etiquetasCiclo.ts";
@@ -90,4 +92,13 @@ test("conEtiqueta / sinEtiqueta son idempotentes y devuelven la misma referencia
   assert.deepEqual(conEtiqueta(e, "b"), ["a", "b"]);
   assert.equal(sinEtiqueta(e, "b"), e);
   assert.deepEqual(sinEtiqueta(["a", "b"], "b"), ["a"]);
+});
+
+
+test("pago INFORMADO: venta ganada pero queda «Pago por confirmar»; confirmado: se va (Fase 0)", () => {
+  const informado = etiquetasTrasPagoInformado(["cotizacion", "pago_pendiente"]);
+  assert.deepEqual(informado, ["cliente", "pago_por_confirmar"]);
+  assert.deepEqual(etiquetasTrasCierre(informado, "ganado"), informado, "la limpieza de ganados no la borra");
+  assert.deepEqual(etiquetasTrasCierre(informado, "perdido"), ["cliente"]);
+  assert.deepEqual(etiquetasTrasPagoConfirmado(informado), ["cliente"]);
 });

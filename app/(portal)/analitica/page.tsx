@@ -414,7 +414,7 @@ export default async function Analitica({
           </div>
           <div className="mt-6">
             <div className="text-[13px] font-bold" style={{ color: "var(--muted)" }}>
-              Conversaciones ({a.conversaciones})
+              Conversaciones respondidas ({a.conversaciones})
             </div>
             <div className="mt-2.5">
               <Barra
@@ -439,7 +439,10 @@ export default async function Analitica({
               ["Mensajes recibidos", a.recibidos],
               ["Respuestas enviadas", a.enviadosIA + a.enviadosHumano],
               ["Personas que escribieron", a.contactosActivos],
-              ["Conversaciones", a.conversaciones],
+              // "Respondidas" a propósito (Fase 0): acá se cuentan los chats con al
+              // menos una RESPUESTA en el período. Inicio e Isabel cuentan
+              // conversaciones con cualquier actividad (lib/metricas.ts).
+              ["Conversaciones respondidas", a.conversaciones],
             ].map(([t, v]) => (
               <div key={String(t)}>
                 <div className="h-cifra cifra">{String(v)}</div>

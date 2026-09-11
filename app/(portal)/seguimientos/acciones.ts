@@ -13,7 +13,9 @@ import { aprobarPropuesta, rechazarPropuesta } from "@/lib/propuestasSeguimiento
  * negocio le escriba a los clientes de otro.
  */
 
-export async function aprobar(formData: FormData): Promise<{ ok: boolean; error?: string }> {
+export async function aprobar(
+  formData: FormData,
+): Promise<{ ok: boolean; error?: string; aviso?: string; retirar?: boolean }> {
   const usuario = await obtenerUsuarioConPermiso("gestionar_embudo");
   if (!usuario) return { ok: false, error: "Sesión no válida" };
 

@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { db } from "@/lib/db";
 import { obtenerUsuarioConPermiso } from "@/lib/auth";
 import { proveedorMeta } from "@/lib/ads/meta";
+import { traducirFalla } from "@/lib/marketing/fallas";
 
 /**
  * Acciones de la pantalla de conexión.
@@ -60,7 +61,7 @@ export async function elegirCuenta(formData: FormData): Promise<{ ok: boolean; m
       .eq("proveedor", "meta");
     if (error) throw new Error(error.message);
   } catch (e) {
-    return { ok: false, motivo: (e as Error).message };
+    return { ok: false, motivo: traducirFalla({ proveedor: "almacen", operacion: "integraciones", clienteId: usuario.clienteId, crudo: e }) };
   }
 
   revalidatePath("/marketing", "layout");
@@ -99,7 +100,7 @@ export async function guardarDataset(
   } catch (e) {
     return {
       ok: false,
-      motivo: `No se pudo guardar (¿falta la migración 302?): ${(e as Error).message}`,
+      motivo: traducirFalla({ proveedor: "almacen", operacion: "guardarDataset", clienteId: usuario.clienteId, crudo: e }),
     };
   }
 
@@ -126,7 +127,7 @@ export async function desconectar(): Promise<{ ok: boolean; motivo?: string }> {
       .eq("proveedor", "meta");
     if (error) throw new Error(error.message);
   } catch (e) {
-    return { ok: false, motivo: (e as Error).message };
+    return { ok: false, motivo: traducirFalla({ proveedor: "almacen", operacion: "integraciones", clienteId: usuario.clienteId, crudo: e }) };
   }
 
   revalidatePath("/marketing", "layout");

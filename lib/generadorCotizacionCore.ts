@@ -45,12 +45,20 @@ export const DIAS_SIN_REPETIR = 45;
 export const ETIQUETA = "cotizacion";
 /** Etapa del embudo equivalente. */
 export const ETAPA = "cotizado";
+/** Mismo valor que MOTIVO_SILENCIO de lib/embudo.ts (acá sin imports a propósito). */
+export const MOTIVO_PERDIDO_SILENCIO = "sin_respuesta";
 
 export type Candidato = {
   chatId: string;
   /** Etiquetas actuales del contacto. */
   etiquetas: string[];
   etapa: string | null;
+  /**
+   * Por qué está en esa etapa (ed_contactos.etapa_motivo). Importa para
+   * distinguir "perdido porque dijo que no" de "perdido porque nadie contestó
+   * en 7 días" (motivo `sin_respuesta`), que es justo una cotización sin respuesta.
+   */
+  etapaMotivo?: string | null;
   /** Fecha del último mensaje de la conversación, venga de quien venga. */
   ultimoMensajeEn: string | null;
   /**
@@ -90,11 +98,23 @@ export function decidirCotizacion(
     return { enviar: false, motivo: "marcado como no contactar" };
   }
 
-  const esCotizacion = c.etiquetas.includes(ETIQUETA) || c.etapa === ETAPA;
+  /**
+   * ⚠️ PERDIDO POR SILENCIO NO ES "DIJO QUE NO" (Fase 0, 11-sep-2026).
+   *
+   * El embudo cierra como `perdido · sin_respuesta` toda oportunidad con 7 días
+   * sin respuesta, y al cerrarla se retira la etiqueta "cotización". Beto busca
+   * justamente cotizaciones con 3 a 30 días de silencio: sin esta excepción, a
+   * partir del día 7 ninguna calificaba y las propuestas ya hechas vencían al
+   * aprobarlas. Desde que ese cierre corre cada hora en el cron (antes solo al
+   * abrir /embudo), el choque era sistemático. Un perdido por silencio pasa
+   * la reja; el juez lee el hilo y decide si de verdad hubo una cotización.
+   */
+  const perdidoPorSilencio = c.etapa === "perdido" && c.etapaMotivo === MOTIVO_PERDIDO_SILENCIO;
+  const esCotizacion = c.etiquetas.includes(ETIQUETA) || c.etapa === ETAPA || perdidoPorSilencio;
   if (!esCotizacion) return { enviar: false, motivo: "no hay cotización de por medio" };
 
   // Ya se cerró: ni perseguir a quien compró ni a quien dijo que no.
-  if (c.etapa === "ganado" || c.etapa === "perdido") {
+  if (c.etapa === "ganado" || (c.etapa === "perdido" && !perdidoPorSilencio)) {
     return { enviar: false, motivo: `la oportunidad ya está ${c.etapa}` };
   }
 

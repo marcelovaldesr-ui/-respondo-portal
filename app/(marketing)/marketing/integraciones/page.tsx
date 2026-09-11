@@ -21,7 +21,7 @@ const AVISOS: Record<string, { texto: string; tono: "ok" | "error" }> = {
   elegir: { texto: "Meta autorizó el acceso. Elige cuál de tus cuentas publicitarias es la de este negocio.", tono: "ok" },
   cancelado: { texto: "Se canceló la autorización en Meta. No se guardó nada.", tono: "error" },
   sin_cuentas: { texto: "La cuenta de Meta con la que entraste no administra ninguna cuenta publicitaria. Entra con la cuenta que sí las administra.", tono: "error" },
-  no_configurado: { texto: "La conexión con Meta todavía no está habilitada en esta instalación de Respondo.", tono: "error" },
+  no_configurado: { texto: "La lectura de tu cuenta publicitaria no está habilitada en tu plan.", tono: "error" },
   estado_invalido: { texto: "El enlace de vuelta venció o no era válido. Vuelve a intentarlo desde acá.", tono: "error" },
   respuesta_incompleta: { texto: "Meta devolvió una respuesta incompleta.", tono: "error" },
   no_se_guardo: { texto: "No pudimos guardar la conexión. Vuelve a intentarlo.", tono: "error" },
@@ -188,7 +188,7 @@ export default async function Integraciones({ searchParams }: { searchParams: Pr
           }
           pie={
             !metaAdsConfigurado() ? (
-              <span style={{ fontSize: "12.5px", color: "var(--alerta)" }}>No habilitada en esta instalación de Respondo.</span>
+              <span style={{ fontSize: "12.5px", color: "var(--alerta)" }}>No está habilitada en tu plan.</span>
             ) : !conexion ? (
               <a href="/api/ads/conectar" className="btn-primario">
                 Conectar Meta
@@ -246,7 +246,7 @@ export default async function Integraciones({ searchParams }: { searchParams: Pr
                 </p>
               )}
               <p className="mt-3" style={{ fontSize: "11.5px", color: "var(--muted-2)" }}>
-                Publicar campañas desde Respondo requiere el permiso <code>ads_management</code> y una revisión de la aplicación en Meta.
+                Respondo lee tu cuenta publicitaria pero no la modifica: no crea, no pausa ni cambia presupuestos.
                 Por ahora el asistente arma la campaña completa y la dejas en Meta en dos minutos.
               </p>
             </>
@@ -289,7 +289,7 @@ export default async function Integraciones({ searchParams }: { searchParams: Pr
               </div>
               {faltaMigracion ? (
                 <p className="mt-4" style={{ fontSize: "12.5px", color: "var(--alerta)" }}>
-                  Falta aplicar la migración <code>sql/302_ads.sql</code>. Hasta entonces no hay dónde guardar el conjunto de datos.
+                  Todavía no está habilitado el guardado del conjunto de datos en tu cuenta. Es un paso nuestro y ya está avisado.
                 </p>
               ) : (
                 wabaId && (
@@ -338,8 +338,8 @@ export default async function Integraciones({ searchParams }: { searchParams: Pr
       </div>
 
       <p className="mt-7 max-w-3xl leading-relaxed" style={{ fontSize: "11.5px", color: "var(--muted-2)" }}>
-        De dónde viene cada venta se ve desde el primer día, sin conectar nada, y el estudio creativo y el asistente de campañas funcionan
-        siempre. Lo de esta pantalla agrega el costo y hace que Meta aprenda de tus resultados.
+        De dónde vienen las ventas que llegan por WhatsApp se ve desde el primer día, sin conectar nada, y el estudio creativo y el
+        asistente de campañas funcionan igual. Lo de esta pantalla agrega el costo y hace que Meta aprenda de tus resultados.
       </p>
     </main>
   );

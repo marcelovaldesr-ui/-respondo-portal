@@ -64,7 +64,11 @@ export function tieneAbiertas(etiquetas: readonly string[]): boolean {
  */
 export function etiquetasTrasCierre(etiquetas: readonly string[], etapa: string): string[] {
   if (etapa !== "ganado" && etapa !== "perdido") return etiquetas as string[];
-  const sinAbiertas = etiquetas.filter((e) => !ABIERTAS.has(e));
+  // "Pago por confirmar" sobrevive a GANADO (la venta está cerrada, la plata
+  // todavía no se confirmó) pero no a PERDIDO.
+  const sinAbiertas = etiquetas.filter(
+    (e) => !ABIERTAS.has(e) && !(etapa === "perdido" && e === ETIQUETA_PAGO_POR_CONFIRMAR),
+  );
   let out = sinAbiertas;
   if (etapa === "ganado") {
     out = out.filter((e) => e !== "cliente_nuevo");
@@ -100,6 +104,33 @@ export function alAgregar(actuales: readonly string[], nuevas: readonly string[]
 export function etiquetasTrasAtencion(etiquetas: readonly string[]): string[] {
   if (!etiquetas.includes("necesita_atencion")) return etiquetas as string[];
   return etiquetas.filter((e) => e !== "necesita_atencion");
+}
+
+/**
+ * PAGO INFORMADO ≠ PAGO CONFIRMADO (Fase 0, 11-sep-2026).
+ *
+ * Cuando el detector de cierres lee «ya transferí» o ve un comprobante, eso es
+ * evidencia COMERCIAL suficiente para dar la venta por ganada, pero no prueba
+ * que la plata llegó. Antes el cierre retiraba «Falta pago» y no quedaba
+ * ninguna marca de que faltaba verificar la transferencia. Ahora queda
+ * «Pago por confirmar» hasta que una persona marca el cobro como pagado.
+ *
+ * Deliberadamente NO está en ETIQUETAS_ABIERTAS: la limpieza de ganados
+ * (reconciliarEstados) la borraría en el latido siguiente.
+ */
+export const ETIQUETA_PAGO_POR_CONFIRMAR = "pago_por_confirmar";
+
+/** El cliente dice que pagó: venta ganada, pago por confirmar. */
+export function etiquetasTrasPagoInformado(etiquetas: readonly string[]): string[] {
+  const cerradas = etiquetasTrasCierre(etiquetas, "ganado");
+  const out = conEtiqueta(cerradas, ETIQUETA_PAGO_POR_CONFIRMAR);
+  return iguales(out, etiquetas) ? (etiquetas as string[]) : out;
+}
+
+/** Una persona (o un proveedor de pago) confirmó el cobro: ya no falta nada. */
+export function etiquetasTrasPagoConfirmado(etiquetas: readonly string[]): string[] {
+  const out = sinEtiqueta(etiquetasTrasCierre(etiquetas, "ganado"), ETIQUETA_PAGO_POR_CONFIRMAR);
+  return iguales(out, etiquetas) ? (etiquetas as string[]) : out;
 }
 
 /** Agrega una etiqueta si no está. Misma referencia si ya estaba. */

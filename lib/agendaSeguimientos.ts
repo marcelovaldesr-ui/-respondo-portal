@@ -1,4 +1,5 @@
 import { db } from "@/lib/db";
+import { COL_DESCARTADO } from "@/lib/seguimientosCore";
 import { plantillaPara, render, limpiarParam } from "@/lib/plantillas";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { formatearSlot, fechaChileDe, ZONA_AGENDA } from "@/lib/agendaCore";
@@ -240,15 +241,30 @@ export async function programarSeguimientosCita(params: {
 /**
  * Anula los seguimientos PENDIENTES (no enviados) de una cita — se usa al
  * cancelar o reagendar. Defensivo: errores se absorben.
+ *
+ * ACOTADO AL NEGOCIO (auditoría 11-sep-2026): `ed_seguimientos` no tiene
+ * `cliente_id` (cuelga del empleado) y antes el borrado filtraba solo por
+ * `cita_id`. Con un id de cita ajeno se borraban los recordatorios de otro
+ * negocio. Ahora solo toca filas de empleados del `clienteId` indicado.
  */
 export async function anularSeguimientosDeCita(
   citaId: string,
+  clienteId: string,
   supa: SupabaseClient = db(),
 ): Promise<void> {
+  if (!citaId || !clienteId) return;
   try {
+    const { data: emps, error } = await supa
+      .from("ed_empleados")
+      .select("id")
+      .eq("cliente_id", clienteId);
+    if (error) throw new Error(error.message);
+    const ids = (emps ?? []).map((e) => e.id as string);
+    if (!ids.length) return;
     await supa
       .from("ed_seguimientos")
       .delete()
+      .in("empleado_id", ids)
       .is("enviado_en", null)
       .contains("variables", { cita_id: citaId });
   } catch (e) {
@@ -275,6 +291,8 @@ export async function confirmacionPendiente(
       .eq("tipo", "confirmacion_cita")
       .eq("ed_empleados.cliente_id", clienteId)
       .not("enviado_en", "is", null)
+      // Un descartado nunca llegó: un "sí" del cliente no puede confirmarlo.
+      .is(COL_DESCARTADO, null)
       .gte("enviado_en", desde)
       .order("enviado_en", { ascending: false })
       .limit(3);
@@ -321,6 +339,8 @@ export async function encuestaPendiente(
       .eq("tipo", "encuesta_postventa")
       .eq("ed_empleados.cliente_id", clienteId)
       .not("enviado_en", "is", null)
+      // Un descartado nunca llegó: un "sí" del cliente no puede confirmarlo.
+      .is(COL_DESCARTADO, null)
       .gte("enviado_en", desde)
       .order("enviado_en", { ascending: false })
       .limit(3);

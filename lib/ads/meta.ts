@@ -152,7 +152,10 @@ function traducirError<T>(r: RespuestaGraph | null): ResultadoAds<T> {
   const mensaje = String(err.message ?? `HTTP ${r.status}`);
 
   if (codigo === 190 || r.status === 401) return fallo("token_vencido", mensaje);
-  if (codigo === 200 || codigo === 10 || codigo === 299) return fallo("sin_permiso", mensaje);
+  // El 403 sin código reconocible también es permiso: caía en «respuesta rara»
+  // y le decía al dueño «Meta respondió algo que no supimos interpretar»
+  // cuando lo que pasaba era que le sacaron el acceso a la cuenta.
+  if (codigo === 200 || codigo === 10 || codigo === 299 || r.status === 403) return fallo("sin_permiso", mensaje);
   if (codigo === 4 || codigo === 17 || codigo === 32 || codigo === 613 || sub === 2446079) {
     return fallo("limite_api", mensaje);
   }

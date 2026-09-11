@@ -7,6 +7,8 @@ import { pushConfigurado } from "@/lib/push";
 import { ipDeRequest } from "@/lib/reservasPublicas";
 import { LATIDO_CRON_SEGUIMIENTOS, estadoDelCron, leerLatido } from "@/lib/latidos";
 import { tokenDeFila } from "@/lib/whatsapp";
+import { leerProcesos } from "@/lib/procesos";
+import { informesFaltantes } from "@/lib/insightsAuto";
 
 /**
  * Extrae el parámetro ?k= de la URL de webhook que WAHA tiene configurada.
@@ -188,6 +190,48 @@ async function chequearActividad(): Promise<Chequeo> {
  */
 async function chequearCron(): Promise<Chequeo> {
   return estadoDelCron(await leerLatido(LATIDO_CRON_SEGUIMIENTOS));
+}
+
+/**
+ * 4b) PROCESOS DEL CRON (Fase 0, 11-sep-2026) — el latido dice "el cron corrió";
+ * esto dice "y cada paso hizo su trabajo". Un paso con fallos seguidos o con
+ * errores frecuentes (ver lib/procesosCore.ts) degrada la salud y dispara el
+ * correo del vigilante externo. Nombra el paso y el último error, no clientes.
+ */
+async function chequearProcesos(): Promise<Chequeo> {
+  const ps = await leerProcesos();
+  if (ps === null) return { ok: true, detalle: "sin registro (falta migración 260)" };
+  if (!ps.length) return { ok: true, detalle: "sin corridas registradas todavía" };
+  const fallando = ps.filter((p) => p.estado === "fallando");
+  const conErrores = ps.filter((p) => p.estado === "con_errores");
+  if (fallando.length) {
+    return { ok: false, detalle: fallando.map((p) => `${p.nombre}: ${p.texto}`).join(" · ") };
+  }
+  return {
+    ok: true,
+    detalle:
+      `${ps.length} procesos` +
+      (conErrores.length ? ` · con un error aislado: ${conErrores.map((p) => p.nombre).join(", ")}` : " · sin errores"),
+  };
+}
+
+/**
+ * 4c) INFORME SEMANAL — cobertura, no solo errores. Detecta también el caso en
+ * que no hubo ningún error visible y el informe simplemente no existe.
+ */
+async function chequearInformes(): Promise<Chequeo> {
+  const r = await informesFaltantes();
+  if (r.error) return { ok: true, detalle: `no se pudo evaluar: ${r.error}` };
+  if (!r.evaluado) return { ok: true, detalle: `semana ${r.semana}: se generan hoy (lunes)` };
+  if (r.faltantes.length) {
+    return {
+      ok: false,
+      detalle: `semana ${r.semana}: ${r.faltantes.length} negocio(s) con actividad sin informe completo (${r.faltantes
+        .map((id) => id.slice(0, 8))
+        .join(", ")})`,
+    };
+  }
+  return { ok: true, detalle: `semana ${r.semana}: todos los negocios con actividad tienen informe` };
 }
 
 /** 5) Modelo de IA (solo en modo full: consume cuota). */
@@ -564,6 +608,8 @@ export async function GET(request: NextRequest) {
     chequeos.puentes_clientes = await medir(chequearPuentes);
     chequeos.waha_un_solo_cliente = await medir(chequearWahaUnCliente);
     chequeos.adjuntos_archivados = await medir(chequearArchivado);
+    chequeos.procesos_cron = await medir(chequearProcesos);
+    chequeos.informes_semanales = await medir(chequearInformes);
   }
   if (full && autorizado) {
     chequeos.modelo_ia = await medir(chequearModelo);

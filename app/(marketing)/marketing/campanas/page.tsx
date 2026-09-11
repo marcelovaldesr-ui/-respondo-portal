@@ -4,11 +4,11 @@ import { diaChile, resolverRango, sumarDias } from "@/lib/ads/periodos";
 import { formatearMonto, formatearNumero } from "@/lib/ads/moneda";
 import { cargarMarketing } from "@/lib/marketing/datos";
 import { modoDemo } from "@/lib/marketing/modo";
-import { NEGOCIO_DEMO } from "@/lib/marketing/demo";
 import Cabecera from "@/components/marketing/Cabecera";
 import TablaCampanas from "@/components/marketing/TablaCampanas";
 import AvisoMigracion from "@/components/marketing/AvisoMigracion";
 import { Ico } from "@/components/marketing/Iconos";
+import { motivoSinPublicidad } from "@/lib/marketing/capacidades";
 
 export const dynamic = "force-dynamic";
 
@@ -32,7 +32,15 @@ export default async function Campanas({ searchParams }: { searchParams: Promise
 
   const reales = p.campanas.filter((c) => c.origen !== "borrador");
   const activas = reales.filter((c) => c.estado === "activa" || c.estado === "publicada").length;
-  const gasto = p.metaConectada ? reales.reduce((a, c) => a + (c.gasto ?? 0), 0) : null;
+  /**
+   * El gasto se suma en la moneda de la CUENTA PUBLICITARIA, no en la del
+   * negocio. Antes se formateaba con `monedaNegocio` (CLP fijo): una cuenta que
+   * factura en dólares mostraba «$1.200» y cualquiera leía mil doscientos pesos.
+   * Si hay más de una moneda entre las campañas, no se suma nada.
+   */
+  const monedas = new Set(reales.filter((c) => c.gasto !== null).map((c) => c.moneda));
+  const monedaPublicidad = monedas.size === 1 ? [...monedas][0] : null;
+  const gasto = p.metaConectada && monedas.size <= 1 ? reales.reduce((a, c) => a + (c.gasto ?? 0), 0) : null;
   const conversaciones = reales.reduce((a, c) => a + c.conversaciones, 0);
   const ventas = reales.reduce((a, c) => a + c.ventas, 0);
   const cobrado = reales.reduce((a, c) => a + c.cobrado, 0);
@@ -54,7 +62,6 @@ export default async function Campanas({ searchParams }: { searchParams: Promise
     <main className="mk-pagina">
       <Cabecera
         titulo="Campañas"
-        cuenta={p.demo ? `${NEGOCIO_DEMO.nombre} · CLP` : null}
         demo={p.demo}
         rango={rango}
         base="/marketing/campanas"
@@ -73,14 +80,14 @@ export default async function Campanas({ searchParams }: { searchParams: Promise
         />
         <Resumen
           etiqueta="Invertido"
-          valor={gasto === null ? "—" : formatearMonto({ valor: gasto, moneda: p.monedaNegocio })}
-          nota={gasto === null ? "Requiere la cuenta de Meta" : "Según Meta, en el período"}
+          valor={gasto === null ? "—" : formatearMonto({ valor: gasto, moneda: monedaPublicidad ?? p.monedaNegocio }, { monedaDelNegocio: p.monedaNegocio })}
+          nota={gasto === null ? motivoSinPublicidad(p.capacidades, p.errorPublicidad) : "Según tu cuenta publicitaria, en el período"}
         />
         <Resumen etiqueta="Conversaciones" valor={formatearNumero(conversaciones)} nota="Desde anuncios de Facebook e Instagram" />
         <Resumen
           etiqueta="Ventas e ingresos"
           valor={`${formatearNumero(ventas)} · ${cobrado > 0 ? formatearMonto({ valor: cobrado, moneda: p.monedaNegocio }) : "—"}`}
-          nota="Cobrado por enlace de pago (piso)"
+          nota="Al menos: lo cobrado por enlace de pago"
           fuerte
         />
       </div>
@@ -92,6 +99,8 @@ export default async function Campanas({ searchParams }: { searchParams: Promise
         monedaNegocio={p.monedaNegocio}
         periodo={rango.clave}
         metaConectada={p.metaConectada}
+          puedeConectarMeta={p.capacidades.puedeConectarMeta}
+          motivoSinPublicidad={motivoSinPublicidad(p.capacidades, p.errorPublicidad)}
         series={series}
       />
     </main>

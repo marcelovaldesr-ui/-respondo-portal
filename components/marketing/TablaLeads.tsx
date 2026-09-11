@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useMemo, useState } from "react";
 import { formatearMonto, formatearNumero } from "@/lib/ads/moneda";
 import type { Lead } from "@/lib/marketing/tipos";
+import { FILTROS_LEADS } from "@/lib/marketing/leadsCore";
 import { EstadoDeLead } from "@/components/marketing/Estado";
 import { Ico } from "@/components/marketing/Iconos";
 
@@ -21,15 +22,7 @@ import { Ico } from "@/components/marketing/Iconos";
  *
  * En demostración no hay conversaciones reales: el enlace se apaga y lo dice.
  */
-export const FILTROS_LEADS: { clave: string; texto: string; f: (l: Lead) => boolean }[] = [
-  { clave: "todos", texto: "Todos", f: () => true },
-  { clave: "nuevos", texto: "Sin avanzar", f: (l) => !l.calificado && l.etapa !== "perdido" },
-  { clave: "calificados", texto: "Calificados", f: (l) => l.calificado },
-  { clave: "cotizados", texto: "Cotizaron", f: (l) => l.cotizo },
-  { clave: "reservaron", texto: "Reservaron", f: (l) => l.agendo },
-  { clave: "compraron", texto: "Compraron", f: (l) => l.compro },
-  { clave: "perdidos", texto: "Perdidos", f: (l) => l.etapa === "perdido" },
-];
+export { FILTROS_LEADS } from "@/lib/marketing/leadsCore";
 
 type Clave = "nombre" | "campanaNombre" | "llegoEn" | "etapa" | "cobrado";
 
@@ -106,15 +99,8 @@ export default function TablaLeads({
   const cambiarOrden = (clave: Clave) =>
     setOrden((o) => (o.clave === clave ? { clave, desc: !o.desc } : { clave, desc: clave !== "nombre" && clave !== "campanaNombre" }));
 
-  const Th = ({ clave, texto, num }: { clave: Clave; texto: string; num?: boolean }) => (
-    <th className={num ? "num" : ""}>
-      <button type="button" onClick={() => cambiarOrden(clave)} aria-sort={orden.clave === clave ? (orden.desc ? "descending" : "ascending") : undefined}>
-        {texto}
-        <span aria-hidden="true" style={{ opacity: orden.clave === clave ? 1 : 0.22, fontSize: 8 }}>
-          {orden.clave === clave && !orden.desc ? "▲" : "▼"}
-        </span>
-      </button>
-    </th>
+  const th = (clave: Clave, texto: string, num?: boolean) => (
+    <Th key={clave} clave={clave} texto={texto} num={num} orden={orden} alOrdenar={cambiarOrden} />
   );
 
   return (
@@ -184,12 +170,12 @@ export default function TablaLeads({
           <table className="mk-tabla min-w-[900px]">
             <thead>
               <tr>
-                <Th clave="nombre" texto="Persona" />
-                {!ocultarCampana && <Th clave="campanaNombre" texto="De dónde vino" />}
-                <Th clave="llegoEn" texto="Llegó" />
-                <Th clave="etapa" texto="Estado" />
+                {th("nombre", "Persona")}
+                {!ocultarCampana && th("campanaNombre", "De dónde vino")}
+                {th("llegoEn", "Llegó")}
+                {th("etapa", "Estado")}
                 <th>Avance</th>
-                <Th clave="cobrado" texto="Valor" num />
+                {th("cobrado", "Valor", true)}
               </tr>
             </thead>
             <tbody>
@@ -297,5 +283,39 @@ function Avance({ l }: { l: Lead }) {
         </span>
       ))}
     </span>
+  );
+}
+
+
+/**
+ * Cabecera ordenable, fuera del cuerpo del componente: definida adentro, React
+ * la veía como un tipo nuevo en cada render y remontaba toda la fila con cada
+ * tecla del buscador.
+ */
+function Th({
+  clave,
+  texto,
+  num,
+  orden,
+  alOrdenar,
+}: {
+  clave: Clave;
+  texto: string;
+  num?: boolean;
+  orden: { clave: Clave; desc: boolean };
+  alOrdenar: (c: Clave) => void;
+}) {
+  const activa = orden.clave === clave;
+  return (
+    // `aria-sort` va en la celda de encabezado, no en el botón: es propiedad de
+    // la columna. En el botón el lector de pantalla simplemente lo ignora.
+    <th className={num ? "num" : ""} aria-sort={activa ? (orden.desc ? "descending" : "ascending") : "none"}>
+      <button type="button" onClick={() => alOrdenar(clave)}>
+        {texto}
+        <span aria-hidden="true" style={{ opacity: activa ? 1 : 0.22, fontSize: 8 }}>
+          {activa && !orden.desc ? "▲" : "▼"}
+        </span>
+      </button>
+    </th>
   );
 }

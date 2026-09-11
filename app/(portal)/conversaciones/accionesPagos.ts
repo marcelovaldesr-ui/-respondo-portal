@@ -21,6 +21,7 @@ import { mensajeDeCobro, validarCobro, type EstadoPago } from "@/lib/pagosCore";
 import { cambiarEstadoPago, crearPago, linkDePago } from "@/lib/pagos";
 import { programarSeguimiento } from "@/lib/seguimientos";
 import { plantillasParaRubro } from "@/lib/plantillas";
+import { empleadoYContactoDelCliente } from "@/lib/tenant";
 
 /**
  * ACCIONES DE COBRO Y DE AVISO DE PEDIDO — separadas de `acciones.ts` a
@@ -69,21 +70,12 @@ export async function cobrarEnChat(formData: FormData): Promise<{
   if (!v.ok) return { ok: false, error: v.error };
 
   // Aislamiento: el empleado y el contacto tienen que ser de ESTE cliente.
-  const [{ data: empleado }, { data: contacto }] = await Promise.all([
-    supa
-      .from("ed_empleados")
-      .select("id")
-      .eq("id", empleadoId)
-      .eq("cliente_id", usuario.clienteId)
-      .maybeSingle(),
-    supa
-      .from("ed_contactos")
-      .select("chat_id")
-      .eq("cliente_id", usuario.clienteId)
-      .eq("chat_id", chatId)
-      .maybeSingle(),
-  ]);
-  if (!empleado || !contacto) return { ok: false, error: "Sin acceso a este chat" };
+  const pertenece = await empleadoYContactoDelCliente(supa, {
+    clienteId: usuario.clienteId,
+    empleadoId,
+    chatId,
+  });
+  if (!pertenece.ok) return { ok: false, error: "Sin acceso a este chat" };
 
   /**
    * ⚠️ VENTANA DE 24 H ANTES DE CREAR NADA (auditoría 27-ago).
@@ -261,23 +253,16 @@ export async function avisarPedidoListo(formData: FormData): Promise<{
    * AISLAMIENTO (auditoría 11-sep-2026): el empleado TAMBIÉN tiene que ser de
    * este negocio. Antes solo se validaba el contacto, y el cron resuelve el
    * número de WhatsApp desde el empleado: un `empleadoId` ajeno mandaba el
-   * aviso desde el WhatsApp de OTRO negocio. Mismo patrón que `cobrarEnChat`.
+   * aviso desde el WhatsApp de OTRO negocio. Ver lib/tenant.ts.
    */
-  const [{ data: empleado }, { data: contacto }] = await Promise.all([
-    supa
-      .from("ed_empleados")
-      .select("id")
-      .eq("id", empleadoId)
-      .eq("cliente_id", usuario.clienteId)
-      .maybeSingle(),
-    supa
-      .from("ed_contactos")
-      .select("nombre")
-      .eq("cliente_id", usuario.clienteId)
-      .eq("chat_id", chatId)
-      .maybeSingle(),
-  ]);
-  if (!empleado || !contacto) return { ok: false, error: "Sin acceso a este chat" };
+  const pertenece = await empleadoYContactoDelCliente<{ nombre: string | null }>(supa, {
+    clienteId: usuario.clienteId,
+    empleadoId,
+    chatId,
+    columnasContacto: "nombre",
+  });
+  if (!pertenece.ok) return { ok: false, error: "Sin acceso a este chat" };
+  const contacto = pertenece.contacto;
 
   /**
    * ⚠️ IDEMPOTENCIA (auditoría 27-ago): `programarSeguimiento` NO deduplica —

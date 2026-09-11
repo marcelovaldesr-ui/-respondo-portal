@@ -95,6 +95,30 @@ export const MODELO_ATRIBUCION = "primer_contacto_pagado" as const;
  * doble vía: esta pantalla NO puede caerse, y un negocio chico tiene miles de
  * contactos, no millones.
  */
+/**
+ * Cuántos contactos entraron en el período, VINIERAN O NO de un anuncio.
+ *
+ * Va en su propia consulta de conteo porque `contactosConAnuncio` filtra por
+ * `datos->campana` en la base: su `total` era el total de los YA filtrados, así
+ * que «contactos del período» y «vinieron de un anuncio» daban siempre lo mismo
+ * y la pantalla afirmaba «100,0% del total» en negocios que obviamente reciben
+ * consultas orgánicas. Un `head: true` no trae filas: cuesta casi nada.
+ */
+async function contarContactos(clienteId: string, desdeISO: string, hastaISO: string): Promise<number | null> {
+  try {
+    const { count, error } = await db()
+      .from("ed_contactos")
+      .select("chat_id", { count: "exact", head: true })
+      .eq("cliente_id", clienteId)
+      .gte("creado_en", desdeISO)
+      .lte("creado_en", hastaISO);
+    if (error) return null;
+    return count ?? null;
+  } catch {
+    return null;
+  }
+}
+
 async function contactosConAnuncio(
   clienteId: string,
   desdeISO: string,
@@ -176,7 +200,10 @@ export async function cargarPauta(clienteId: string, rango: Rango): Promise<Paut
     .eq("cliente_id", clienteId);
   const ids = (empleados ?? []).map((e) => e.id as string);
 
-  const { contactos, total } = await contactosConAnuncio(clienteId, desdeISO, hastaISO);
+  const [{ contactos }, totalContactos] = await Promise.all([
+    contactosConAnuncio(clienteId, desdeISO, hastaISO),
+    contarContactos(clienteId, desdeISO, hastaISO),
+  ]);
   const chats = contactos.map((c) => c.chatId);
 
   let resultados: ResultadoPauta[] = [];
@@ -233,6 +260,7 @@ export async function cargarPauta(clienteId: string, rango: Rango): Promise<Paut
     conversaciones: resumen.conversaciones,
     cotizaciones: filas.reduce((s, f) => s + f.cotizaciones, 0),
     agendadas: resumen.agendadas,
+    avanzados: filas.reduce((s, f) => s + f.avanzados, 0),
     ventas: resumen.ventas,
     cobrado: { valor: resumen.pagado, moneda: monedaNegocio },
   };
@@ -258,7 +286,8 @@ export async function cargarPauta(clienteId: string, rango: Rango): Promise<Paut
     filas,
     resumen,
     estado: estadoAtribucion(resumen),
-    sinAnuncio: Math.max(0, total - contactos.length),
+    // null si el conteo falló: la pantalla prefiere no decir nada a decir «0».
+    sinAnuncio: totalContactos === null ? 0 : Math.max(0, totalContactos - contactos.length),
     rango,
     propios,
     propiosAntes,
@@ -287,6 +316,7 @@ async function totalesDelPeriodo(
     conversaciones: contactos.length,
     cotizaciones: 0,
     agendadas: 0,
+    avanzados: 0,
     ventas: 0,
     cobrado: { valor: 0, moneda },
   };
@@ -333,6 +363,7 @@ async function totalesDelPeriodo(
     conversaciones: resumen.conversaciones,
     cotizaciones: filas.reduce((s, f) => s + f.cotizaciones, 0),
     agendadas: resumen.agendadas,
+    avanzados: filas.reduce((s, f) => s + f.avanzados, 0),
     ventas: resumen.ventas,
     cobrado: { valor: resumen.pagado, moneda },
   };

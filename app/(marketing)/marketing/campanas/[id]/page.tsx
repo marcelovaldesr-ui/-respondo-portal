@@ -16,6 +16,7 @@ import TablaLeads from "@/components/marketing/TablaLeads";
 import TarjetaCreatividad from "@/components/marketing/TarjetaCreatividad";
 import { EstadoDeCampana } from "@/components/marketing/Estado";
 import { Ico } from "@/components/marketing/Iconos";
+import { motivoSinPublicidad } from "@/lib/marketing/capacidades";
 
 export const dynamic = "force-dynamic";
 
@@ -128,7 +129,7 @@ export default async function DetalleCampana({
         <Kpi
           etiqueta="Ingresos · ROAS"
           valor={campana.cobrado > 0 ? formatearMonto({ valor: campana.cobrado, moneda: p.monedaNegocio }) : "—"}
-          nota={campana.roas === null ? `CPL ${cpl === null ? "—" : plata(cpl)}` : `ROAS ${campana.roas.toLocaleString("es-CL", { minimumFractionDigits: 1, maximumFractionDigits: 1 })}× · piso`}
+          nota={campana.roas === null ? `CPL ${cpl === null ? "—" : plata(cpl)}` : `ROAS ${campana.roas.toLocaleString("es-CL", { minimumFractionDigits: 1, maximumFractionDigits: 1 })}×`}
           destacada
         />
       </section>
@@ -195,7 +196,7 @@ export default async function DetalleCampana({
                 Todos {Ico.flecha({ className: "h-3.5 w-3.5" })}
               </Link>
             </div>
-            <TablaAnuncios anuncios={anuncios.slice(0, 4)} monedaNegocio={p.monedaNegocio} periodo={rango.clave} />
+            <TablaAnuncios anuncios={anuncios.slice(0, 4)} monedaNegocio={p.monedaNegocio} periodo={rango.clave} puedeConectarMeta={p.capacidades.puedeConectarMeta} motivoSinPublicidad={motivoSinPublicidad(p.capacidades, p.errorPublicidad)} />
           </section>
 
           {creatividades.length > 0 && (
@@ -222,7 +223,7 @@ export default async function DetalleCampana({
             <h2 className="mk-h2">Anuncios</h2>
             <span className="mk-meta">Ordenados por lo que cobraron</span>
           </div>
-          <TablaAnuncios anuncios={anuncios} monedaNegocio={p.monedaNegocio} periodo={rango.clave} />
+          <TablaAnuncios anuncios={anuncios} monedaNegocio={p.monedaNegocio} periodo={rango.clave} puedeConectarMeta={p.capacidades.puedeConectarMeta} motivoSinPublicidad={motivoSinPublicidad(p.capacidades, p.errorPublicidad)} />
         </section>
       )}
 
@@ -239,7 +240,7 @@ export default async function DetalleCampana({
                 enlaces={{
                   conversaciones: href("leads"),
                   calificados: `${href("leads")}&f=calificados`,
-                  avanzados: `${href("leads")}&f=cotizados`,
+                  avanzados: `${href("leads")}&f=avanzaron`,
                   ventas: `${href("leads")}&f=compraron`,
                 }}
               />

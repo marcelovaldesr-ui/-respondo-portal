@@ -224,6 +224,7 @@ export async function accessTokenDesdeRefresh(refreshToken: string): Promise<Res
         grant_type: "refresh_token",
       }),
       cache: "no-store",
+      signal: AbortSignal.timeout(8_000),
     });
     const j = (await r.json()) as { access_token?: string; error_description?: string; error?: string };
     if (!r.ok || !j.access_token) {

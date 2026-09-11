@@ -272,15 +272,40 @@ export async function clientePorInstanciaWaha(
  * clientes activos en 'waha' sin instancia propia).
  */
 async function bloqueoPorClienteAjeno(clienteId: string | undefined): Promise<string | null> {
-  if (!clienteId) return null;
-  const dueno = await clienteDuenoDeWaha();
-  if (dueno && clienteId !== dueno) {
-    console.error(
-      `[waha] BLOQUEADO: se intentó enviar por la sesión de '${INSTANCIA}' para otro cliente. ` +
-        `WAHA es de un solo negocio; este cliente debe ir por Cloud API (transporte='cloud').`,
-    );
-    return "waha_pertenece_a_otro_cliente";
+  let dueno: string | null = null;
+  let errorLectura = false;
+  if (clienteId) {
+    try {
+      dueno = await clienteDuenoDeWaha();
+    } catch {
+      errorLectura = true;
+    }
   }
+  const bloqueo = decidirBloqueoWaha(clienteId, dueno, errorLectura);
+  if (bloqueo) {
+    console.error(
+      `[waha] BLOQUEADO (${bloqueo}): envío por la sesión de '${INSTANCIA}'. ` +
+        `WAHA es de un solo negocio; el resto debe ir por Cloud API (transporte='cloud').`,
+    );
+  }
+  return bloqueo;
+}
+
+/**
+ * La decisión, pura (Fase 0, 11-sep-2026). ANTES fallaba ABIERTO: sin
+ * `clienteId`, o si no se podía leer quién es el dueño de la sesión (error de
+ * base, migración 275 a medias), el mensaje salía igual por el WhatsApp del
+ * dueño. Ahora, sin poder verificar que el negocio ES el dueño, no sale: quien
+ * llama lo trata como fallo de envío y la conversación queda para una persona.
+ */
+export function decidirBloqueoWaha(
+  clienteId: string | undefined,
+  dueno: string | null,
+  errorLectura: boolean,
+): string | null {
+  if (!clienteId) return "waha_sin_cliente";
+  if (errorLectura || !dueno) return "waha_dueno_no_verificable";
+  if (clienteId !== dueno) return "waha_pertenece_a_otro_cliente";
   return null;
 }
 

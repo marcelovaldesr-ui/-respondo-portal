@@ -5,6 +5,7 @@ import {
   puedeCambiar,
   type EstadoPago,
 } from "@/lib/pagosCore";
+import { etiquetasTrasPagoConfirmado } from "@/lib/etiquetasCiclo";
 
 /**
  * DATOS DE LOS COBROS EN CONVERSACIÓN.
@@ -144,13 +145,59 @@ export async function cambiarEstadoPago(p: {
     .eq("id", p.pagoId)
     .eq("cliente_id", p.clienteId) // aislamiento: nunca el pago de otro negocio
     .eq("estado", p.desde)
-    .select("id");
+    .select("id, chat_id");
 
   if (error) return { ok: false, error: error.message };
   if (!data?.length) {
     return { ok: false, error: "El cobro ya cambió de estado (¿alguien más lo marcó?)." };
   }
+  if (p.hacia === "pagado") {
+    await aplicarPagoConfirmado({ clienteId: p.clienteId, chatId: data[0].chat_id as string, supa });
+  }
   return { ok: true };
+}
+
+/**
+ * EL COBRO SE CONFIRMÓ → LA CONVERSACIÓN LO REFLEJA (Fase 0, 11-sep-2026).
+ *
+ * Antes, marcar un cobro como pagado no tocaba el contacto: «Falta pago» seguía
+ * en la bandeja y la etapa podía quedar en "cotizado" con la plata ya en la
+ * cuenta. Ahora se retiran «Falta pago» y «Pago por confirmar», y la etapa pasa
+ * a ganado — salvo que una persona la haya movido a mano (etapa_manual).
+ *
+ * No escribe ed_resultados: el monto confirmado ya vive en ed_pagos, y sumar
+ * una venta acá la contaría dos veces con la del detector de cierres.
+ * Best-effort: el cobro ya quedó pagado; esto no puede deshacerlo ni fallarlo.
+ */
+export async function aplicarPagoConfirmado(p: {
+  clienteId: string;
+  chatId: string;
+  supa?: SupabaseClient;
+}): Promise<void> {
+  const supa = p.supa ?? db();
+  try {
+    const { data: c } = await supa
+      .from("ed_contactos")
+      .select("etiquetas, etapa, etapa_manual")
+      .eq("cliente_id", p.clienteId)
+      .eq("chat_id", p.chatId)
+      .maybeSingle();
+    if (!c) return;
+    const actuales = (c.etiquetas as string[] | null) ?? [];
+    const manual = Boolean(c.etapa_manual);
+    const etiquetas = manual
+      ? actuales.filter((e) => e !== "pago_pendiente" && e !== "pago_por_confirmar")
+      : etiquetasTrasPagoConfirmado(actuales);
+    const cambios: Record<string, unknown> = {};
+    if (etiquetas.length !== actuales.length || etiquetas.some((e, i) => e !== actuales[i])) cambios.etiquetas = etiquetas;
+    if (!manual && c.etapa !== "ganado") {
+      Object.assign(cambios, { etapa: "ganado", etapa_motivo: "pago_confirmado", etapa_en: new Date().toISOString() });
+    }
+    if (!Object.keys(cambios).length) return;
+    await supa.from("ed_contactos").update(cambios).eq("cliente_id", p.clienteId).eq("chat_id", p.chatId);
+  } catch (e) {
+    console.error("[pagos] no se pudo reflejar el pago en la conversación:", (e as Error).message);
+  }
 }
 
 /** Los cobros de una conversación, más recientes primero. */

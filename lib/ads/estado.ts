@@ -113,7 +113,7 @@ export async function estadoDePauta(clienteId: string): Promise<EstadoPauta> {
       titulo: "Cuenta publicitaria de Meta",
       estado: "manual",
       detalle:
-        "La conexión con Meta todavía no está habilitada en esta instalación de Respondo. Sin ella igual ves de dónde viene cada venta; lo que falta es cuánto costó.",
+        "La lectura de tu cuenta publicitaria no está habilitada en tu plan. Sin ella igual ves de dónde viene cada venta; lo que falta es cuánto costó.",
     });
   } else if (conexion && conexion.estado === "conectada") {
     items.push({
@@ -227,7 +227,7 @@ export async function estadoDePauta(clienteId: string): Promise<EstadoPauta> {
           titulo: "Cobro por enlace de pago",
           estado: "atencion",
           detalle:
-            "Sin esto se ve cuántas ventas trajo cada anuncio, pero no cuánta plata. Es lo que convierte «14 ventas» en «$890.000».",
+            "Sin esto se ve cuántas ventas trajo cada anuncio, pero no cuánta plata. Es lo que convierte una cifra de ventas en una de ingresos.",
           accion: { texto: "Configurarlo", href: "/informacion" },
         },
   );

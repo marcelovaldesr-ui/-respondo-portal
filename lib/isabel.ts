@@ -1,4 +1,5 @@
 import { db } from "@/lib/db";
+import { contarEsperando } from "@/lib/metricas";
 import { generarJSON } from "@/lib/gemini";
 import { listarFichas } from "@/lib/conocimiento";
 import { inicioDeMesChile, ZONA } from "@/lib/fechas";
@@ -115,15 +116,8 @@ export async function panoramaDelNegocio(clienteId: string): Promise<PanoramaNeg
               .gte("creado_en", desde),
           )
         : Promise.resolve(0),
-      ids.length
-        ? cuenta(
-            supa
-              .from("ed_escalaciones")
-              .select("id", soloContar)
-              .in("empleado_id", ids)
-              .is("atendida_en", null),
-          )
-        : Promise.resolve(0),
+      // Conversaciones esperando, no filas: mismo número que el menú (Fase 0).
+      contarEsperando(clienteId, ids, supa).catch(() => 0),
       cuenta(
         supa
           .from("ed_citas")

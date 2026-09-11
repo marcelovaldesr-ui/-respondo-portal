@@ -171,7 +171,7 @@ export async function cancelarPorToken(
 
   // Sin esto le seguirían llegando el recordatorio y la encuesta de una hora
   // que ella misma anuló — el tipo de detalle que hace desconfiar del sistema.
-  await anularSeguimientosDeCita(r.interna.id, supa).catch(() => undefined);
+  await anularSeguimientosDeCita(r.interna.id, r.interna.clienteId, supa).catch(() => undefined);
 
   return { ok: true, mensaje: "Tu hora quedó anulada." };
 }
@@ -244,7 +244,7 @@ export async function reagendarPorToken(
   }
 
   // Reprogramar recordatorios a la hora nueva (los viejos ya no sirven).
-  await anularSeguimientosDeCita(r.interna.id, supa).catch(() => undefined);
+  await anularSeguimientosDeCita(r.interna.id, r.interna.clienteId, supa).catch(() => undefined);
   await programarSeguimientosCita({
     cita: res.cita,
     servicioNombre: r.vista.servicioNombre,

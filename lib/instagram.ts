@@ -353,15 +353,24 @@ export async function enviarTextoInstagram(
  *
  * Cuelga del cron de seguimientos, que ya corre cada 5 minutos.
  */
-export async function renovarTokensIg(): Promise<{ renovados: number; fallas: string[] }> {
+export async function renovarTokensIg(): Promise<{
+  renovados: number;
+  fallas: string[];
+  /** Mismo contenido que `fallas`, con el id del negocio (para la observabilidad del cron). */
+  errores: { clienteId: string; error: string }[];
+}> {
   const supa = db();
   const limite = new Date(Date.now() + 15 * 86400_000).toISOString();
 
-  const { data } = await supa
+  const { data, error: errLeer } = await supa
     .from("ed_clientes")
     .select("id, nombre, ig_token, ig_token_cifrado, ig_token_vence")
     .or("ig_token.not.is.null,ig_token_cifrado.not.is.null")
     .lt("ig_token_vence", limite)
+    // Un token YA vencido no se puede renovar (Meta lo rechaza): intentarlo
+    // cada 5 minutos solo generaba errores. Ese caso necesita reconectar y se
+    // ve en la pantalla del canal (Fase 0).
+    .gt("ig_token_vence", new Date().toISOString())
     .eq("activo", true);
 
   const filas = (data ?? []) as {
@@ -371,32 +380,45 @@ export async function renovarTokensIg(): Promise<{ renovados: number; fallas: st
     ig_token_cifrado: string | null;
     ig_token_vence: string | null;
   }[];
-  if (!filas.length) return { renovados: 0, fallas: [] };
+  if (errLeer) {
+    return { renovados: 0, fallas: [], errores: [{ clienteId: "", error: `no se pudo leer tokens: ${errLeer.message}` }] };
+  }
+  if (!filas.length) return { renovados: 0, fallas: [], errores: [] };
 
   let renovados = 0;
   const fallas: string[] = [];
+  const errores: { clienteId: string; error: string }[] = [];
+  const fallar = (c: { id: string; nombre: string }, motivo: string) => {
+    fallas.push(`${c.nombre}: ${motivo}`);
+    errores.push({ clienteId: c.id, error: `token de Instagram sin renovar: ${motivo}` });
+  };
 
   for (const c of filas) {
+    // Un intento por negocio por hora (Fase 0): si Meta rechaza la renovación,
+    // reintentar cada 5 minutos no la arregla y llena de errores el registro.
+    const { limitarDistribuido } = await import("@/lib/seguridad");
+    if (!(await limitarDistribuido(`ig_renovar:${c.id}`, 1, 3600)).ok) continue;
     try {
       const actual = c.ig_token_cifrado
         ? descifrar(c.ig_token_cifrado, "ig-token")
         : c.ig_token;
       if (!actual) {
-        fallas.push(`${c.nombre}: no se pudo descifrar el token`);
+        fallar(c, "no se pudo descifrar el token");
         continue;
       }
       const url = `${GRAPH_IG}/refresh_access_token?grant_type=ig_refresh_token&access_token=${encodeURIComponent(actual)}`;
-      const r = await fetch(url);
+      // Con techo: sin él, un Graph lento se llevaba el resto del cron.
+      const r = await fetch(url, { signal: AbortSignal.timeout(10_000) });
       if (!r.ok) {
-        fallas.push(`${c.nombre}: ${r.status}`);
+        fallar(c, `HTTP ${r.status}`);
         continue;
       }
       const j = (await r.json()) as { access_token?: string; expires_in?: number };
       if (!j.access_token) {
-        fallas.push(`${c.nombre}: respuesta sin token`);
+        fallar(c, "respuesta sin token");
         continue;
       }
-      await supa
+      const { error: errGuardar } = await supa
         .from("ed_clientes")
         .update({
           ig_token_cifrado: cifrar(j.access_token, "ig-token"),
@@ -404,12 +426,18 @@ export async function renovarTokensIg(): Promise<{ renovados: number; fallas: st
           ig_token_vence: new Date(Date.now() + (j.expires_in ?? 5_184_000) * 1000).toISOString(),
         })
         .eq("id", c.id);
+      if (errGuardar) {
+        // Meta ya emitió el token nuevo: si no se guarda, el viejo sigue
+        // venciendo. Antes esto contaba como "renovado".
+        fallar(c, `no se pudo guardar el token renovado: ${errGuardar.message}`);
+        continue;
+      }
       renovados++;
     } catch (e) {
-      fallas.push(`${c.nombre}: ${(e as Error).message}`);
+      fallar(c, (e as Error).message);
     }
   }
 
   if (fallas.length) console.error("[instagram] tokens sin renovar:", fallas.join(" · "));
-  return { renovados, fallas };
+  return { renovados, fallas, errores };
 }

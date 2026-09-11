@@ -2,6 +2,9 @@
 
 import Link from "next/link";
 import { useMemo, useState } from "react";
+
+/** Cuántas tarjetas se pintan de una. Cada una trae imagen. */
+const PAGINA = 24;
 import type { Creatividad } from "@/lib/marketing/tipos";
 import TarjetaCreatividad from "@/components/marketing/TarjetaCreatividad";
 import { Ico } from "@/components/marketing/Iconos";
@@ -28,6 +31,7 @@ export default function GaleriaCreatividades({ items, monedaNegocio }: { items: 
   const [estado, setEstado] = useState("todas");
   const [formato, setFormato] = useState("");
   const [orden, setOrden] = useState<"recientes" | "rendimiento">("recientes");
+  const [tope, setTope] = useState(PAGINA);
   const [busqueda, setBusqueda] = useState("");
 
   const visibles = useMemo(() => {
@@ -60,7 +64,7 @@ export default function GaleriaCreatividades({ items, monedaNegocio }: { items: 
       <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
         <div className="mk-segmentos" role="group" aria-label="Estado">
           {ESTADOS.map((e) => (
-            <button key={e.clave} type="button" className="mk-segmento" aria-pressed={estado === e.clave} onClick={() => setEstado(e.clave)}>
+            <button key={e.clave} type="button" className="mk-segmento" aria-pressed={estado === e.clave} onClick={() => { setTope(PAGINA); setEstado(e.clave); }}>
               {e.texto}
               <span className="mk-conteo">{items.filter(e.f).length}</span>
             </button>
@@ -68,11 +72,11 @@ export default function GaleriaCreatividades({ items, monedaNegocio }: { items: 
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <div className="mk-segmentos" role="group" aria-label="Formato">
-            <button type="button" className="mk-segmento" aria-pressed={formato === ""} onClick={() => setFormato("")}>
+            <button type="button" className="mk-segmento" aria-pressed={formato === ""} onClick={() => { setTope(PAGINA); setFormato(""); }}>
               Todos
             </button>
             {FORMATOS.map((f) => (
-              <button key={f} type="button" className="mk-segmento" aria-pressed={formato === f} onClick={() => setFormato(f)}>
+              <button key={f} type="button" className="mk-segmento" aria-pressed={formato === f} onClick={() => { setTope(PAGINA); setFormato(f); }}>
                 {f}
               </button>
             ))}
@@ -96,7 +100,7 @@ export default function GaleriaCreatividades({ items, monedaNegocio }: { items: 
               style={{ width: 200, fontSize: "13px" }}
               placeholder="Buscar"
               value={busqueda}
-              onChange={(e) => setBusqueda(e.target.value)}
+              onChange={(e) => { setTope(PAGINA); setBusqueda(e.target.value); }}
             />
           </label>
         </div>
@@ -113,11 +117,27 @@ export default function GaleriaCreatividades({ items, monedaNegocio }: { items: 
           </div>
         </div>
       ) : (
-        <div className="mk-galeria grande">
-          {visibles.map((c) => (
-            <TarjetaCreatividad key={c.id} c={c} monedaNegocio={monedaNegocio} />
-          ))}
-        </div>
+        <>
+          <div className="mk-galeria grande">
+            {visibles.slice(0, tope).map((c) => (
+              <TarjetaCreatividad key={c.id} c={c} monedaNegocio={monedaNegocio} />
+            ))}
+          </div>
+          {/* Cada tarjeta trae una imagen: pintar 500 de una deja el navegador
+              clavado varios segundos. Se muestran de a 24 y el resto se pide
+              con un botón, que además es lo que la gente hace de verdad —mira
+              las últimas, no las quinientas—. */}
+          {visibles.length > tope && (
+            <div className="mt-6 flex flex-col items-center gap-2">
+              <button type="button" className="btn-suave mk-btn-lg" onClick={() => setTope((t) => t + PAGINA)}>
+                Ver más creatividades
+              </button>
+              <span className="mk-meta">
+                {tope} de {visibles.length}
+              </span>
+            </div>
+          )}
+        </>
       )}
     </div>
   );

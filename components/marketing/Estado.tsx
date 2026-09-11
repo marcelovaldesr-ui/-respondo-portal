@@ -1,3 +1,4 @@
+import Link from "next/link";
 import type { Creatividad, EstadoCampana, EtapaLead } from "@/lib/marketing/tipos";
 
 /**
@@ -60,4 +61,35 @@ const LEAD: Record<EtapaLead, { texto: string; tono: Tono }> = {
 export function EstadoDeLead({ etapa }: { etapa: EtapaLead }) {
   const e = LEAD[etapa];
   return <Pildora tono={e.tono}>{e.texto}</Pildora>;
+}
+
+/**
+ * EL PIE QUE EXPLICA POR QUÉ NO HAY CIFRAS DE PUBLICIDAD.
+ *
+ * Un solo componente para las cuatro tablas que antes decían cada una lo suyo
+ * («Requiere Meta», «Requiere la cuenta conectada», «Conectar»…). Y, lo que
+ * importa de verdad: solo ofrece conectar cuando conectar es posible. Si la
+ * instalación no tiene la app de Meta, el dueño no tiene nada que apretar y
+ * mandarlo a una pantalla que le diga «no disponible» es peor que no decirle
+ * nada.
+ */
+export function PieSinPublicidad({
+  texto,
+  puedeConectar,
+  metaConectada,
+}: {
+  texto: string;
+  puedeConectar: boolean;
+  metaConectada: boolean;
+}) {
+  return (
+    <div className="mk-panel-pie">
+      {texto}{" "}
+      {puedeConectar && !metaConectada && (
+        <Link href="/marketing/integraciones" className="mk-enlace">
+          Conectar la cuenta
+        </Link>
+      )}
+    </div>
+  );
 }

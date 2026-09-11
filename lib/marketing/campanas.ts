@@ -2,6 +2,7 @@ import { db } from "@/lib/db";
 import { panoramaDemo } from "@/lib/marketing/demo";
 import { resolverRango } from "@/lib/ads/periodos";
 import type { AudienciaCampana, BorradorCampana, EstadoCampana } from "@/lib/marketing/tipos";
+import { traducirFalla } from "@/lib/marketing/fallas";
 
 /**
  * BORRADORES DE CAMPAÑA — lo que el asistente arma y lo que el dueño edita.
@@ -134,25 +135,39 @@ export async function guardarBorrador(
   };
   const supa = db();
   if (id) {
-    const { error } = await supa.from("ed_mk_campanas").update(fila).eq("id", id).eq("cliente_id", clienteId);
-    if (error) return { ok: false, motivo: error.message };
+    // `.select("id")`: sin esto, actualizar un borrador que ya no existe
+    // respondía «Guardado» y no escribía nada. Ver `creatividades.ts`.
+    const { data, error } = await supa
+      .from("ed_mk_campanas")
+      .update(fila)
+      .eq("id", id)
+      .eq("cliente_id", clienteId)
+      .select("id")
+      .maybeSingle();
+    if (error)
+      return { ok: false, motivo: traducirFalla({ proveedor: "almacen", operacion: "guardarBorrador", clienteId, crudo: error.message }) };
+    if (!data) return { ok: false, motivo: "Ese borrador ya no existe. Puede que se haya eliminado desde otra pestaña." };
     return { ok: true, id, estado };
   }
   const { data, error } = await supa.from("ed_mk_campanas").insert(fila).select("id").maybeSingle();
   if (error || !data) {
     return {
       ok: false,
-      motivo: /relation .* does not exist|schema cache/i.test(error?.message ?? "")
-        ? "Falta aplicar la migración 303 para poder guardar campañas."
-        : (error?.message ?? "No se pudo guardar."),
+      motivo: traducirFalla({ proveedor: "almacen", operacion: "crearBorrador", clienteId, crudo: error?.message ?? "sin fila" }),
     };
   }
   return { ok: true, id: String(data.id), estado };
 }
 
 export async function eliminarBorrador(clienteId: string, id: string): Promise<boolean> {
-  const { error } = await db().from("ed_mk_campanas").delete().eq("id", id).eq("cliente_id", clienteId);
-  return !error;
+  const { data, error } = await db()
+    .from("ed_mk_campanas")
+    .delete()
+    .eq("id", id)
+    .eq("cliente_id", clienteId)
+    .select("id")
+    .maybeSingle();
+  return !error && Boolean(data);
 }
 
 export { borradorEnTexto } from "@/lib/marketing/campanasCore";

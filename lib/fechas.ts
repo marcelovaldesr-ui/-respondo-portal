@@ -1,3 +1,4 @@
+import { horaChileAUtc } from "@/lib/agendaCore";
 /**
  * Formateo de fechas del portal.
  *
@@ -65,9 +66,10 @@ export function inicioDeMesChile(): string {
     month: "2-digit",
   }).format(new Date());
   const [anio, mes] = partes.split("-");
-  // Chile está entre UTC-3 y UTC-4, así que el inicio del mes local siempre cae
-  // dentro del último día del mes anterior en UTC. Se toma un margen seguro.
-  return new Date(`${anio}-${mes}-01T00:00:00-04:00`).toISOString();
+  // Medianoche EXACTA de Chile (Fase 0). Antes se anclaba siempre a -04:00: en
+  // horario de verano (UTC-3) el mes empezaba a la 01:00 y la primera hora
+  // quedaba fuera de "este mes".
+  return horaChileAUtc(Number(anio), Number(mes), 1, 0, 0).toISOString();
 }
 
 /** "julio 2026" a partir de un periodo tipo "2026-07-01". */

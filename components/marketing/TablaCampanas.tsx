@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useMemo, useState } from "react";
 import { formatearMonto, formatearNumero } from "@/lib/ads/moneda";
 import { textoObjetivo, type FilaCampana } from "@/lib/marketing/tipos";
-import { EstadoDeCampana } from "@/components/marketing/Estado";
+import { EstadoDeCampana, PieSinPublicidad } from "@/components/marketing/Estado";
 import { Ico } from "@/components/marketing/Iconos";
 
 /**
@@ -24,6 +24,9 @@ import { Ico } from "@/components/marketing/Iconos";
  *   · Los borradores conviven con las campañas reales porque para el dueño
  *     son «mis campañas»; sus celdas de resultado van en raya, no en cero.
  */
+/** Filas por tramo. Ordenadas por ingresos, lo de arriba es lo que importa. */
+const PAGINA = 50;
+
 type Clave = "nombre" | "gasto" | "conversaciones" | "calificados" | "ventas" | "cobrado" | "cpl" | "roas";
 
 const FILTROS: { clave: string; texto: string; f: (c: FilaCampana) => boolean }[] = [
@@ -38,18 +41,26 @@ export default function TablaCampanas({
   monedaNegocio,
   periodo,
   metaConectada,
+  puedeConectarMeta,
+  motivoSinPublicidad,
   series,
 }: {
   filas: FilaCampana[];
   monedaNegocio: string;
   periodo: string;
   metaConectada: boolean;
+  /** Si la instalación siquiera permite conectar una cuenta publicitaria. */
+  puedeConectarMeta: boolean;
+  /** Por qué no hay cifras de publicidad, ya escrito para el dueño. */
+  motivoSinPublicidad: string;
   /** Conversaciones por día de cada campaña, para la chispa. */
   series?: Record<string, number[]>;
 }) {
   const [busqueda, setBusqueda] = useState("");
   const [filtro, setFiltro] = useState("todas");
   const [orden, setOrden] = useState<{ clave: Clave; desc: boolean }>({ clave: "cobrado", desc: true });
+  /** Una pyme tiene decenas, no cientos; pero si las tiene, no se pintan todas. */
+  const [tope, setTope] = useState(PAGINA);
 
   const cpl = (c: FilaCampana) => (c.gasto !== null && c.calificados ? c.gasto / c.calificados : null);
 
@@ -81,20 +92,8 @@ export default function TablaCampanas({
   const plata = (v: number | null, moneda = monedaNegocio) =>
     v === null ? <span className="nulo">—</span> : formatearMonto({ valor: v, moneda }, { monedaDelNegocio: monedaNegocio });
 
-  const Th = ({ clave, texto, num, tip }: { clave: Clave; texto: string; num?: boolean; tip?: string }) => (
-    <th className={num ? "num" : ""}>
-      <button
-        type="button"
-        onClick={() => cambiarOrden(clave)}
-        data-tip={tip}
-        aria-sort={orden.clave === clave ? (orden.desc ? "descending" : "ascending") : undefined}
-      >
-        {texto}
-        <span aria-hidden="true" style={{ opacity: orden.clave === clave ? 1 : 0.22, fontSize: 8 }}>
-          {orden.clave === clave && !orden.desc ? "▲" : "▼"}
-        </span>
-      </button>
-    </th>
+  const th = (clave: Clave, texto: string, num?: boolean, tip?: string) => (
+    <Th key={clave} clave={clave} texto={texto} num={num} tip={tip} orden={orden} alOrdenar={cambiarOrden} />
   );
 
   return (
@@ -102,7 +101,7 @@ export default function TablaCampanas({
       <div className="mk-panel-cabecera flex-wrap">
         <div className="mk-segmentos" role="group" aria-label="Filtro">
           {FILTROS.map((f) => (
-            <button key={f.clave} type="button" className="mk-segmento" aria-pressed={filtro === f.clave} onClick={() => setFiltro(f.clave)}>
+            <button key={f.clave} type="button" className="mk-segmento" aria-pressed={filtro === f.clave} onClick={() => { setTope(PAGINA); setFiltro(f.clave); }}>
               {f.texto}
               <span className="mk-conteo">{filas.filter(f.f).length}</span>
             </button>
@@ -117,7 +116,7 @@ export default function TablaCampanas({
             style={{ width: 240, fontSize: "13px" }}
             placeholder="Buscar campaña"
             value={busqueda}
-            onChange={(e) => setBusqueda(e.target.value)}
+            onChange={(e) => { setTope(PAGINA); setBusqueda(e.target.value); }}
           />
         </label>
       </div>
@@ -141,19 +140,19 @@ export default function TablaCampanas({
           <table className="mk-tabla min-w-[920px]">
             <thead>
               <tr>
-                <Th clave="nombre" texto="Campaña" />
-                <Th clave="gasto" texto="Gasto" num tip="Lo que Meta cobró en el período. Requiere la cuenta conectada." />
-                <Th clave="conversaciones" texto="Conv." num tip="Personas que escribieron por WhatsApp desde esta campaña." />
-                <Th clave="calificados" texto="Calif." num tip="Avanzaron a interesado o más, o cotizaron, reservaron o compraron." />
-                <Th clave="ventas" texto="Ventas" num />
-                <Th clave="cobrado" texto="Ingresos" num tip="Solo lo pagado por enlace de pago. Es un piso." />
-                <Th clave="cpl" texto="CPL" num tip="Costo por lead calificado = invertido ÷ calificados." />
-                <Th clave="roas" texto="ROAS" num tip="Ingresos ÷ invertido. Como los ingresos son un piso, el retorno real es mayor." />
+                {th("nombre", "Campaña")}
+                {th("gasto", "Gasto", true, "Lo que cobró tu cuenta publicitaria en el período.")}
+                {th("conversaciones", "Conv.", true, "Personas que escribieron por WhatsApp desde esta campaña.")}
+                {th("calificados", "Calif.", true, "Avanzaron a interesado o más, o cotizaron, reservaron o compraron.")}
+                {th("ventas", "Ventas", true)}
+                {th("cobrado", "Ingresos", true, "Solo lo pagado por enlace de pago. El total real puede ser mayor.")}
+                {th("cpl", "CPL", true, "Costo por lead calificado = invertido ÷ calificados.")}
+                {th("roas", "ROAS", true, "Ingresos ÷ invertido. Como solo contamos lo pagado por enlace, el retorno real puede ser mayor.")}
                 <th className="num solo-ancho" data-tip="Conversaciones por día en la última semana">7 días</th>
               </tr>
             </thead>
             <tbody>
-              {visibles.map((c) => {
+              {visibles.slice(0, tope).map((c) => {
                 const borrador = c.origen === "borrador";
                 const href = borrador
                   ? `/marketing/campanas/nueva?id=${encodeURIComponent(c.id)}`
@@ -206,16 +205,25 @@ export default function TablaCampanas({
               })}
             </tbody>
           </table>
+          {visibles.length > tope && (
+            <div className="flex flex-col items-center gap-2 border-t py-5" style={{ borderColor: "var(--borde)" }}>
+              <button type="button" className="btn-suave" onClick={() => setTope((t) => t + PAGINA)}>
+                Ver más campañas
+              </button>
+              <span className="mk-meta">
+                {tope} de {visibles.length}
+              </span>
+            </div>
+          )}
         </div>
       )}
 
       {!metaConectada && filas.some((c) => c.origen === "atribucion") && (
-        <div className="mk-panel-pie">
-          Sin la cuenta de Meta conectada cada anuncio aparece como su propia fila y no se ve el gasto.{" "}
-          <Link href="/marketing/integraciones" className="mk-enlace">
-            Conectar Meta
-          </Link>
-        </div>
+        <PieSinPublicidad
+          texto={`Sin cifras de tu cuenta publicitaria cada anuncio aparece como su propia fila y no se ve el gasto. ${motivoSinPublicidad}`}
+          puedeConectar={puedeConectarMeta}
+          metaConectada={metaConectada}
+        />
       )}
     </section>
   );
@@ -233,5 +241,43 @@ function MiniSerie({ datos }: { datos: number[] }) {
     <svg width={w} height={h} aria-hidden="true" style={{ display: "inline-block", verticalAlign: "middle" }}>
       <path d={d} fill="none" stroke={sube ? "var(--ok)" : "var(--peligro)"} strokeWidth="1.6" strokeLinejoin="round" strokeLinecap="round" opacity="0.85" />
     </svg>
+  );
+}
+
+
+/**
+ * La cabecera ordenable, DEFINIDA FUERA del componente.
+ *
+ * Estaba dentro del cuerpo: React la trataba como un tipo de componente nuevo
+ * en cada render, así que toda la fila de encabezados se desmontaba y volvía a
+ * montar con cada tecla del buscador. Acá arriba es una sola identidad.
+ */
+function Th({
+  clave,
+  texto,
+  num,
+  tip,
+  orden,
+  alOrdenar,
+}: {
+  clave: Clave;
+  texto: string;
+  num?: boolean;
+  tip?: string;
+  orden: { clave: Clave; desc: boolean };
+  alOrdenar: (c: Clave) => void;
+}) {
+  const activa = orden.clave === clave;
+  return (
+    // `aria-sort` va en la celda de encabezado, no en el botón: es propiedad de
+    // la columna. En el botón el lector de pantalla simplemente lo ignora.
+    <th className={num ? "num" : ""} aria-sort={activa ? (orden.desc ? "descending" : "ascending") : "none"}>
+      <button type="button" onClick={() => alOrdenar(clave)} data-tip={tip}>
+        {texto}
+        <span aria-hidden="true" style={{ opacity: activa ? 1 : 0.22, fontSize: 8 }}>
+          {activa && !orden.desc ? "▲" : "▼"}
+        </span>
+      </button>
+    </th>
   );
 }

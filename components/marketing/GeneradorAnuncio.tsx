@@ -210,7 +210,9 @@ export default function GeneradorAnuncio({
                   type="button"
                   role="tab"
                   className="mk-segmento flex-1"
-                  aria-pressed={paso === s.n}
+                  // Una pestaña se anuncia con aria-selected; aria-pressed es de
+                  // los botones de dos estados y el lector no lo lee acá.
+                  aria-selected={paso === s.n}
                   disabled={s.n > 1 && !paquete}
                   onClick={() => setPaso(s.n)}
                 >

@@ -18,6 +18,9 @@ import { estadoDeCupo, type EstadoCupo } from "@/lib/cupoConversaciones";
 import { resumenPagos } from "@/lib/pagos";
 import { formatearMonto } from "@/lib/pagosCore";
 import { metaEtapa } from "@/lib/embudo";
+import { contarConversacionesActivas } from "@/lib/metricas";
+import { inicioDeMesChile } from "@/lib/fechas";
+import { contarVivas } from "@/lib/propuestasSeguimiento";
 import {
   resumenAhorro,
   formatearDuracion as duracionMin,
@@ -121,23 +124,35 @@ function Bloque({
  * Qué números mostrar según el rol. Solo se muestra lo que el motor registra
  * de verdad en ed_resultados: si algo no ocurrió, va en 0, nunca estimado.
  */
-function statsDeEmpleado(r: ResumenEmpleado): { label: string; valor: string }[] {
+function statsDeEmpleado(
+  r: ResumenEmpleado,
+  extra: { propuestasPorRevisar: number | null },
+): { label: string; valor: string }[] {
   const n = (t: keyof ResumenEmpleado["resultados"]) => String(r.resultados[t] ?? 0);
 
+  /**
+   * BETO Y VERA CON DATOS QUE EXISTEN (Fase 0, 11-sep-2026).
+   *
+   * Antes Beto mostraba «Cotizaciones retomadas», «Clientes reactivados» y
+   * «Ventas recuperadas», y Vera «Reseñas conseguidas». Ningún proceso escribe
+   * esos tipos en ed_resultados (solo las semillas de demo): eran ceros
+   * estructurales que se leían como "Beto no logra nada". Ahora se muestra lo
+   * que sí se registra: lo que salió de verdad (sin descartados), quién
+   * respondió y lo que espera aprobación.
+   */
   if (r.rol === "rita") {
     return [
-      { label: "Cotizaciones retomadas", valor: n("cotizacion_retomada") },
-      { label: "Clientes reactivados", valor: n("cliente_reactivado") },
-      {
-        label: "Ventas recuperadas",
-        valor: r.montoRecuperado > 0 ? formatearCLP(r.montoRecuperado) : "—",
-      },
+      { label: "Seguimientos enviados", valor: String(r.seguimientosEnviados) },
+      { label: "Respondieron", valor: String(r.seguimientosConRespuesta) },
+      ...(extra.propuestasPorRevisar
+        ? [{ label: "Por aprobar", valor: String(extra.propuestasPorRevisar) }]
+        : []),
     ];
   }
   if (r.rol === "vera") {
     return [
+      { label: "Encuestas enviadas", valor: String(r.seguimientosPorTipo.encuesta_postventa ?? 0) },
       { label: "Encuestas respondidas", valor: n("encuesta_respondida") },
-      { label: "Reseñas conseguidas", valor: n("resena_conseguida") },
       { label: "Clientes molestos", valor: n("cliente_molesto") },
     ];
   }
@@ -293,7 +308,7 @@ function ConsumoDelPlan({ estado }: { estado: EstadoCupo }) {
 
 export default async function Inicio() {
   const usuario = await exigirUsuarioPortal();
-  const [empleados, metricas, esperando, ahorro, oportunidades, abiertas, cupo, pagos] =
+  const [empleados, metricas, esperando, ahorro, oportunidades, abiertas, cupo, pagos, conversacionesMesCanon, propuestasPorRevisar] =
     await Promise.all([
       resumenEmpleados(usuario.clienteId),
       metricasCliente(usuario.clienteId),
@@ -303,9 +318,21 @@ export default async function Inicio() {
       oportunidadesAbiertas(usuario.clienteId),
       estadoDeCupo(usuario.clienteId, db()),      // Cobros del mes (migración 289). Si la tabla no existe: ceros, sin romper.
       resumenPagos(usuario.clienteId).catch(() => ({ pendientes: 0, pagadosMes: 0, montoMes: 0 })),
+      contarConversacionesActivas(usuario.clienteId, inicioDeMesChile()).catch(() => null),
+      // Sin la migración 297 devuelve null y la fila no se muestra.
+      contarVivas(usuario.clienteId, "cotizacion_sin_respuesta").catch(() => null),
     ]);
 
-  const { actual, comparacion } = metricas;
+  /**
+   * ed_metricas solo se muestra si es del MES EN CURSO (Fase 0). En producción
+   * hoy solo la llenan las semillas de demo; sin este filtro, en septiembre la
+   * portada mostraba el bloque de julio como si fuera la foto actual.
+   */
+  const mesActual = inicioDeMesChile().slice(0, 7);
+  const mesDe = (periodo: string) => String(periodo).slice(0, 7);
+  const actual =
+    metricas.actual && mesDe(metricas.actual.periodo) >= mesActual.slice(0, 7) ? metricas.actual : null;
+  const comparacion = actual ? metricas.comparacion : null;
   const pendientes = esperando.total;
   const antes = comparacion?.esBasal ? "vs antes de Respondo" : "vs mes anterior";
 
@@ -323,11 +350,14 @@ export default async function Inicio() {
     { label: "Cotizados", valor: oportunidades.cotizados },
   ].filter((x) => x.valor > 0);
 
-  // UNA SOLA FUENTE para el total del mes. ed_metricas es el consolidado
-  // oficial que escribe el motor; si todavía no existe, se cae al conteo
-  // derivado de los mensajes. Nunca mezclar las dos en la misma pantalla.
-  const derivadas = empleados.reduce((a, e) => a + e.conversaciones, 0);
-  const conversacionesMes = actual?.conversaciones ?? derivadas;
+  /**
+   * CONVERSACIONES DEL MES = contactos con al menos un mensaje desde el día 1
+   * (hora de Chile). Misma definición que Isabel para su ventana de 30 días
+   * (lib/metricas.ts). Antes: ed_metricas si existía (aunque fuera de otro
+   * mes) o la SUMA por empleado de chats leídos sin paginar — un negocio con
+   * miles de mensajes veía ~100 cuando tenía ~380.
+   */
+  const conversacionesMes = conversacionesMesCanon ?? 0;
 
   return (
     <main className="mx-auto max-w-[1400px] px-5 py-6 sm:px-7 lg:px-8">
@@ -494,7 +524,10 @@ export default async function Inicio() {
       {/* ── 3. ¿Está funcionando esto que pago? ─────────────────────────────
           Los mismos tres números de Analítica, calculados con conteos en la
           base (ver resumenAhorro) para no encarecer la página más visitada. */}
-      {ahorro && ahorro.enviadosIA > 0 && (
+      {/* Se muestra también con 0 respuestas del asistente si llegaron mensajes:
+          esconderlo justo cuando el asistente no respondió nada ocultaba el
+          problema que el bloque existe para mostrar (Fase 0). */}
+      {ahorro && (ahorro.enviadosIA > 0 || ahorro.recibidos > 0) && (
         <Bloque
           titulo="¿Está funcionando?"
           nota="últimos 30 días"
@@ -635,7 +668,10 @@ export default async function Inicio() {
         </>
       )}
 
-      <h2 className="h-seccion">Tu equipo digital</h2>
+      <h2 className="h-seccion">
+        Tu equipo digital{" "}
+        <span style={{ fontSize: "var(--t-micro)", color: "var(--muted-2)", fontWeight: 400 }}>este mes</span>
+      </h2>
       <div className="mt-2.5 grid gap-3 sm:grid-cols-2 lg:grid-cols-1">
         {empleados.map((r) => {
           const meta = metaEmpleado(r.rol);
@@ -665,7 +701,7 @@ export default async function Inicio() {
               </div>
 
               <dl className="space-y-1.5 px-4 pb-4">
-                {statsDeEmpleado(r).map((s) => (
+                {statsDeEmpleado(r, { propuestasPorRevisar }).map((s) => (
                   <div key={s.label} className="flex items-baseline justify-between gap-3">
                     <dt style={{ fontSize: "var(--t-menor)", color: "var(--muted)" }}>
                       {s.label}
@@ -708,6 +744,7 @@ export default async function Inicio() {
 
       <p className="mt-4" style={{ fontSize: "var(--t-micro)", color: "var(--muted-3)" }}>
         Los números vienen de la actividad real de tus empleados y se actualizan solos.
+        {empleados.some((e) => !e.completo) && " Algunos datos no se pudieron leer completos: recarga en un momento."}
       </p>
         </aside>
       </div>

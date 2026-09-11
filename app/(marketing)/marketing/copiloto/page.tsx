@@ -4,7 +4,6 @@ import { formatearMonto, formatearNumero } from "@/lib/ads/moneda";
 import { HERRAMIENTAS } from "@/lib/marketing/copilotoCore";
 import { cargarMarketing } from "@/lib/marketing/datos";
 import { modoDemo } from "@/lib/marketing/modo";
-import { NEGOCIO_DEMO } from "@/lib/marketing/demo";
 import Cabecera from "@/components/marketing/Cabecera";
 import ChatCopiloto from "@/components/marketing/ChatCopiloto";
 
@@ -40,7 +39,6 @@ export default async function Copiloto({ searchParams }: { searchParams: Promise
       <Cabecera
         titulo="Copiloto"
         bajada="Un asesor que lee tus cifras antes de opinar."
-        cuenta={demo ? `${NEGOCIO_DEMO.nombre} · CLP` : null}
         demo={demo}
         rango={rango}
         base="/marketing/copiloto"
@@ -50,7 +48,7 @@ export default async function Copiloto({ searchParams }: { searchParams: Promise
         periodo={rango.clave}
         preguntaInicial={sp.q}
         demo={demo}
-        herramientas={HERRAMIENTAS.map((h) => ({ nombre: h.nombre, descripcion: h.descripcion }))}
+        herramientas={HERRAMIENTAS.map((h) => ({ nombre: h.nombre, etiqueta: h.etiqueta, descripcion: h.descripcion }))}
         contexto={contexto}
       />
     </main>

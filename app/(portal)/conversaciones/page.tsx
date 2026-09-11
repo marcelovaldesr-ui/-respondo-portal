@@ -59,6 +59,7 @@ const ORDEN_ETIQUETA: Record<string, number> = {
   reclamo: 0,
   // «Falta pago» es la tarea que más se olvida (el abono del 50 %): va arriba.
   pago_pendiente: 1,
+  pago_por_confirmar: 1,
   necesita_atencion: 2,
   cotizacion: 3,
   agendado: 4,

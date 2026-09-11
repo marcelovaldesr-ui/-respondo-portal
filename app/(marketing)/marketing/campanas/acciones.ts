@@ -2,23 +2,22 @@
 
 import { revalidatePath } from "next/cache";
 import { obtenerUsuarioConPermiso } from "@/lib/auth";
-import { conexionDe } from "@/lib/ads/meta";
 import { eliminarBorrador, guardarBorrador, type EntradaBorrador } from "@/lib/marketing/campanas";
 import { generarPaquete } from "@/lib/marketing/creatividades";
 import { modoDemo } from "@/lib/marketing/modo";
 import type { EstadoCampana } from "@/lib/marketing/tipos";
+import { capacidadesDe } from "@/lib/marketing/capacidades";
 
 /**
  * ACCIONES DEL ASISTENTE DE CAMPAÑAS.
  *
  * El estado del borrador lo calcula `estadoDeBorrador` con lo que la
- * instalación PUEDE hacer hoy: Meta conectada o no, permiso de publicar o
- * no. `puedePublicar` es false a secas: publicar por API exige
- * `ads_management` y una revisión de app que no se pidió. Cuando exista, se
- * cambia acá y el resto del producto ya sabe qué hacer.
+ * instalación PUEDE hacer hoy. Esas capacidades ya no se recalculan acá: salen
+ * de `lib/marketing/capacidades.ts`, el mismo lugar del que las lee la pantalla.
+ * Antes eran dos expresiones copiadas, y si una cambiaba sin la otra la píldora
+ * que veía el dueño dejaba de coincidir con el estado que se guardaba.
  */
 const DEMO_BLOQUEADO = "Estás en datos de demostración: se puede probar, pero no se guarda. Apaga la demo para crear de verdad.";
-const PUEDE_PUBLICAR = false;
 
 export async function guardarBorradorAccion(
   entrada: EntradaBorrador,
@@ -27,11 +26,11 @@ export async function guardarBorradorAccion(
   const usuario = await obtenerUsuarioConPermiso("generar_insights");
   if (!usuario) return { ok: false, motivo: "Sesión no válida." };
   if (await modoDemo()) return { ok: false, motivo: DEMO_BLOQUEADO };
-  const conexion = await conexionDe(usuario.clienteId);
+  const cap = await capacidadesDe(usuario.clienteId);
   const r = await guardarBorrador(
     usuario.clienteId,
     entrada,
-    { metaConectada: Boolean(conexion && conexion.cuentaId && conexion.estado === "conectada"), puedePublicar: PUEDE_PUBLICAR },
+    { metaConectada: cap.metaConectada, puedePublicar: cap.puedePublicarEnMeta },
     id,
   );
   if (r.ok) revalidatePath("/marketing", "layout");

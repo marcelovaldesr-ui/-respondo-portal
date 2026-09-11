@@ -10,7 +10,15 @@ import {
 } from "@/lib/generadorCotizacionCore";
 import { empleadosDelCliente, juzgarCotizacion } from "@/lib/juezCotizacion";
 import { decidirConJuez } from "@/lib/juezCotizacionCore";
-import { modoDe, proponerSeguimiento } from "@/lib/propuestasSeguimiento";
+import {
+  contarVivas,
+  inicioDiaChile,
+  memoriaDePropuestas,
+  modoDe,
+  proponerSeguimiento,
+  registrarFrenado,
+} from "@/lib/propuestasSeguimiento";
+import { bloqueoPorPropuesta, PREFIJO_SIN_VEREDICTO } from "@/lib/propuestasCore";
 
 /**
  * GENERADOR: BETO PERSIGUE LAS COTIZACIONES QUE NADIE CONTESTÓ.
@@ -35,7 +43,11 @@ export type ResumenCotizacion = {
   frenadosPorJuez: number;
   /** Propuestas dejadas para que una persona apruebe en /seguimientos. */
   propuestos: number;
+  /** Candidatos saltados porque ya hay una decisión vigente (propuesta, rechazo, freno). */
+  yaDecididos: number;
   detalle: string[];
+  /** Fallos por negocio, sin chat_id (observabilidad del cron). */
+  errores: { clienteId: string; error: string }[];
 };
 
 export async function generarSeguimientosCotizacion(
@@ -51,7 +63,12 @@ export async function generarSeguimientosCotizacion(
    *
    * Lo que no alcanza no se pierde: queda para el siguiente latido, en 5 min.
    */
-  opciones?: { fechaLimite?: number },
+  opciones?: {
+    fechaLimite?: number;
+    /** Para pruebas: juez falso y reloj fijo. Nada de esto se usa en producción. */
+    juzgar?: typeof juzgarCotizacion;
+    ahora?: number;
+  },
 ): Promise<ResumenCotizacion> {
   const out: ResumenCotizacion = {
     clientes: 0,
@@ -59,22 +76,32 @@ export async function generarSeguimientosCotizacion(
     programados: 0,
     frenadosPorJuez: 0,
     propuestos: 0,
+    yaDecididos: 0,
     detalle: [],
+    errores: [],
   };
 
-  const { data: clientes } = await supa
+  const { data: clientes, error: errClientes } = await supa
     .from("ed_clientes")
     .select("id, nombre, cotizacion_tope_diario")
     .eq("cotizacion_seguimiento", true)
+    .order("id", { ascending: true })
     .limit(50);
+  if (errClientes) {
+    out.errores.push({ clienteId: "", error: `no se pudo leer negocios: ${errClientes.message}` });
+    return out;
+  }
 
   if (!clientes?.length) return out;
   out.clientes = clientes.length;
 
-  const ahora = Date.now();
+  const ahora = opciones?.ahora ?? Date.now();
+  const juzgar = opciones?.juzgar ?? juzgarCotizacion;
   const desde = new Date(ahora - DIAS_MAX * 86_400_000).toISOString();
   const hasta = new Date(ahora - DIAS_MIN * 86_400_000).toISOString();
-  const hoy = new Date(new Date().toDateString()).toISOString();
+  // Día de CHILE, no del servidor: en Vercel `toDateString()` es UTC y el día
+  // del tope cambiaba a las 20:00/21:00 de Chile (Fase 0).
+  const hoy = inicioDiaChile(new Date(ahora)).toISOString();
 
   for (const cli of clientes) {
     const clienteId = cli.id as string;
@@ -108,27 +135,36 @@ export async function generarSeguimientosCotizacion(
     const betoId = beto.id as string;
 
     // Cuánto se lleva enviado hoy: el tope es diario y de plata.
-    const { count: enviadosHoy } = await supa
+    const { count: enviadosHoy, error: errHoy } = await supa
       .from("ed_seguimientos")
       .select("id", { count: "exact", head: true })
       .eq("empleado_id", betoId)
       .eq("tipo", "cotizacion_sin_respuesta")
       .gte("programado_para", hoy);
+    if (errHoy) {
+      // Sin saber cuánto se gastó hoy, no se programa nada (fail-closed).
+      out.errores.push({ clienteId, error: `no se pudo contar el tope del día: ${errHoy.message}` });
+      continue;
+    }
 
     /**
      * Candidatos: cotizados dentro de la ventana. El `limit` es explícito
      * —PostgREST corta en 1.000 sin avisar— y sobra: el tope diario va a
      * recortar mucho antes.
      */
-    const { data: contactos } = await supa
+    const { data: contactos, error: errContactos } = await supa
       .from("ed_contactos")
-      .select("chat_id, nombre, etapa, etiquetas, ultimo_mensaje_en, ultimo_mensaje_rol")
+      .select("chat_id, nombre, etapa, etapa_motivo, etiquetas, ultimo_mensaje_en, ultimo_mensaje_rol")
       .eq("cliente_id", clienteId)
       .gte("ultimo_mensaje_en", desde)
       .lte("ultimo_mensaje_en", hasta)
       .order("ultimo_mensaje_en", { ascending: true })
       .limit(300);
 
+    if (errContactos) {
+      out.errores.push({ clienteId, error: `no se pudieron leer contactos: ${errContactos.message}` });
+      continue;
+    }
     if (!contactos?.length) continue;
 
     /**
@@ -151,13 +187,26 @@ export async function generarSeguimientosCotizacion(
     const chatIds = contactos.map((c) => c.chat_id as string);
 
     // Seguimientos previos de este tipo, para no insistir dos veces.
-    const { data: previos } = await supa
+    const { data: previos, error: errPrevios } = await supa
       .from("ed_seguimientos")
       .select("chat_id, programado_para")
       .eq("empleado_id", betoId)
       .eq("tipo", "cotizacion_sin_respuesta")
       .in("chat_id", chatIds)
       .limit(1000);
+    if (errPrevios) {
+      // Sin saber a quién ya se le insistió, se podría insistir dos veces.
+      out.errores.push({ clienteId, error: `no se pudieron leer seguimientos previos: ${errPrevios.message}` });
+      continue;
+    }
+
+    // Decisiones previas (propuesta viva, rechazo, freno del juez). Si no se
+    // pueden leer, se falla cerrado: juzgar a ciegas es pagar dos veces.
+    const memoria = await memoriaDePropuestas({ clienteId, tipo: "cotizacion_sin_respuesta", chatIds, supa });
+    if (!memoria) {
+      out.errores.push({ clienteId, error: "no se pudo leer la memoria de propuestas (¿migración 297?)" });
+      continue;
+    }
 
     const ultimoSeg = new Map<string, string>();
     for (const s of previos ?? []) {
@@ -177,8 +226,8 @@ export async function generarSeguimientosCotizacion(
      * funcionando con el resto de las reglas.
      */
     const pagados = new Set<string>();
-    try {
-      const { data: pagos } = await supa
+    {
+      const { data: pagos, error: errPagos } = await supa
         .from("ed_pagos")
         .select("chat_id")
         .eq("cliente_id", clienteId)
@@ -186,9 +235,16 @@ export async function generarSeguimientosCotizacion(
         .gte("creado_en", desde)
         .in("chat_id", chatIds)
         .limit(1000);
+      /**
+       * FAIL-CLOSED (Fase 0). Antes el error se ignoraba (PostgREST no lanza,
+       * así que el try/catch nunca atrapaba nada) y el cruce quedaba vacío: a
+       * quien ya pagó se le podía proponer «¿sigue en pie tu cotización?».
+       */
+      if (errPagos) {
+        out.errores.push({ clienteId, error: `no se pudieron leer los cobros pagados: ${errPagos.message}` });
+        continue;
+      }
       for (const p of pagos ?? []) pagados.add(p.chat_id as string);
-    } catch {
-      // Sin la tabla, el cruce no aplica. No es motivo para no generar nada.
     }
 
     const elegibles: { chatId: string; nombre: string; diasEsperando: number }[] = [];
@@ -200,11 +256,17 @@ export async function generarSeguimientosCotizacion(
         etapa: (c.etapa as string | null) ?? null,
         ultimoMensajeEn: (c.ultimo_mensaje_en as string | null) ?? null,
         ultimoRol: (c.ultimo_mensaje_rol as string | null) ?? null,
+        etapaMotivo: (c.etapa_motivo as string | null) ?? null,
         ultimoSeguimientoEn: ultimoSeg.get(chatId) ?? null,
         pagoPagadoEnVentana: pagados.has(chatId),
       };
       const v = decidirCotizacion(cand, ahora);
       if (v.enviar) {
+        const b = bloqueoPorPropuesta(memoria.get(chatId), cand.ultimoMensajeEn, ahora);
+        if (b.bloquea) {
+          out.yaDecididos++;
+          continue;
+        }
         elegibles.push({
           chatId,
           nombre: (c.nombre as string | null) || "",
@@ -215,9 +277,25 @@ export async function generarSeguimientosCotizacion(
 
     out.candidatos += elegibles.length;
 
+    const modo = await modoDe(clienteId, supa);
+    /**
+     * En modo aprobación el límite es la LISTA, no el gasto del día: una
+     * propuesta no cuesta nada hasta que alguien la aprueba (y ahí se aplica el
+     * tope diario, ver aprobarPropuesta). Sin esto, las propuestas nunca
+     * consumían cupo y el juez corría hasta el tope en CADA pasada.
+     */
+    let usados = enviadosHoy ?? 0;
+    if (modo === "aprobacion") {
+      const vivas = await contarVivas(clienteId, "cotizacion_sin_respuesta", supa);
+      if (vivas === null) {
+        out.errores.push({ clienteId, error: "no se pudieron contar las propuestas pendientes" });
+        continue;
+      }
+      usados = vivas;
+    }
     const cupo = cuposDisponibles({
       topeDiario,
-      enviadosHoy: enviadosHoy ?? 0,
+      enviadosHoy: usados,
       candidatos: elegibles.length,
     });
     if (cupo <= 0) {
@@ -247,11 +325,19 @@ export async function generarSeguimientosCotizacion(
      * había pedido la devolución del dinero. Son ~$680 en mensajes que habrían
      * hecho quedar mal al negocio.
      */
-    const empleadoIds = await empleadosDelCliente(clienteId, supa);
-    const modo = await modoDe(clienteId, supa);
+    let empleadoIds: string[];
+    try {
+      empleadoIds = await empleadosDelCliente(clienteId, supa);
+    } catch (e) {
+      out.errores.push({ clienteId, error: (e as Error).message });
+      continue;
+    }
 
     let resueltos = 0;
     let sinTiempo = 0;
+    let sinVeredicto = 0;
+    let ultimoSinVeredicto = "";
+    const frenadosAntes = out.frenadosPorJuez;
     for (const e of elegibles.slice(0, cupo)) {
       /**
        * Si no queda tiempo útil, se corta acá y no se marca nada. En el próximo
@@ -259,11 +345,11 @@ export async function generarSeguimientosCotizacion(
        * determinista y no consumieron ningún cupo.
        */
       if (typeof opciones?.fechaLimite === "number" && Date.now() > opciones.fechaLimite - 9_000) {
-        sinTiempo = cupo - resueltos - out.frenadosPorJuez;
+        sinTiempo = cupo - resueltos - (out.frenadosPorJuez - frenadosAntes);
         break;
       }
 
-      const v = await juzgarCotizacion({
+      const v = await juzgar({
         fechaLimite: opciones?.fechaLimite,
         chatId: e.chatId,
         negocio: (cli.nombre as string) || "",
@@ -274,7 +360,36 @@ export async function generarSeguimientosCotizacion(
       const d = decidirConJuez(v);
 
       if (!d.enviar) {
+        if (v.abierta === null) {
+          // El juez no pudo decidir (hilo ilegible, modelo caído): no es un "no".
+          // Se guarda con marca de reintento a las 24 h para no volver a pagar
+          // el mismo hilo cada 5 minutos, y cuenta UN error por negocio por
+          // corrida (no uno por candidato).
+          sinVeredicto++;
+          ultimoSinVeredicto = v.motivo;
+          const f = await registrarFrenado({
+            clienteId,
+            empleadoId: betoId,
+            chatId: e.chatId,
+            tipo: "cotizacion_sin_respuesta",
+            motivoJuez: `${PREFIJO_SIN_VEREDICTO} ${v.motivo}`.slice(0, 500),
+            evidencia: { diasEsperando: e.diasEsperando },
+            supa,
+          });
+          if (!f.ok) out.errores.push({ clienteId, error: `no se pudo guardar el reintento del juez: ${f.error}` });
+          continue;
+        }
         out.frenadosPorJuez++;
+        const f = await registrarFrenado({
+          clienteId,
+          empleadoId: betoId,
+          chatId: e.chatId,
+          tipo: "cotizacion_sin_respuesta",
+          motivoJuez: d.motivo,
+          evidencia: { diasEsperando: e.diasEsperando, mensajesLeidos: v.mensajes.length },
+          supa,
+        });
+        if (!f.ok) out.errores.push({ clienteId, error: `no se pudo guardar el freno del juez: ${f.error}` });
         continue;
       }
 
@@ -310,6 +425,7 @@ export async function generarSeguimientosCotizacion(
           resueltos++;
         } else {
           out.detalle.push(`${e.chatId}: no se pudo proponer (${r.error})`);
+          out.errores.push({ clienteId, error: `no se pudo proponer: ${r.error}` });
         }
         continue;
       }
@@ -328,11 +444,15 @@ export async function generarSeguimientosCotizacion(
         resueltos++;
       } else {
         out.detalle.push(`${e.chatId}: no se pudo programar (${r.error})`);
+        out.errores.push({ clienteId, error: `no se pudo programar: ${r.error}` });
       }
     }
 
+    if (sinVeredicto) {
+      out.errores.push({ clienteId, error: `juez sin veredicto en ${sinVeredicto} candidato(s): ${ultimoSinVeredicto}` });
+    }
     out.detalle.unshift(
-      `${cli.nombre}: ${elegibles.length} elegibles · ${out.frenadosPorJuez} frenados por el juez · ` +
+      `${cli.nombre}: ${elegibles.length} elegibles · ${out.frenadosPorJuez - frenadosAntes} frenados por el juez · ` +
         `${resueltos} ${modo === "aprobacion" ? "propuestos para aprobar" : "programados"}` +
         (sinTiempo > 0 ? ` · ${sinTiempo} quedaron para el próximo latido (sin tiempo)` : ""),
     );

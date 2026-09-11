@@ -1,3 +1,5 @@
+import type { Capacidades } from "@/lib/marketing/capacidades";
+import type { CodigoErrorAds } from "@/lib/ads/proveedor";
 import type { GrupoMetricas } from "@/lib/ads/metricas";
 import type { Hallazgo } from "@/lib/ads/insights";
 import type { Rango } from "@/lib/ads/periodos";
@@ -100,6 +102,8 @@ export type FilaAnuncio = {
   calificados: number;
   cotizaciones: number;
   agendadas: number;
+  /** Cotizaron o reservaron, contado UNA vez por persona (no es la suma). */
+  avanzados: number;
   ventas: number;
   cobrado: number;
   conClid: number;
@@ -195,8 +199,23 @@ export type Panorama = {
   /** true cuando lo que se muestra son datos de demostración. */
   demo: boolean;
   monedaNegocio: string;
-  /** ¿Hay conexión con Meta (o la demo la simula)? */
+  /**
+   * Qué puede hacer este negocio. ÚNICA fuente para los botones y los estados:
+   * ninguna pantalla vuelve a preguntarse por su cuenta si se puede conectar
+   * Meta o generar con IA. Ver `lib/marketing/capacidades.ts`.
+   */
+  capacidades: Capacidades;
+  /**
+   * ¿Llegaron las cifras de publicidad de ESTE período?
+   *
+   * OJO: no es lo mismo que `capacidades.metaConectada`. La cuenta puede estar
+   * perfectamente conectada y esto ser false porque Meta pidió esperar o se
+   * cayó la red. Se usa para decidir si se pintan cifras; para decidir qué
+   * botón ofrecer se usa `capacidades`.
+   */
   metaConectada: boolean;
+  /** Por qué no llegaron, cuando no llegaron. Da el motivo exacto, no uno genérico. */
+  errorPublicidad: CodigoErrorAds | null;
   metricas: GrupoMetricas[];
   serie: PuntoDiario[];
   embudo: EscalonEmbudo[];

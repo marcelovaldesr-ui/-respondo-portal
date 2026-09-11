@@ -1,6 +1,7 @@
 import { db } from "@/lib/db";
 import { DIAS_SILENCIO } from "@/lib/embudo";
 import { idsEmpleadosDeCliente } from "@/lib/empleadosCache";
+import { contarEsperando } from "@/lib/metricas";
 
 /**
  * Filtro de "oportunidad viva", en el lenguaje de PostgREST.
@@ -222,32 +223,20 @@ export async function contadoresMenu(
           .gte("ultimo_mensaje_en", corte),
       );
 
-    const [escalaciones, resumen, nInteresados, nCotizados] = await Promise.all([
-      supa
-        .from("ed_escalaciones")
-        .select("chat_id", { count: "exact", head: true })
-        .in("empleado_id", ids)
-        .is("atendida_en", null),
+    const [esperando, nInteresados, nCotizados] = await Promise.all([
       /**
        * El número del menú tiene que ser EL MISMO que el chip «Te esperan» de
-       * la bandeja (auditoría 3-sep-2026: 45 filas vs 44 chats). El chip cuenta
-       * conversaciones con el RPC de la 273/293; acá se usa el mismo y el
-       * conteo de filas queda solo como respaldo si la migración no está.
+       * la bandeja (auditoría 3-sep-2026: 45 filas vs 44 chats), y desde la
+       * Fase 0 también el de la portada y el de Isabel: los tres usan
+       * `contarEsperando` (lib/metricas.ts).
        */
-      supa.rpc("ed_resumen_conversaciones_portal", { p_cliente_id: clienteId }),
+      contarEsperando(clienteId, ids, supa),
       porEtapa("interesado"),
       porEtapa("cotizado"),
     ]);
 
     const interesados = nInteresados.count ?? 0;
     const cotizados = nCotizados.count ?? 0;
-    const resumenRaw = (Array.isArray(resumen.data) ? resumen.data[0] : resumen.data) as
-      | { espera?: number }
-      | null;
-    const esperando =
-      !resumen.error && typeof resumenRaw?.espera === "number"
-        ? resumenRaw.espera
-        : (escalaciones.count ?? 0);
 
     return {
       esperando,

@@ -39,17 +39,21 @@ export function PropuestasLista({
 }) {
   const [propuestas, setPropuestas] = useState(iniciales);
   const [error, setError] = useState<string | null>(null);
+  const [aviso, setAviso] = useState<string | null>(null);
   const [ocupado, setOcupado] = useState<string | null>(null);
 
   const decidir = async (p: PropuestaConContacto, accion: "si" | "no") => {
     if (ocupado) return;
     setOcupado(p.id);
     setError(null);
+    setAviso(null);
     try {
       const fd = new FormData();
       fd.set("propuestaId", p.id);
-      const r = accion === "si" ? await aprobar(fd) : await rechazar(fd);
-      if (r.ok) setPropuestas((xs) => xs.filter((x) => x.id !== p.id));
+      const r: { ok: boolean; error?: string; aviso?: string; retirar?: boolean } =
+        accion === "si" ? await aprobar(fd) : await rechazar(fd);
+      if (r.ok || r.retirar) setPropuestas((xs) => xs.filter((x) => x.id !== p.id));
+      if (r.ok) setAviso(r.aviso ?? null);
       else setError(r.error ?? "No se pudo guardar");
     } finally {
       setOcupado(null);
@@ -59,6 +63,11 @@ export function PropuestasLista({
   if (!propuestas.length) {
     return (
       <div className="tarjeta p-8 text-center" style={{ color: "var(--muted)" }}>
+        {(error || aviso) && (
+          <p className="mb-2 text-[13px]" style={{ color: error ? "var(--alerta, #B91C1C)" : "var(--muted)" }}>
+            {error ?? aviso}
+          </p>
+        )}
         {soloLectura
           ? "Nada por acá todavía."
           : "No hay cotizaciones por retomar. Cuando el asistente encuentre alguna que quedó sin respuesta, aparecerá acá antes de que salga."}
@@ -71,6 +80,11 @@ export function PropuestasLista({
       {error && (
         <p className="text-[13px]" style={{ color: "var(--alerta, #B91C1C)" }}>
           {error}
+        </p>
+      )}
+      {aviso && (
+        <p className="text-[13px]" style={{ color: "var(--muted)" }}>
+          {aviso}
         </p>
       )}
       {propuestas.map((p) => (

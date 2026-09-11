@@ -10,6 +10,7 @@ import {
 import { panoramaDemo } from "@/lib/marketing/demo";
 import { resolverRango } from "@/lib/ads/periodos";
 import type { Creatividad, FormatoCreatividad } from "@/lib/marketing/tipos";
+import { textoDeFalla, traducirFalla } from "@/lib/marketing/fallas";
 
 /**
  * EL ESTUDIO CREATIVO — generar, guardar, variar.
@@ -113,10 +114,10 @@ export async function generarPaquete(
   try {
     const crudo = await generarJSON(prompt, { timeoutMs: 30_000, thinkingBudget: 512 });
     const paquete = parsearPaquete(crudo);
-    if (!paquete) return { ok: false, motivo: "El modelo devolvió un anuncio incompleto. Prueba de nuevo." };
+    if (!paquete) return { ok: false, motivo: textoDeFalla("incompleto") };
     return { ok: true, paquete };
   } catch (e) {
-    return { ok: false, motivo: `No se pudo generar el texto: ${(e as Error).message}` };
+    return { ok: false, motivo: traducirFalla({ proveedor: "ia", operacion: "generarPaquete", clienteId, crudo: e }) };
   }
 }
 
@@ -130,7 +131,7 @@ export async function generarImagen(
   formato: FormatoCreatividad,
 ): Promise<{ ok: true; url: string } | { ok: false; motivo: string }> {
   const key = process.env.GEMINI_API_KEY;
-  if (!key) return { ok: false, motivo: "Falta GEMINI_API_KEY en el servidor." };
+  if (!key) return { ok: false, motivo: textoDeFalla("sin_motor") };
 
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), 45_000);
@@ -152,12 +153,21 @@ export async function generarImagen(
       candidates?: { content?: { parts?: { inlineData?: { data?: string } }[] } }[];
       error?: { message?: string };
     };
-    if (!r.ok) return { ok: false, motivo: j.error?.message ?? `HTTP ${r.status}` };
+    if (!r.ok)
+      return {
+        ok: false,
+        motivo: traducirFalla({
+          proveedor: "imagen",
+          operacion: "generarImagen",
+          clienteId,
+          crudo: j.error?.message ?? `HTTP ${r.status}`,
+        }),
+      };
     const parte = j.candidates?.[0]?.content?.parts?.find((p) => p.inlineData?.data);
-    if (!parte?.inlineData?.data) return { ok: false, motivo: "El modelo no devolvió una imagen." };
+    if (!parte?.inlineData?.data) return { ok: false, motivo: "No salió ninguna imagen. Vuelve a intentar." };
     png = Buffer.from(parte.inlineData.data, "base64");
   } catch (e) {
-    return { ok: false, motivo: `No se pudo generar la imagen: ${(e as Error).message}` };
+    return { ok: false, motivo: traducirFalla({ proveedor: "imagen", operacion: "generarImagen", clienteId, crudo: e }) };
   } finally {
     clearTimeout(timer);
   }
@@ -180,11 +190,11 @@ export async function generarImagen(
   if (subida.error) {
     return {
       ok: false,
-      motivo: `La imagen se generó pero no se pudo guardar (¿falta la migración 303?): ${subida.error.message}`,
+      motivo: traducirFalla({ proveedor: "almacen", operacion: "subirImagen", clienteId, crudo: subida.error.message }),
     };
   }
   const { data } = supa.storage.from(BUCKET).getPublicUrl(ruta);
-  if (!data?.publicUrl) return { ok: false, motivo: "No se pudo obtener el enlace de la imagen." };
+  if (!data?.publicUrl) return { ok: false, motivo: textoDeFalla("sin_espacio") };
   return { ok: true, url: data.publicUrl };
 }
 
@@ -214,6 +224,19 @@ export async function guardarCreatividad(
   entrada: EntradaCreatividad,
   id?: string,
 ): Promise<{ ok: true; id: string } | { ok: false; motivo: string }> {
+  /**
+   * Los dos punteros que vienen del navegador se verifican contra ESTE negocio
+   * antes de escribirse. Una acción de servidor es un endpoint público: hoy la
+   * pantalla siempre manda ids propios, pero nada impide una petición fabricada
+   * con el id de la campaña de otro cliente. No se filtra nada al leer, pero
+   * quedaría un puntero cruzado guardado, y eso es una fuga esperando a que
+   * alguien lo resuelva sin filtrar por cliente.
+   */
+  const [campanaId, varianteDe] = await Promise.all([
+    perteneceAlCliente(clienteId, "ed_mk_campanas", entrada.campanaId),
+    perteneceAlCliente(clienteId, "ed_mk_creatividades", entrada.varianteDe),
+  ]);
+
   const fila = {
     cliente_id: clienteId,
     nombre: entrada.nombre.slice(0, 80),
@@ -230,19 +253,27 @@ export async function guardarCreatividad(
     imagen_url: entrada.imagenUrl,
     imagen_prompt: entrada.imagenPrompt,
     estado: entrada.estado ?? "borrador",
-    campana_id: entrada.campanaId ?? null,
-    variante_de: entrada.varianteDe ?? null,
+    campana_id: campanaId,
+    variante_de: varianteDe,
     actualizado_en: new Date().toISOString(),
   };
 
   const supa = db();
   if (id) {
-    const { error } = await supa
+    /**
+     * `.select("id")` no es cosmética: PostgREST no da error cuando ningún
+     * registro coincide, así que sin esto un id ajeno o borrado devolvía
+     * «Guardado» sin haber escrito nada. Un falso «listo» es peor que un error.
+     */
+    const { data, error } = await supa
       .from("ed_mk_creatividades")
       .update(fila)
       .eq("id", id)
-      .eq("cliente_id", clienteId);
-    if (error) return { ok: false, motivo: error.message };
+      .eq("cliente_id", clienteId)
+      .select("id")
+      .maybeSingle();
+    if (error) return { ok: false, motivo: traducirFalla({ proveedor: "almacen", operacion: "guardarCreatividad", clienteId, crudo: error.message }) };
+    if (!data) return { ok: false, motivo: "Esa creatividad ya no existe. Puede que se haya eliminado desde otra pestaña." };
     return { ok: true, id };
   }
   const { data, error } = await supa
@@ -253,9 +284,7 @@ export async function guardarCreatividad(
   if (error || !data) {
     return {
       ok: false,
-      motivo: /relation .* does not exist|schema cache/i.test(error?.message ?? "")
-        ? "Falta aplicar la migración 303 para poder guardar creatividades."
-        : (error?.message ?? "No se pudo guardar."),
+      motivo: traducirFalla({ proveedor: "almacen", operacion: "crearCreatividad", clienteId, crudo: error?.message ?? "sin fila" }),
     };
   }
   return { ok: true, id: String(data.id) };
@@ -266,19 +295,37 @@ export async function cambiarEstadoCreatividad(
   id: string,
   estado: Creatividad["estado"],
 ): Promise<boolean> {
-  const { error } = await db()
+  const { data, error } = await db()
     .from("ed_mk_creatividades")
     .update({ estado, actualizado_en: new Date().toISOString() })
     .eq("id", id)
-    .eq("cliente_id", clienteId);
-  return !error;
+    .eq("cliente_id", clienteId)
+    .select("id")
+    .maybeSingle();
+  return !error && Boolean(data);
 }
 
 export async function eliminarCreatividad(clienteId: string, id: string): Promise<boolean> {
-  const { error } = await db()
+  const { data, error } = await db()
     .from("ed_mk_creatividades")
     .delete()
     .eq("id", id)
-    .eq("cliente_id", clienteId);
-  return !error;
+    .eq("cliente_id", clienteId)
+    .select("id")
+    .maybeSingle();
+  return !error && Boolean(data);
+}
+
+/**
+ * ¿Este id es de este negocio? Devuelve el id si sí, null si no o si viene
+ * vacío. Nunca lanza: un puntero inválido no puede tumbar un guardado.
+ */
+async function perteneceAlCliente(clienteId: string, tabla: string, id?: string | null): Promise<string | null> {
+  if (!id) return null;
+  try {
+    const { data } = await db().from(tabla).select("id").eq("id", id).eq("cliente_id", clienteId).maybeSingle();
+    return data ? id : null;
+  } catch {
+    return null;
+  }
 }

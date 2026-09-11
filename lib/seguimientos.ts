@@ -1,6 +1,14 @@
 import { db } from "@/lib/db";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { plantillaPara, render, limpiarParam } from "@/lib/plantillas";
+import {
+  COL_DESCARTADO,
+  TIPOS_DE_CITA,
+  decidirPospuesto,
+  manana10Chile,
+  vigenciaDeCita,
+  type CitaVigencia,
+} from "@/lib/seguimientosCore";
 
 /**
  * MOTOR DE SEGUIMIENTOS PROGRAMADOS (tabla ed_seguimientos).
@@ -128,6 +136,14 @@ export async function programarSeguimiento(params: {
  * `enviado_en` para que salga de la cola y `variables.descartado` con el
  * motivo, para que se entienda al mirarlo. No se borra: es historial.
  */
+export type ResultadoProcesar = {
+  enviados: number;
+  detalle: string[];
+  errores: { clienteId: string | null; error: string }[];
+  /** true cuando no se hizo nada por estar fuera del horario hábil. */
+  fueraDeHorario?: boolean;
+};
+
 async function descartar(
   supa: SupabaseClient,
   s: Seguimiento,
@@ -170,13 +186,16 @@ export async function procesarSeguimientos(opts: {
   ahora?: Date;
   limite?: number;
   supa?: SupabaseClient;
-}): Promise<{ enviados: number; detalle: string[] }> {
+}): Promise<ResultadoProcesar> {
   const supa = opts.supa ?? db();
   const ahora = opts.ahora ?? new Date();
   const detalle: string[] = [];
+  // Fallos de envío atribuibles a un negocio: alimentan la observabilidad del
+  // cron (lib/procesos.ts). Sin chat_id ni texto: solo negocio y motivo.
+  const errores: { clienteId: string | null; error: string }[] = [];
 
   if (!enHorarioHabil(ahora)) {
-    return { enviados: 0, detalle: [`fuera_horario (hora Chile: ${horaChile(ahora)})`] };
+    return { enviados: 0, detalle: [`fuera_horario (hora Chile: ${horaChile(ahora)})`], errores, fueraDeHorario: true };
   }
 
   const maxDia = Number(process.env.SEGUIMIENTOS_MAX_DIA ?? 15);
@@ -207,8 +226,14 @@ export async function procesarSeguimientos(opts: {
     .lte("programado_para", ahora.toISOString())
     .order("programado_para", { ascending: true })
     .limit(tanda * 4);
-  if (error) return { enviados: 0, detalle: [`error_lectura: ${error.message}`] };
-  if (!pendientes?.length) return { enviados: 0, detalle: ["sin_pendientes"] };
+  if (error) {
+    return {
+      enviados: 0,
+      detalle: [`error_lectura: ${error.message}`],
+      errores: [{ clienteId: null, error: `no se pudo leer la cola: ${error.message}` }],
+    };
+  }
+  if (!pendientes?.length) return { enviados: 0, detalle: ["sin_pendientes"], errores };
 
   /**
    * TOPE DIARIO POR CLIENTE (corregido en la auditoría del 31-jul).
@@ -258,11 +283,15 @@ export async function procesarSeguimientos(opts: {
 
       const idsTodos = [...duenoDe.keys()];
       if (idsTodos.length) {
+        // Solo envíos REALES: una fila descartada (cita vencida, no_contactar,
+        // sin texto) tiene enviado_en pero no gastó cupo del número. Antes 15
+        // recordatorios vencidos descartados agotaban el tope del día.
         const { data: enviadosHoy } = await supa
           .from("ed_seguimientos")
           .select("empleado_id")
           .in("empleado_id", idsTodos)
-          .gte("enviado_en", hoy.toISOString());
+          .gte("enviado_en", hoy.toISOString())
+          .is(COL_DESCARTADO, null);
 
         for (const fila of enviadosHoy ?? []) {
           const cid = duenoDe.get(fila.empleado_id as string);
@@ -296,8 +325,40 @@ export async function procesarSeguimientos(opts: {
     if (cidDueno) {
       const yaHoy = enviadosHoyPorCliente.get(cidDueno) ?? 0;
       if (yaHoy >= maxDia) {
-        detalle.push(`${s.id.slice(0, 8)}: tope diario del cliente alcanzado`);
+        // Se corre a mañana 10:00 (Fase 0): si se deja al frente de la cola,
+        // las filas topadas de un negocio tapan a todos los demás.
+        await supa
+          .from("ed_seguimientos")
+          .update({ programado_para: manana10Chile(ahora).toISOString() })
+          .eq("id", s.id)
+          .is("enviado_en", null);
+        detalle.push(`${s.id.slice(0, 8)}: tope diario del cliente alcanzado, pasa a mañana`);
         continue;
+      }
+    }
+
+    /**
+     * VIGENCIA (Fase 0, 11-sep-2026): un recordatorio de una cita que ya pasó,
+     * se canceló o ya no es "de mañana" se DESCARTA con motivo. Mandarlo tarde
+     * es peor que no mandarlo: el cliente recibe "te esperamos hoy a las 09:00"
+     * a las 10:00. La cita se lee acotada al negocio dueño del empleado.
+     */
+    const citaId = (s.variables as { cita_id?: unknown } | null)?.cita_id;
+    if (TIPOS_DE_CITA.has(s.tipo) && typeof citaId === "string" && cidDueno) {
+      const { data: cita, error: eCita } = await supa
+        .from("ed_citas")
+        .select("estado, inicio, fin")
+        .eq("id", citaId)
+        .eq("cliente_id", cidDueno)
+        .maybeSingle();
+      if (!eCita) {
+        const v = vigenciaDeCita(s.tipo, (cita as CitaVigencia) ?? null, ahora);
+        if (!v.vigente) {
+          await descartar(supa, s, v.motivo, intento);
+          intentosReales += 1;
+          detalle.push(`${s.id.slice(0, 8)}: ${v.motivo}, descartado`);
+          continue;
+        }
       }
     }
 
@@ -316,11 +377,9 @@ export async function procesarSeguimientos(opts: {
         .maybeSingle();
       const etiquetas = (cont?.etiquetas as string[] | null) ?? [];
       if (etiquetas.includes("no_contactar")) {
-        // Se marca como enviado con nota para que no se reintente jamás.
-        await supa
-          .from("ed_seguimientos")
-          .update({ enviado_en: ahora.toISOString(), intento })
-          .eq("id", s.id);
+        // Se cierra CON MOTIVO (Fase 0): antes quedaba igual que un envío real
+        // y las métricas lo contaban como "mensaje que salió".
+        await descartar(supa, s, "no_contactar", intento);
         detalle.push(`${s.id.slice(0, 8)}: no_contactar, cancelado`);
         continue;
       }
@@ -328,7 +387,10 @@ export async function procesarSeguimientos(opts: {
 
     const texto = String((s.variables as { texto?: string } | null)?.texto ?? "").trim();
     if (!texto) {
-      detalle.push(`${s.id.slice(0, 8)}: sin variables.texto, omitido`);
+      // Una fila sin texto no va a poder salir nunca: se cierra con motivo en
+      // vez de quedar al frente de la cola para siempre.
+      await descartar(supa, s, "sin texto", intento);
+      detalle.push(`${s.id.slice(0, 8)}: sin variables.texto, descartado`);
       continue;
     }
 
@@ -346,11 +408,30 @@ export async function procesarSeguimientos(opts: {
       // consume, porque si se consumiera un seguimiento con max_intentos = 1
       // moriría por el solo hecho de haber pasado por acá con la ventana
       // cerrada, sin haberle escrito nunca a nadie.
-      detalle.push(`${s.id.slice(0, 8)}: pospuesto (${r.error ?? "sin ventana"})`);
+      //
+      // Fase 0: la fila se corre 2 h hacia adelante (si el cliente escribe,
+      // sale sola en la siguiente mirada) y a los 7 días de espera se cierra.
+      // Antes quedaba al frente de la cola y la atascaba.
+      const d = decidirPospuesto(s.variables, ahora);
+      if (d.accion === "descartar") {
+        await descartar(supa, s, d.motivo);
+        detalle.push(`${s.id.slice(0, 8)}: ${d.motivo}, descartado`);
+      } else {
+        await supa
+          .from("ed_seguimientos")
+          .update({
+            programado_para: d.para.toISOString(),
+            variables: { ...((s.variables as Record<string, unknown> | null) ?? {}), pospuesto_desde: d.pospuestoDesde },
+          })
+          .eq("id", s.id)
+          .is("enviado_en", null);
+        detalle.push(`${s.id.slice(0, 8)}: pospuesto (${r.error ?? "sin ventana"})`);
+      }
       continue;
     }
     intentosReales += 1;
     if (!r.ok) {
+      errores.push({ clienteId: cidDueno ?? null, error: `envío de ${s.tipo} falló: ${r.error ?? "?"}` });
       /**
        * El fallo CONSUME el intento (auditoría 3-sep-2026). Antes no se
        * escribía nada y la fila se reintentaba en cada pasada, sin tope, y
@@ -390,7 +471,7 @@ export async function procesarSeguimientos(opts: {
     detalle.push(`${s.id.slice(0, 8)}: enviado (${s.tipo})`);
   }
 
-  return { enviados, detalle };
+  return { enviados, detalle, errores };
 }
 
 /**
@@ -418,6 +499,8 @@ export async function empleadoParaEntrante(
       .eq("chat_id", chatId)
       .eq("ed_empleados.cliente_id", clienteId)
       .not("enviado_en", "is", null)
+      // Un descartado nunca le llegó al cliente: no puede "reclamar" su respuesta.
+      .is(COL_DESCARTADO, null)
       .eq("respuesta_recibida", false) // boolean en el esquema
       .gte("enviado_en", desde)
       .order("enviado_en", { ascending: false })

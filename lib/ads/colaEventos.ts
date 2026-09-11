@@ -52,7 +52,8 @@ type Candidato = {
  * Busca hechos recientes que merezcan un evento y los deja encolados.
  *
  * Los tres orígenes son los que Respondo puede AFIRMAR, no inferir:
- *   · `Purchase` — un cobro por enlace que quedó pagado. Con monto real.
+ *   · `Purchase` — un cobro por enlace que quedó pagado. Con monto real. Solo
+ *                  ese: un pago que el cliente INFORMÓ en el chat no cuenta.
  *   · `Schedule` — una cita creada (ed_resultados: agendamiento).
  *   · `Lead`     — una cotización enviada. Es el punto donde una consulta se
  *                  volvió una oportunidad; antes de eso es solo una pregunta.
@@ -94,25 +95,26 @@ export async function encolar(clienteId: string): Promise<{ nuevos: number; desc
       .from("ed_resultados")
       .select("chat_id, tipo, creado_en, valor_clp")
       .in("empleado_id", ids)
-      .in("tipo", ["agendamiento", "cotizacion_enviada", "venta_confirmada", "venta_recuperada"])
+      /**
+       * SIN `venta_confirmada` NI `venta_recuperada` (Fase 0, 11-sep-2026).
+       * `venta_confirmada` la escribe el detector de cierres cuando el CLIENTE
+       * DICE que pagó (lo lee un modelo en el chat): es un pago informado, no
+       * confirmado. Mandárselo a Meta como `Purchase` le enseñaría a buscar
+       * compradores que quizá no pagaron. El único `Purchase` es el cobro que
+       * una persona (o el proveedor de pago) marcó como pagado, arriba.
+       */
+      .in("tipo", ["agendamiento", "cotizacion_enviada"])
       .gte("creado_en", desde)
       .limit(400);
 
     for (const r of res ?? []) {
-      const t = r.tipo as string;
-      const tipo: TipoEvento | null =
-        t === "agendamiento"
-          ? "Schedule"
-          : t === "cotizacion_enviada"
-            ? "Lead"
-            : "Purchase";
-      if (!tipo) continue;
+      const tipo: TipoEvento = (r.tipo as string) === "agendamiento" ? "Schedule" : "Lead";
       candidatos.push({
         chatId: r.chat_id as string,
         tipo,
         ocurridoEn: new Date(r.creado_en as string),
-        valor: tipo === "Purchase" ? Number(r.valor_clp) || null : null,
-        moneda: tipo === "Purchase" ? "CLP" : null,
+        valor: null,
+        moneda: null,
       });
     }
   }

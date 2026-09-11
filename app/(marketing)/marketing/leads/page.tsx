@@ -3,7 +3,6 @@ import { resolverRango } from "@/lib/ads/periodos";
 import { formatearMonto, formatearNumero } from "@/lib/ads/moneda";
 import { cargarMarketing } from "@/lib/marketing/datos";
 import { modoDemo } from "@/lib/marketing/modo";
-import { NEGOCIO_DEMO } from "@/lib/marketing/demo";
 import Cabecera from "@/components/marketing/Cabecera";
 import TablaLeads from "@/components/marketing/TablaLeads";
 
@@ -40,7 +39,6 @@ export default async function Leads({ searchParams }: { searchParams: Promise<{ 
             ? `Llegaron desde este anuncio de «${anuncio.campanaNombre}».`
             : undefined
         }
-        cuenta={p.demo ? `${NEGOCIO_DEMO.nombre} · CLP` : null}
         demo={p.demo}
         rango={rango}
         base="/marketing/leads"
@@ -56,7 +54,7 @@ export default async function Leads({ searchParams }: { searchParams: Promise<{ 
         <Dato etiqueta="Llegaron por un anuncio" valor={formatearNumero(leads.length)} />
         <Dato etiqueta="Calificados" valor={formatearNumero(calificados)} nota={leads.length ? `${Math.round((calificados / leads.length) * 100)}% de los que llegaron` : undefined} />
         <Dato etiqueta="Compraron" valor={formatearNumero(compraron)} nota={leads.length ? `${Math.round((compraron / leads.length) * 100)}% de los que llegaron` : undefined} />
-        <Dato etiqueta="Ingresos atribuidos" valor={cobrado > 0 ? formatearMonto({ valor: cobrado, moneda: p.monedaNegocio }) : "—"} nota="Cobrado por enlace (piso)" fuerte />
+        <Dato etiqueta="Ingresos atribuidos" valor={cobrado > 0 ? formatearMonto({ valor: cobrado, moneda: p.monedaNegocio }) : "—"} nota="Al menos: lo cobrado por enlace de pago" fuerte />
       </div>
 
       <TablaLeads

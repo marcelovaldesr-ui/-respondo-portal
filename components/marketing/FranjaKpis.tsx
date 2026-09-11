@@ -17,10 +17,22 @@ import { variacion, type Metrica } from "@/lib/ads/metricas";
  * Regla heredada y no negociable: lo que no se puede calcular muestra «—» con
  * el motivo en el tooltip. Nunca un cero que parece un dato.
  */
+/**
+ * CÓMO SE DICE LA CERTEZA, en el idioma del dueño.
+ *
+ * La semántica interna no cambia —`medida`, `derivada`, `parcial`,
+ * `no_disponible` siguen siendo las mismas cuatro cosas y se calculan igual—;
+ * lo que cambia es la palabra. «Medida» y «Piso» son vocabulario nuestro: un
+ * dueño de imprenta lee «Piso» y no sabe si es bueno o malo. «Al menos» sí lo
+ * dice: el número es real y el de verdad puede ser mayor.
+ *
+ * Van en 10,5 px con un punto de color y el detalle en el tooltip, para no
+ * convertir la franja en una nota al pie.
+ */
 const ROTULO: Record<Metrica["certeza"], string> = {
-  medida: "Medida",
-  derivada: "Derivada",
-  parcial: "Piso",
+  medida: "Dato directo",
+  derivada: "Calculado",
+  parcial: "Al menos",
   no_disponible: "Sin dato",
 };
 
@@ -96,13 +108,18 @@ export default function FranjaKpis({ kpis, monedaNegocio = "CLP" }: { kpis: Kpi[
                   sinDato
                     ? m.motivo || "Falta conectar la fuente de este dato."
                     : m.certeza === "medida"
-                      ? "Contada una por una, no estimada."
+                      ? "Contado uno por uno, no estimado."
                       : m.certeza === "derivada"
-                        ? "Calculada a partir de dos cifras medidas."
-                        : "Es un piso: el valor real puede ser mayor."
+                        ? "Lo calcula Respondo a partir de dos cifras contadas una por una."
+                        : "El valor real puede ser mayor: acá solo entra lo que se pagó por enlace de pago."
                 }
               >
-                {ROTULO[m.certeza]}
+                {/* AYUDA PROGRESIVA: el caso normal —contado uno por uno— no
+                    lleva palabra, solo el punto verde con su explicación al
+                    pasar el mouse. La palabra aparece cuando hay algo que
+                    advertir: que es un cálculo, que es un mínimo o que falta.
+                    Etiquetar lo esperable solo llena la franja de metadatos. */}
+                {m.certeza !== "medida" && ROTULO[m.certeza]}
               </span>
             </div>
           </div>

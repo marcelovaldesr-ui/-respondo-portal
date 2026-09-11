@@ -58,6 +58,15 @@ export type FilaPauta = {
   conversaciones: number;
   cotizaciones: number;
   agendadas: number;
+  /**
+   * Conversaciones que AVANZARON: cotizaron, reservaron o las dos cosas.
+   *
+   * No es `cotizaciones + agendadas`. Esa suma contaba dos veces al cliente que
+   * pide precio y además agenda una visita, y en un negocio de servicios eso es
+   * la norma, no la excepción: el escalón del embudo podía superar al anterior
+   * y mostrar una tasa sobre 100%.
+   */
+  avanzados: number;
   ventas: number;
   /** Pesos efectivamente cobrados por Flow en esos chats. */
   pagado: number;
@@ -144,6 +153,7 @@ export function agruparPorAnuncio(entrada: {
         conversaciones: 0,
         cotizaciones: 0,
         agendadas: 0,
+        avanzados: 0,
         ventas: 0,
         pagado: 0,
         conClid: 0,
@@ -187,6 +197,13 @@ export function agruparPorAnuncio(entrada: {
     else if (r.tipo === "cotizacion_enviada" && contarUnaVez(r.chatId, "cotizacion"))
       fila.cotizaciones += 1;
     else if (TIPOS_VENTA.has(r.tipo) && contarUnaVez(r.chatId, "venta")) fila.ventas += 1;
+
+    // El escalón «avanzaron» cuenta personas, no eventos: una sola vez por chat.
+    if (
+      (r.tipo === "agendamiento" || r.tipo === "cotizacion_enviada") &&
+      contarUnaVez(r.chatId, "avanzo")
+    )
+      fila.avanzados += 1;
   }
 
   for (const p of pagos) {
@@ -196,7 +213,19 @@ export function agruparPorAnuncio(entrada: {
     if (!fila) continue;
     // Los pagos SÍ se suman todos: dos abonos del mismo cliente son dos pagos.
     const monto = Number(p.monto);
-    if (Number.isFinite(monto) && monto > 0) fila.pagado += Math.round(monto);
+    if (!Number.isFinite(monto) || monto <= 0) continue;
+    fila.pagado += Math.round(monto);
+    /**
+     * UN COBRO PAGADO ES UNA VENTA, aunque nadie la haya marcado a mano.
+     *
+     * Antes esta regla existía solo en la lista de personas, y el embudo la
+     * ignoraba. El resultado era una contradicción que el dueño encontraba
+     * solo: el escalón decía «34 ventas», hacía clic, y la lista mostraba 40
+     * personas que compraron. Ahora las dos cuentan lo mismo. `contarUnaVez`
+     * ya consumió el cupo si la venta venía de un resultado, así que un chat
+     * con resultado Y pago sigue valiendo uno.
+     */
+    if (contarUnaVez(p.chatId ?? "", "venta")) fila.ventas += 1;
   }
 
   /**

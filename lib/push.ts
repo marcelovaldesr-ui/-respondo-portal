@@ -81,14 +81,33 @@ export async function avisarACliente(
 ): Promise<number> {
   if (!configurar()) return 0;
 
-  const { data, error } = await supa
+  const { data: todas, error } = await supa
     .from("ed_push_suscripciones")
-    .select("id, endpoint, p256dh, auth")
+    .select("id, endpoint, p256dh, auth, email")
     .eq("cliente_id", clienteId);
 
   // Tabla inexistente (migración 283 sin aplicar) u otro problema: sin avisos,
   // pero el mensaje del cliente ya se guardó y se atiende igual.
-  if (error || !data?.length) return 0;
+  if (error || !todas?.length) return 0;
+
+  /**
+   * SOLO A USUARIOS VIGENTES DEL NEGOCIO (Fase 0, 11-sep-2026). El aviso trae
+   * el nombre del cliente y un trozo de su mensaje. Antes se mandaba a todo
+   * dispositivo suscrito alguna vez con ese negocio: alguien del equipo dado de
+   * baja seguía recibiendo en su teléfono las conversaciones del negocio.
+   * Si no se puede leer la lista de usuarios, no se avisa (falla cerrado).
+   */
+  const { data: usuarios, error: errUsuarios } = await supa
+    .from("portal_usuarios")
+    .select("email")
+    .eq("cliente_id", clienteId)
+    .eq("activo", true);
+  if (errUsuarios) return 0;
+  const data = suscripcionesVigentes(
+    todas as { id: string; endpoint: string; p256dh: string; auth: string; email: string | null }[],
+    usuarios ?? [],
+  );
+  if (!data.length) return 0;
 
   const carga = JSON.stringify({
     titulo: aviso.titulo,
@@ -153,4 +172,14 @@ export function resumirParaAviso(texto: string, max = 120): string {
   const limpio = (texto ?? "").replace(/\s+/g, " ").trim();
   if (limpio.length <= max) return limpio;
   return limpio.slice(0, max - 1).trimEnd() + "…";
+}
+
+/** Las suscripciones cuyo correo sigue activo en el negocio (pura, testeada). */
+export function suscripcionesVigentes<T extends { email?: unknown }>(
+  suscripciones: readonly T[],
+  usuariosActivos: readonly { email?: unknown }[],
+): T[] {
+  const norm = (v: unknown) => String(v ?? "").toLowerCase().trim();
+  const vigentes = new Set(usuariosActivos.map((u) => norm(u.email)).filter(Boolean));
+  return suscripciones.filter((s) => vigentes.has(norm(s.email)));
 }

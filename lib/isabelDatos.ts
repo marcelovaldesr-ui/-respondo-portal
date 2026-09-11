@@ -1,4 +1,5 @@
 import { db } from "@/lib/db";
+import { unaPorChat } from "@/lib/metricas";
 import { LOCALE, ZONA } from "@/lib/fechas";
 import { palabrasClave, situacionVacia, type SituacionNegocio } from "@/lib/isabelCore";
 
@@ -265,7 +266,7 @@ export async function situacionDelNegocio(clienteId: string): Promise<SituacionN
     .eq("cliente_id", clienteId);
   const ids = (empleados ?? []).map((e) => e.id as string);
 
-  const [informes, citas, cobros, escalaciones, cierres, resultados] = await Promise.all([
+  const [informes, citas, cobros, escalaciones, cierres, resultados, totalCobros] = await Promise.all([
     // ── Informes semanales ya generados ──────────────────────────────────────
     seguro(
       "informes",
@@ -366,8 +367,12 @@ export async function situacionDelNegocio(clienteId: string): Promise<SituacionN
           .in("empleado_id", ids)
           .is("atendida_en", null)
           .order("creado_en", { ascending: true }) // el que espera hace más rato, primero
-          .limit(TOPES.esperando);
-        return (data ?? []).map((f) => ({
+          .limit(TOPES.esperando * 5);
+        // Una por conversación (Fase 0): un chat con dos derivaciones abiertas
+        // es UNA persona esperando, igual que en el menú y la portada.
+        return unaPorChat((data ?? []) as { chat_id: string; trigger: string | null; resumen: string | null; creado_en: string }[])
+          .slice(0, TOPES.esperando)
+          .map((f) => ({
           chatId: f.chat_id as string,
           motivo: recorte(f.trigger, 40) || "sin motivo",
           resumen: recorte(f.resumen, 240),
@@ -421,6 +426,23 @@ export async function situacionDelNegocio(clienteId: string): Promise<SituacionN
       },
       [] as { chatId: string; tipo: string; valor: number; creadoEn: string }[],
     ),
+
+    // ── Totales reales de cobros pendientes (la lista de arriba va recortada) ─
+    seguro(
+      "cobros_total",
+      async () => {
+        const { data, error } = await supa
+          .from("ed_pagos")
+          .select("monto")
+          .eq("cliente_id", clienteId)
+          .eq("estado", "pendiente")
+          .limit(1000);
+        if (error) return undefined;
+        const filas = data ?? [];
+        return { cantidad: filas.length, monto: filas.reduce((t, f) => t + (Number(f.monto) || 0), 0) };
+      },
+      undefined as { cantidad: number; monto: number } | undefined,
+    ),
   ]);
 
   // Los nombres se piden UNA vez para todos los bloques que los necesitan.
@@ -432,6 +454,7 @@ export async function situacionDelNegocio(clienteId: string): Promise<SituacionN
   ]);
 
   situacion.informes = informes;
+  situacion.cobrosPendientesTotal = totalCobros;
   situacion.citas = citas;
   situacion.cobrosPendientes = cobros.map((c) => ({
     quien: quienEs(c.chatId, nombres),

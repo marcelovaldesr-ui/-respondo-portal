@@ -2,6 +2,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import { db } from "@/lib/db";
 import { verificarEstado, intercambiarCodigo, cifrarRefreshToken } from "@/lib/googleOAuth";
 import { auditarSistema } from "@/lib/auditoria";
+import { nombreCookieVinculo, vinculoValido } from "@/lib/oauthVinculo";
 
 export const dynamic = "force-dynamic";
 
@@ -30,7 +31,10 @@ export async function GET(req: NextRequest) {
   const code = req.nextUrl.searchParams.get("code");
   const estadoRaw = req.nextUrl.searchParams.get("state");
   const estado = estadoRaw ? verificarEstado(estadoRaw) : null;
-  if (!code || !estado) {
+  // El `state` tiene que haber salido de ESTE navegador (Fase 0, CSRF de OAuth).
+  const vinculado = vinculoValido(estadoRaw, req.cookies.get(nombreCookieVinculo("google"))?.value);
+  if (!code || !estado || !vinculado) {
+    if (code && estado && !vinculado) console.warn("[google/callback] state sin vínculo con este navegador: rechazado");
     destino.searchParams.set("gcal_oauth", "error");
     return NextResponse.redirect(destino);
   }
@@ -67,5 +71,7 @@ export async function GET(req: NextRequest) {
   await auditarSistema(estado.clienteId, "google_calendar_oauth_conectado", estado.profesionalId);
 
   destino.searchParams.set("gcal_oauth", "ok");
-  return NextResponse.redirect(destino);
+  const res = NextResponse.redirect(destino);
+  res.cookies.delete(nombreCookieVinculo("google"));
+  return res;
 }

@@ -125,7 +125,8 @@ export function FranjaMarketing({ demo }: { demo: boolean }) {
         </span>
         {demo && <span className="mk-demo ml-auto">Demostración</span>}
       </div>
-      <nav className="-mx-1 mt-2.5 flex gap-1 overflow-x-auto px-3 pb-2.5" aria-label="Secciones de Marketing">
+      {/* Sin `-mx-1`: el margen negativo sacaba 3 px fuera del contenedor y dejaba la página con scroll horizontal en tablet. */}
+      <nav className="mt-2.5 flex max-w-full gap-1 overflow-x-auto px-3 pb-2.5" aria-label="Secciones de Marketing">
         {items.map((it) => (
           <Link
             key={it.href}

@@ -6,8 +6,10 @@ import { enviarTextoWaha } from "@/lib/waha";
 import { configPorCliente, enviarTexto, enviarPlantilla } from "@/lib/whatsapp";
 import { ventanaAbierta } from "@/lib/ventana24";
 import { plantillaPara } from "@/lib/plantillas";
-import { secretoValido } from "@/lib/seguridad";
+import { limitarDistribuido, secretoValido } from "@/lib/seguridad";
 import { LATIDO_CRON_SEGUIMIENTOS, registrarLatido } from "@/lib/latidos";
+import { correrPaso, registrarProcesos } from "@/lib/procesos";
+import type { ResultadoPaso } from "@/lib/procesosCore";
 import { generarInformesPendientes } from "@/lib/insightsAuto";
 import { renovarTokensIg } from "@/lib/instagram";
 import { reprocesarWebhooksPendientes } from "@/lib/webhookInbox";
@@ -15,6 +17,7 @@ import { revisarCuposYAvisar } from "@/lib/avisosCupo";
 import { revisarAbandonadas } from "@/lib/reingresoTino";
 import { reconciliarEstados } from "@/lib/reconciliarEstados";
 import { detectarCierres } from "@/lib/cierreVentas";
+import { recalcularEmbudos } from "@/lib/embudoCron";
 import { archivarPendientes } from "@/lib/archivarMedia";
 import { generarSeguimientosCotizacion } from "@/lib/generadorCotizacion";
 import { destilarPendientes } from "@/lib/isabelDestilado";
@@ -57,6 +60,26 @@ export async function GET(request: NextRequest) {
   const supa = db();
 
   /**
+   * UNA CORRIDA A LA VEZ (Fase 0, 11-sep-2026). Dos corridas simultáneas (un
+   * disparo manual mientras corre la programada, o un reintento del servicio de
+   * cron) leían las mismas filas pendientes y podían mandar el mismo
+   * recordatorio dos veces. Si la base de límites no responde, el candado cae
+   * al respaldo local y deja correr: un cron bloqueado es peor que el riesgo.
+   */
+  if (!(await limitarDistribuido("cron:seguimientos", 1, 55)).ok) {
+    return NextResponse.json({ omitido: "otra corrida en curso" });
+  }
+
+  /**
+   * OBSERVABILIDAD POR PASO (Fase 0). Cada paso deja su resultado acá —éxito,
+   * fallo, sin trabajo, y qué negocio falló— y al final se guarda en
+   * ed_latidos como `proceso:<paso>`. Antes cada paso tragaba su error con
+   * console.error y solo quedaba constancia de que "el cron corrió": el informe
+   * semanal podía fallar semanas sin que nada lo mostrara. Ver lib/procesos.ts.
+   */
+  const procesos: ResultadoPaso[] = [];
+
+  /**
    * GENERAR ANTES DE ENVIAR.
    *
    * El generador crea los avisos de mantención con programado_para = ahora, así
@@ -66,71 +89,92 @@ export async function GET(request: NextRequest) {
    * igual. Es la parte que el negocio está viendo funcionar.
    */
   let generados = 0;
-  try {
-    const g = await generarParaTodos({ supa });
-    generados = g.total;
-  } catch (e) {
-    console.error("[cron] generador de seguimientos falló (no afecta los envíos)", e);
-  }
-
-  const r = await procesarSeguimientos({
-    enviar: async (empleadoId, chatId, texto, extra) => {
-      // Resolver el cliente del empleado para elegir transporte.
-      const { data: emp } = await supa
-        .from("ed_empleados")
-        .select("cliente_id")
-        .eq("id", empleadoId)
-        .maybeSingle();
-      const clienteId = (emp?.cliente_id as string) ?? null;
-      if (!clienteId) return { ok: false, error: "empleado sin cliente" };
-
-      const { data: cli } = await supa
-        .from("ed_clientes")
-        .select("transporte")
-        .eq("id", clienteId)
-        .maybeSingle();
-      const transporte = ((cli as { transporte?: string } | null)?.transporte as string) ?? "waha";
-
-      if (transporte === "cloud") {
-        const cfg = await configPorCliente(clienteId);
-        if (!cfg) return { ok: false, error: "cliente cloud sin credenciales" };
-
-        /**
-         * TEXTO LIBRE vs PLANTILLA (la regla de Meta, ver lib/ventana24.ts).
-         *
-         * Dentro de la ventana de 24 h el texto libre es gratis y se ve más
-         * natural, así que se prefiere. Fuera de la ventana Meta lo rechaza y
-         * la única vía es la plantilla aprobada — que dice exactamente lo
-         * mismo, porque el texto se renderizó desde su cuerpo.
-         */
-        const abierta = await ventanaAbierta({ clienteId, chatId, supa });
-        // `sinEspera`: un seguimiento no es una respuesta en vivo. Nadie está
-        // esperando del otro lado, y la pausa solo gastaría tiempo del cron.
-        if (abierta) return enviarTexto(cfg, chatId, texto, { sinEspera: true });
-
-        const pl = plantillaPara(extra.plantilla);
-        if (!pl || !extra.params.length) {
-          // Texto libre con la ventana cerrada: no se envía y no se quema el
-          // intento. Si el cliente escribe en las próximas horas, sale solo.
-          return {
-            ok: false,
-            omitido: true,
-            error: "ventana de 24h cerrada y el mensaje no tiene plantilla",
-          };
-        }
-        return enviarPlantilla(cfg, chatId, {
-          nombre: pl.nombre,
-          idioma: pl.idioma,
-          params: extra.params,
-        });
-      }
-      // BARRERA MULTI-CLIENTE (auditoría 11-ago-2026): WAHA tiene UNA sola
-      // sesión. Sin pasar el clienteId acá, los recordatorios de cualquier otro
-      // cliente en transporte='waha' salían por el WhatsApp del dueño de esa
-      // sesión y quedaban guardados en SU conversación. Ver lib/waha.ts.
-      return enviarTextoWaha(chatId, texto, { clienteId });
+  await correrPaso(
+    "generador_seguimientos",
+    async () => {
+      const g = await generarParaTodos({ supa });
+      generados = g.total;
+      return g;
     },
-  });
+    (g) => ({ ok: true, resumen: { generados: g.total } }),
+    procesos,
+  );
+
+  /**
+   * ENVÍO DE SEGUIMIENTOS — antes sin try: si lanzaba, se caía el cron entero
+   * (sin informe, sin archivado, sin latido) y /api/salud lo veía como "cron
+   * muerto" en vez de "el envío falla". Ahora se registra y los demás siguen.
+   */
+  const rEnvio = await correrPaso(
+    "seguimientos",
+    () =>
+      procesarSeguimientos({
+        enviar: async (empleadoId, chatId, texto, extra) => {
+          // Resolver el cliente del empleado para elegir transporte.
+          const { data: emp } = await supa
+            .from("ed_empleados")
+            .select("cliente_id")
+            .eq("id", empleadoId)
+            .maybeSingle();
+          const clienteId = (emp?.cliente_id as string) ?? null;
+          if (!clienteId) return { ok: false, error: "empleado sin cliente" };
+
+          const { data: cli } = await supa
+            .from("ed_clientes")
+            .select("transporte")
+            .eq("id", clienteId)
+            .maybeSingle();
+          const transporte = ((cli as { transporte?: string } | null)?.transporte as string) ?? "waha";
+
+          if (transporte === "cloud") {
+            const cfg = await configPorCliente(clienteId);
+            if (!cfg) return { ok: false, error: "cliente cloud sin credenciales" };
+
+            /**
+             * TEXTO LIBRE vs PLANTILLA (la regla de Meta, ver lib/ventana24.ts).
+             *
+             * Dentro de la ventana de 24 h el texto libre es gratis y se ve más
+             * natural, así que se prefiere. Fuera de la ventana Meta lo rechaza y
+             * la única vía es la plantilla aprobada — que dice exactamente lo
+             * mismo, porque el texto se renderizó desde su cuerpo.
+             */
+            const abierta = await ventanaAbierta({ clienteId, chatId, supa });
+            // `sinEspera`: un seguimiento no es una respuesta en vivo. Nadie está
+            // esperando del otro lado, y la pausa solo gastaría tiempo del cron.
+            if (abierta) return enviarTexto(cfg, chatId, texto, { sinEspera: true });
+
+            const pl = plantillaPara(extra.plantilla);
+            if (!pl || !extra.params.length) {
+              // Texto libre con la ventana cerrada: no se envía y no se quema el
+              // intento. Si el cliente escribe en las próximas horas, sale solo.
+              return {
+                ok: false,
+                omitido: true,
+                error: "ventana de 24h cerrada y el mensaje no tiene plantilla",
+              };
+            }
+            return enviarPlantilla(cfg, chatId, {
+              nombre: pl.nombre,
+              idioma: pl.idioma,
+              params: extra.params,
+            });
+          }
+          // BARRERA MULTI-CLIENTE (auditoría 11-ago-2026): WAHA tiene UNA sola
+          // sesión. Sin pasar el clienteId acá, los recordatorios de cualquier otro
+          // cliente en transporte='waha' salían por el WhatsApp del dueño de esa
+          // sesión y quedaban guardados en SU conversación. Ver lib/waha.ts.
+          return enviarTextoWaha(chatId, texto, { clienteId });
+        },
+      }),
+    (x) => ({
+      ok: true,
+      trabajo: !x.fueraDeHorario,
+      resumen: { enviados: x.enviados, pasos: x.detalle.length },
+      errores: x.errores,
+    }),
+    procesos,
+  );
+  const r = rEnvio ?? { enviados: 0, detalle: ["error"], errores: [] };
 
   /**
    * INFORME SEMANAL — se engancha acá y no en un cron aparte.
@@ -145,13 +189,23 @@ export async function GET(request: NextRequest) {
    * que salgan los recordatorios de citas, que son los que un cliente espera a
    * una hora concreta. Los días que no son lunes retorna al instante.
    */
-  let informes = { generados: 0, detalle: ["no_ejecutado"] as string[] };
-  try {
-    informes = await generarInformesPendientes({ fechaLimite: inicioCron + 45_000 });
-  } catch (e) {
-    console.error("[cron] informe semanal falló (no afecta los seguimientos)", e);
-    informes = { generados: 0, detalle: ["error"] };
-  }
+  const rInformes = await correrPaso(
+    "informe_semanal",
+    () => generarInformesPendientes({ fechaLimite: inicioCron + 45_000 }),
+    (x) => ({
+      ok: true,
+      // Si todo quedó "en espera" (reintento de la hora), la corrida no aporta
+      // información nueva: no debe borrar un fallo anterior.
+      trabajo: x.generados + x.omitidos + x.fallidos > 0 || x.enEspera === 0,
+      resumen: { generados: x.generados, omitidos: x.omitidos, fallidos: x.fallidos, en_espera: x.enEspera },
+      errores: x.errores,
+    }),
+    procesos,
+  );
+  // Solo conteos en la respuesta: el detalle nombra negocios.
+  const informes = rInformes
+    ? { generados: rInformes.generados, omitidos: rInformes.omitidos, fallidos: rInformes.fallidos, enEspera: rInformes.enEspera }
+    : { generados: 0, error: true };
 
   /**
    * CONVERSIONES DE PAUTA — devolverle a Meta lo que pasó después del clic.
@@ -165,13 +219,15 @@ export async function GET(request: NextRequest) {
    * datos, que es el caso hoy. Va en su propio try y después de los envíos:
    * hablar con Meta puede demorar y no puede frenar un recordatorio de cita.
    */
-  let conversiones = { encolados: 0, enviados: 0, detalle: ["no_ejecutado"] as string[] };
-  try {
-    conversiones = await procesarEventos({ fechaLimite: inicioCron + 50_000 });
-  } catch (e) {
-    console.error("[cron] conversiones de Pauta fallaron (no afecta los seguimientos)", e);
-    conversiones = { encolados: 0, enviados: 0, detalle: ["error"] };
-  }
+  const conversiones = (await correrPaso(
+    "conversiones_pauta",
+    () => procesarEventos({ fechaLimite: inicioCron + 50_000 }),
+    (x) => {
+      const errores = x.detalle.filter((d) => d.startsWith("error")).map((d) => ({ error: d }));
+      return { ok: true, resumen: { encolados: x.encolados, enviados: x.enviados }, errores };
+    },
+    procesos,
+  )) ?? { encolados: 0, enviados: 0, detalle: ["error"] };
 
   /**
    * EL DESTILADO NOCTURNO DE ISABEL — su memoria de largo plazo.
@@ -189,13 +245,12 @@ export async function GET(request: NextRequest) {
    * modelo, puede demorar, y jamás debe impedir que salga un recordatorio de
    * cita que un cliente está esperando a una hora concreta.
    */
-  let destilado = { destilados: 0, detalle: ["no_ejecutado"] as string[] };
-  try {
-    destilado = await destilarPendientes({ fechaLimite: inicioCron + 50_000 });
-  } catch (e) {
-    console.error("[cron] destilado de Isabel falló (no afecta los seguimientos)", e);
-    destilado = { destilados: 0, detalle: ["error"] };
-  }
+  const destilado = (await correrPaso(
+    "destilado_isabel",
+    () => destilarPendientes({ fechaLimite: inicioCron + 50_000 }),
+    (x) => ({ ok: true, trabajo: !x.sinTrabajo, resumen: { destilados: x.destilados }, errores: x.errores }),
+    procesos,
+  )) ?? { destilados: 0 };
 
   /**
    * TOKENS DE INSTAGRAM — se renuevan acá por la misma razón que el informe.
@@ -206,12 +261,14 @@ export async function GET(request: NextRequest) {
    * al instante cuando no hay nada por vencer, así que correrla cada 5 minutos
    * no cuesta nada.
    */
-  let instagram = { renovados: 0, fallas: [] as string[] };
-  try {
-    instagram = await renovarTokensIg();
-  } catch (e) {
-    console.error("[cron] renovación de tokens de Instagram falló", e);
-  }
+  const rIg = await correrPaso(
+    "tokens_instagram",
+    () => renovarTokensIg(),
+    (x) => ({ ok: true, resumen: { renovados: x.renovados }, errores: x.errores }),
+    procesos,
+  );
+  // Solo el conteo de fallas: las líneas nombran negocios.
+  const instagram = { renovados: rIg?.renovados ?? 0, fallas: rIg ? rIg.fallas.length : 1 };
 
   /**
    * AVISOS DE CUPO — "ya usaste 960 de 1.200 conversaciones este mes".
@@ -223,21 +280,31 @@ export async function GET(request: NextRequest) {
    *
    * NUNCA corta el servicio: solo avisa.
    */
-  let cupos = { revisados: 0, avisados: 0, detalle: [] as string[] };
-  try {
-    cupos = await revisarCuposYAvisar();
-  } catch (e) {
-    console.error("[cron] revisión de cupos falló (no afecta los seguimientos)", e);
-  }
+  const cupos = (await correrPaso(
+    "avisos_cupo",
+    () => revisarCuposYAvisar(),
+    (x) => ({
+      ok: true,
+      trabajo: x.detalle[0] !== "fuera_de_ventana",
+      resumen: { revisados: x.revisados, avisados: x.avisados },
+      errores: x.errores ?? [],
+    }),
+    procesos,
+  )) ?? { revisados: 0, avisados: 0, detalle: [] };
 
-  let webhooks = { reintentados: 0, fallidos: 0, purgados: 0, borrados: 0 };
-  try {
-    // Acotado porque cada entrante puede invocar IA; el siguiente latido toma
-    // los restantes sin arriesgar el timeout del cron principal.
-    webhooks = await reprocesarWebhooksPendientes(2, { fechaLimite: inicioCron + 30_000 });
-  } catch (e) {
-    console.error("[cron] reintento de webhooks falló", (e as Error).message);
-  }
+  // Acotado porque cada entrante puede invocar IA; el siguiente latido toma
+  // los restantes sin arriesgar el timeout del cron principal.
+  const webhooks = (await correrPaso(
+    "reintento_webhooks",
+    () => reprocesarWebhooksPendientes(2, { fechaLimite: inicioCron + 30_000 }),
+    (x) => ({
+      ok: true,
+      resumen: { reintentados: x.reintentados, fallidos: x.fallidos, purgados: x.purgados, borrados: x.borrados },
+      // Un entrante que no se pudo reprocesar es un mensaje de cliente sin atender.
+      errores: x.fallidos ? [{ error: `${x.fallidos} mensaje(s) entrante(s) no se pudieron reprocesar` }] : [],
+    }),
+    procesos,
+  )) ?? { reintentados: 0, fallidos: 0, purgados: 0, borrados: 0 };
 
   /**
    * VIGILANTE DE CONVERSACIONES ABANDONADAS (25-ago-2026).
@@ -251,7 +318,7 @@ export async function GET(request: NextRequest) {
    * los cupos.
    */
   let reingresos = { revisados: 0, reingresados: 0, callados: 0 };
-  try {
+  await correrPaso("vigilante_abandonadas", async () => {
     /**
      * Techo de tiempo: la función muere a los 60 s (`maxDuration`) y después
      * de esto todavía corren el archivado, las cotizaciones y el latido. Cada
@@ -262,9 +329,8 @@ export async function GET(request: NextRequest) {
     const rr = await revisarAbandonadas(supa, { fechaLimite: inicioCron + 45_000 });
     reingresos = { revisados: rr.revisados, reingresados: rr.reingresados, callados: rr.callados };
     if (rr.detalle.length) console.log("[cron] vigilante:", rr.detalle.join(" | "));
-  } catch (e) {
-    console.error("[cron] vigilante de abandonadas falló (no afecta lo demás)", (e as Error).message);
-  }
+    return reingresos;
+  }, (x) => ({ ok: true, resumen: x }), procesos);
 
   /**
    * QUE LAS ETIQUETAS DIGAN LA VERDAD (2-sep-2026).
@@ -278,20 +344,41 @@ export async function GET(request: NextRequest) {
    *     y decide: pagado (→ ganado), aprobado sin pago (→ "Falta pago") o
    *     abierto. Con techo de tiempo, como el vigilante.
    */
-  let reconciliado = {
-    escalacionesCerradas: 0,
-    contactosLimpiados: 0,
-    contactosReabiertos: 0,
-    agendadosCorregidos: 0,
+  const rRec = await correrPaso(
+    "reconciliar_estados",
+    () => reconciliarEstados(supa, { fechaLimite: inicioCron + 40_000 }),
+    (x) => ({
+      ok: true,
+      resumen: {
+        escalaciones_cerradas: x.escalacionesCerradas,
+        contactos_limpiados: x.contactosLimpiados,
+        contactos_reabiertos: x.contactosReabiertos,
+        agendados_corregidos: x.agendadosCorregidos,
+      },
+      errores: (x.errores ?? []).map((error) => ({ error })),
+    }),
+    procesos,
+  );
+  const reconciliado = {
+    escalacionesCerradas: rRec?.escalacionesCerradas ?? 0,
+    contactosLimpiados: rRec?.contactosLimpiados ?? 0,
+    contactosReabiertos: rRec?.contactosReabiertos ?? 0,
+    agendadosCorregidos: rRec?.agendadosCorregidos ?? 0,
   };
-  try {
-    reconciliado = await reconciliarEstados(supa, { fechaLimite: inicioCron + 40_000 });
-  } catch (e) {
-    console.error("[cron] reconciliar estados falló (no afecta lo demás)", (e as Error).message);
-  }
+
+  /**
+   * ETAPAS DEL EMBUDO (Fase 0): antes se escribían al abrir /embudo. Una vez
+   * por hora; el resto de las corridas retorna al instante. Ver lib/embudoCron.ts.
+   */
+  const rEmbudo = await correrPaso(
+    "etapas_embudo",
+    () => recalcularEmbudos({ fechaLimite: inicioCron + 45_000, supa }),
+    (x) => ({ ok: true, trabajo: !x.sinTrabajo, resumen: { negocios: x.negocios, cambios: x.cambios }, errores: x.errores }),
+    procesos,
+  );
 
   let cierres = { revisados: 0, consultados: 0, pagados: 0, aprobados: 0, cotizados: 0 };
-  try {
+  await correrPaso("detector_cierres", async () => {
     const cc = await detectarCierres(supa, { fechaLimite: inicioCron + 50_000 });
     cierres = {
       revisados: cc.revisados,
@@ -301,9 +388,8 @@ export async function GET(request: NextRequest) {
       cotizados: cc.cotizados,
     };
     if (cc.pagados || cc.aprobados || cc.cotizados) console.log("[cron] cierres:", cc.detalle.join(" | "));
-  } catch (e) {
-    console.error("[cron] detector de cierres falló (no afecta lo demás)", (e as Error).message);
-  }
+    return cierres;
+  }, (x) => ({ ok: true, resumen: x }), procesos);
 
   /**
    * ARCHIVAR ADJUNTOS ANTES DE QUE META LOS BORRE (26-ago-2026).
@@ -318,7 +404,7 @@ export async function GET(request: NextRequest) {
    * perder algo.
    */
   let adjuntos = { revisados: 0, archivados: 0, grandes: 0, fallidos: 0 };
-  try {
+  await correrPaso("archivado_adjuntos", async () => {
     const a = await archivarPendientes(supa, undefined, { fechaLimite: inicioCron + 55_000 });
     adjuntos = {
       revisados: a.revisados,
@@ -326,9 +412,17 @@ export async function GET(request: NextRequest) {
       grandes: a.grandes,
       fallidos: a.fallidos,
     };
-  } catch (e) {
-    console.error("[cron] archivado de adjuntos falló (no afecta lo demás)", (e as Error).message);
-  }
+    return adjuntos;
+  }, (x) => ({
+    ok: true,
+    resumen: x,
+    // Uno suelto que falla es normal (Meta ya lo borró, archivo corrupto).
+    // Que TODOS fallen es que el archivado está roto (bucket, credenciales).
+    errores:
+      x.fallidos > 0 && x.archivados === 0
+        ? [{ error: `${x.fallidos} adjunto(s) sin archivar y ninguno archivado en la corrida` }]
+        : [],
+  }), procesos);
 
   /**
    * BETO PERSIGUE LAS COTIZACIONES SIN RESPUESTA (26-ago-2026).
@@ -340,7 +434,8 @@ export async function GET(request: NextRequest) {
    * y con tope diario: el tope es de GASTO, no de carga.
    */
   let cotizaciones = { clientes: 0, candidatos: 0, programados: 0, frenadosPorJuez: 0, propuestos: 0 };
-  try {
+  let erroresCotizacion: { clienteId: string; error: string }[] = [];
+  await correrPaso("seguimiento_cotizaciones", async () => {
     /**
      * Techo de tiempo, igual que el vigilante: desde el 9-sep este generador
      * consulta a un juez con IA por candidato (ver lib/juezCotizacion.ts), así
@@ -356,24 +451,28 @@ export async function GET(request: NextRequest) {
       frenadosPorJuez: c.frenadosPorJuez,
       propuestos: c.propuestos,
     };
+    erroresCotizacion = c.errores;
     if (c.detalle.length) console.log("[cron] cotizaciones:", c.detalle.join(" | "));
-  } catch (e) {
-    console.error("[cron] seguimiento de cotizaciones falló (no afecta lo demás)", (e as Error).message);
-  }
+    return cotizaciones;
+  }, (x) => ({ ok: true, trabajo: x.clientes > 0, resumen: x, errores: erroresCotizacion }), procesos);
 
   // Deja constancia de que el cron corrió, aunque no haya enviado nada. Esto es
   // lo que permite que /api/salud detecte que el cron DEJÓ de correr; sin el
   // latido, un cron muerto se ve igual que un cron sin trabajo pendiente.
+  await registrarProcesos(procesos);
   await registrarLatido(LATIDO_CRON_SEGUIMIENTOS, {
     enviados: r.enviados,
     // Solo el CONTEO del detalle: esas líneas traen chat_id y no deben quedar
     // guardadas en una tabla de diagnóstico.
     pasos: Array.isArray(r.detalle) ? r.detalle.length : 0,
+    pasos_con_error: procesos.filter((p) => !p.ok || (p.errores?.length ?? 0) > 0).map((p) => p.nombre),
   });
 
   // El detalle de cupos nombra clientes: va el conteo, no las líneas.
   return NextResponse.json({
-    ...r,
+    // `errores` de los envíos se omite: ya quedó en ed_latidos sin chat_id.
+    enviados: r.enviados,
+    detalle: r.detalle,
     generados,
     informes,
     instagram,
@@ -382,6 +481,7 @@ export async function GET(request: NextRequest) {
     // El detalle nombra conversaciones: va el conteo, no las líneas.
     reingresos,
     reconciliado,
+    embudo: rEmbudo ? { negocios: rEmbudo.negocios, cambios: rEmbudo.cambios } : { error: true },
     cierres,
     adjuntos,
     // El detalle nombra clientes y chats: va el conteo, no las líneas.

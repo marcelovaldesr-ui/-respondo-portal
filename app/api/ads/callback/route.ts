@@ -1,4 +1,5 @@
 import { NextResponse, type NextRequest } from "next/server";
+import { nombreCookieVinculo, vinculoValido } from "@/lib/oauthVinculo";
 import { db } from "@/lib/db";
 import { cifrar, verificarEstado } from "@/lib/cifrado";
 import { intercambiarCodigoAds, metaAdsConfigurado, proveedorMeta } from "@/lib/ads/meta";
@@ -43,6 +44,10 @@ export async function GET(request: NextRequest) {
   const datos = verificarEstado(estado, "ads-estado");
   const clienteId = datos?.clienteId;
   if (!clienteId) return volver("estado_invalido");
+  // El `state` tiene que haber salido de ESTE navegador (Fase 0, CSRF de OAuth).
+  if (!vinculoValido(estado, request.cookies.get(nombreCookieVinculo("ads"))?.value)) {
+    return volver("estado_invalido");
+  }
 
   const token = await intercambiarCodigoAds(codigo);
   if (!token.ok) return volver(token.error.codigo);

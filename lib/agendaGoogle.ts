@@ -2,13 +2,14 @@ import { db } from "@/lib/db";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import {
   googleCalendarConfigurado,
-  ocupadosDeGoogle,
+  ocupadosDeGoogleDetalle,
   ocupadosDeUnCalendario,
   guardarEvento,
   borrarEvento,
 } from "@/lib/googleCalendar";
 import { oauthConfigurado, accessTokenDesdeRefresh, descifrarRefreshToken } from "@/lib/googleOAuth";
 import { formatearSlot } from "@/lib/agendaCore";
+import { ERROR_TOKEN_ILEGIBLE, errorLimpiablePorLectura } from "@/lib/estadoGoogleCore";
 
 /**
  * PUENTE AGENDA ↔ GOOGLE CALENDAR (F5 + F5-OAuth).
@@ -39,6 +40,10 @@ export type AccesoProfesional = {
   calendarioId: string;
   /** Presente solo en modo 'oauth': el access token ya refrescado para esta llamada. */
   tokenOAuth?: string;
+  /** Si la fila tenía un error anotado: al andar bien de nuevo se limpia. */
+  teniaError?: boolean;
+  /** El error anotado, para no reescribir el mismo en cada consulta. */
+  errorPrevio?: string | null;
 };
 
 /**
@@ -49,32 +54,49 @@ export type AccesoProfesional = {
 export async function calendariosDe(
   profesionalIds: string[],
   supa: SupabaseClient = db(),
+  /** Si se da, solo se usan profesionales de ESTE negocio (Fase 0). */
+  clienteId?: string,
 ): Promise<AccesoProfesional[]> {
   if (profesionalIds.length === 0) return [];
   if (!googleCalendarConfigurado() && !oauthConfigurado()) return [];
   try {
-    const { data, error } = await supa
+    let consulta = supa
       .from("ed_profesionales")
-      .select("id, gcal_id, gcal_sync, gcal_modo, gcal_oauth_refresh_cifrado")
+      .select("id, gcal_id, gcal_sync, gcal_modo, gcal_oauth_refresh_cifrado, gcal_ultimo_error")
       .in("id", profesionalIds)
       .eq("gcal_sync", true);
+    if (clienteId) consulta = consulta.eq("cliente_id", clienteId);
+    const { data, error } = await consulta;
     if (error) return []; // migración 221/222 pendiente
 
     const salida: AccesoProfesional[] = [];
     for (const p of data ?? []) {
       const modo = (p.gcal_modo as string | null) ?? "cuenta_servicio";
+      // Solo errores de LECTURA se limpian al leer bien (ver estadoGoogleCore).
+      const teniaError = errorLimpiablePorLectura(p.gcal_ultimo_error as string | null);
 
       if (modo === "oauth") {
         const cifrado = p.gcal_oauth_refresh_cifrado as string | null;
         if (!cifrado || !oauthConfigurado()) continue;
         const refresh = descifrarRefreshToken(cifrado);
-        if (!refresh) continue; // clave rotada o dato corrupto: se trata como sin conectar
-        const tk = await accessTokenDesdeRefresh(refresh);
-        if (!tk.ok) {
-          await anotarEstadoSync(p.id as string, `oauth: ${tk.motivo}`, supa);
+        if (!refresh) {
+          // Clave rotada o dato corrupto. Antes: `continue` sin rastro y la
+          // pantalla seguía diciendo «Conectado» (Fase 0).
+          if (p.gcal_ultimo_error !== ERROR_TOKEN_ILEGIBLE) {
+            await anotarEstadoSync(p.id as string, ERROR_TOKEN_ILEGIBLE, supa);
+          }
           continue;
         }
-        salida.push({ profesionalId: p.id as string, calendarioId: CALENDARIO_PROPIO, tokenOAuth: tk.datos });
+        const tk = await accessTokenDesdeRefresh(refresh);
+        if (!tk.ok) {
+          // Solo si cambió: esto también corre desde la página pública de
+          // reservas, y reescribir el mismo error en cada visita no aporta.
+          if (p.gcal_ultimo_error !== `oauth: ${tk.motivo}`) {
+            await anotarEstadoSync(p.id as string, `oauth: ${tk.motivo}`, supa);
+          }
+          continue;
+        }
+        salida.push({ profesionalId: p.id as string, calendarioId: CALENDARIO_PROPIO, tokenOAuth: tk.datos, teniaError, errorPrevio: (p.gcal_ultimo_error as string | null) ?? null });
         continue;
       }
 
@@ -82,7 +104,7 @@ export async function calendariosDe(
       if (!googleCalendarConfigurado()) continue;
       const gcalId = (p.gcal_id as string | null)?.trim();
       if (!gcalId) continue;
-      salida.push({ profesionalId: p.id as string, calendarioId: gcalId });
+      salida.push({ profesionalId: p.id as string, calendarioId: gcalId, teniaError, errorPrevio: (p.gcal_ultimo_error as string | null) ?? null });
     }
     return salida;
   } catch {
@@ -101,8 +123,9 @@ export async function ocupadosDesdeGoogle(
   desdeIso: string,
   hastaIso: string,
   supa: SupabaseClient = db(),
+  clienteId?: string,
 ): Promise<{ profesionalId: string; desde: string; hasta: string }[]> {
-  const cals = await calendariosDe(profesionalIds, supa);
+  const cals = await calendariosDe(profesionalIds, supa, clienteId);
   if (cals.length === 0) return [];
 
   const salida: { profesionalId: string; desde: string; hasta: string }[] = [];
@@ -118,12 +141,24 @@ export async function ocupadosDesdeGoogle(
     ]);
   }
   if (porCalendarioServicio.size > 0) {
-    const ocupados = await ocupadosDeGoogle([...porCalendarioServicio.keys()], desdeIso, hastaIso);
-    for (const o of ocupados) {
+    const r = await ocupadosDeGoogleDetalle([...porCalendarioServicio.keys()], desdeIso, hastaIso);
+    for (const o of r.ocupaciones) {
       for (const profesionalId of porCalendarioServicio.get(o.calendarioId) ?? []) {
         salida.push({ profesionalId, desde: o.desde, hasta: o.hasta });
       }
     }
+    // Fase 0: el fallo (general o de un calendario) queda anotado en cada
+    // profesional afectado; el éxito limpia un error viejo. La disponibilidad
+    // se sigue calculando igual que antes.
+    await Promise.all(
+      cals
+        .filter((c) => !c.tokenOAuth)
+        .map((c) => {
+          const error = !r.ok ? `no se pudo leer tu disponibilidad: ${r.detalle}` : r.erroresPorCalendario[c.calendarioId];
+          if (error) return error === c.errorPrevio ? undefined : anotarEstadoSync(c.profesionalId, error, supa);
+          return c.teniaError ? anotarEstadoSync(c.profesionalId, null, supa) : undefined;
+        }),
+    );
   }
 
   // OAuth: cada token solo ve el calendario de quien lo autorizó, así que va
@@ -138,9 +173,11 @@ export async function ocupadosDesdeGoogle(
         // ese es justamente el problema: sin dejar rastro, el dueño descubre
         // que su calendario personal no se respeta cuando alguien le reserva
         // encima de un compromiso. Ver el scope faltante del 12-ago-2026.
-        await anotarEstadoSync(c.profesionalId, `no se pudo leer tu disponibilidad: ${r.detalle}`, supa);
+        const error = `no se pudo leer tu disponibilidad: ${r.detalle}`;
+        if (error !== c.errorPrevio) await anotarEstadoSync(c.profesionalId, error, supa);
         return;
       }
+      if (c.teniaError) await anotarEstadoSync(c.profesionalId, null, supa);
       for (const o of r.ocupaciones) {
         salida.push({ profesionalId: c.profesionalId, desde: o.desde, hasta: o.hasta });
       }

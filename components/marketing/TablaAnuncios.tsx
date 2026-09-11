@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { formatearMonto, formatearNumero, formatearPorcentaje } from "@/lib/ads/moneda";
 import type { FilaAnuncio } from "@/lib/marketing/tipos";
+import { PieSinPublicidad } from "@/components/marketing/Estado";
 
 /**
  * LOS ANUNCIOS, con su miniatura y la calidad del lead que traen.
@@ -18,11 +19,17 @@ export default function TablaAnuncios({
   monedaNegocio,
   periodo,
   mostrarCampana = false,
+  puedeConectarMeta,
+  motivoSinPublicidad,
 }: {
   anuncios: FilaAnuncio[];
   monedaNegocio: string;
   periodo: string;
   mostrarCampana?: boolean;
+  /** Si la instalación permite conectar una cuenta publicitaria. */
+  puedeConectarMeta: boolean;
+  /** Por qué faltan las cifras de publicidad, ya escrito para el dueño. */
+  motivoSinPublicidad: string;
 }) {
   if (anuncios.length === 0) {
     return (
@@ -44,10 +51,10 @@ export default function TablaAnuncios({
           <tr>
             <th>Anuncio</th>
             {mostrarCampana && <th>Campaña</th>}
-            <th className="num" data-tip="Lo que Meta cobró. Requiere la cuenta conectada.">Invertido</th>
+            <th className="num" data-tip="Lo que cobró tu cuenta publicitaria en el período.">Invertido</th>
             <th className="num">Clics</th>
             <th className="num">Conversaciones</th>
-            <th className="num" data-tip="Costo por conversación = invertido ÷ conversaciones">CPC</th>
+            <th className="num" data-tip="Costo por conversación = invertido ÷ conversaciones. No es el costo por clic.">Costo/conv.</th>
             <th className="num" data-tip="Avanzaron a interesado o más, o cotizaron, reservaron o compraron">Calificados</th>
             <th className="num" data-tip="Ventas ÷ conversaciones de este anuncio">Cierran</th>
             <th className="num">Ingresos</th>
@@ -74,9 +81,14 @@ export default function TablaAnuncios({
                     >
                       {a.titular || "Anuncio sin titular"}
                     </Link>
-                    <div className="truncate" style={{ fontSize: "11.5px", color: "var(--muted-2)" }} title={a.cuerpo}>
-                      {a.cuerpo || a.id}
-                    </div>
+                    {/* Solo si hay texto real. La clave interna del aviso —un
+                        número de 17 dígitos de Meta, o la palabra «sin_id»— no
+                        le dice nada a nadie y se veía bajo cada fila. */}
+                    {a.cuerpo && (
+                      <div className="truncate" style={{ fontSize: "11.5px", color: "var(--muted-2)" }} title={a.cuerpo}>
+                        {a.cuerpo}
+                      </div>
+                    )}
                   </div>
                 </div>
               </td>
@@ -115,12 +127,7 @@ export default function TablaAnuncios({
         </tbody>
       </table>
       {!hayGasto && (
-        <div className="mk-panel-pie">
-          El gasto y los clics aparecen cuando la cuenta de Meta está conectada.{" "}
-          <Link href="/marketing/integraciones" className="mk-enlace">
-            Conectar
-          </Link>
-        </div>
+        <PieSinPublicidad texto={motivoSinPublicidad} puedeConectar={puedeConectarMeta} metaConectada={hayGasto} />
       )}
     </div>
   );

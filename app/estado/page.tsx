@@ -1,5 +1,7 @@
 import { db } from "@/lib/db";
 import { obtenerUsuarioPortal } from "@/lib/auth";
+import { esAdminRespondo } from "@/lib/adminRespondo";
+import { leerProcesos, type ProcesoLeido } from "@/lib/procesos";
 
 export const dynamic = "force-dynamic";
 
@@ -11,11 +13,14 @@ export const dynamic = "force-dynamic";
  *    que es justo para lo que sirve esta página en ese escenario.
  *  - Si la config está OK pero nadie inició sesión → no mostramos nada sensible.
  */
-async function usuarioAutorizado(): Promise<boolean> {
+async function usuarioAutorizado(): Promise<{ sesion: boolean; admin: boolean }> {
   try {
-    return Boolean(await obtenerUsuarioPortal());
+    const u = await obtenerUsuarioPortal();
+    // Conteos globales y procesos internos: SOLO equipo Respondo (Fase 0).
+    // Un usuario de un negocio ve que el portal conecta, nada más.
+    return { sesion: Boolean(u), admin: esAdminRespondo(u?.email) };
   } catch {
-    return false; // config rota: se maneja abajo mostrando solo el env-check
+    return { sesion: false, admin: false }; // config rota: se maneja abajo mostrando solo el env-check
   }
 }
 
@@ -49,7 +54,8 @@ async function chequear() {
 }
 
 export default async function Estado() {
-  const autorizado = await usuarioAutorizado();
+  const { sesion, admin } = await usuarioAutorizado();
+  const autorizado = sesion;
 
   // Env-check base: nombres de variables faltantes, sin valores ni conteos.
   // Es lo único que se muestra a quien NO ha iniciado sesión (o si todo está roto).
@@ -86,6 +92,7 @@ export default async function Estado() {
   }
 
   const r = await chequear();
+  const procesos: ProcesoLeido[] | null = admin ? await leerProcesos() : null;
 
   return (
     <main className="mx-auto max-w-2xl px-6 py-16">
@@ -110,9 +117,13 @@ export default async function Estado() {
         {r.ok ? (
           <ul className="mt-1 list-disc pl-5">
             <li className="text-[#16A34A]">Conexión OK</li>
-            <li>Clientes (ed_clientes): {r.clientes}</li>
-            <li>Empleados IA (ed_empleados): {r.empleados}</li>
-            <li>Usuarios del portal (portal_usuarios): {r.usuarios}</li>
+            {admin && (
+              <>
+                <li>Clientes (ed_clientes): {r.clientes}</li>
+                <li>Empleados IA (ed_empleados): {r.empleados}</li>
+                <li>Usuarios del portal (portal_usuarios): {r.usuarios}</li>
+              </>
+            )}
           </ul>
         ) : (
           <pre className="mt-2 whitespace-pre-wrap rounded-lg bg-[#FEF2F2] p-3 text-xs text-[#B91C1C]">
@@ -120,6 +131,53 @@ export default async function Estado() {
           </pre>
         )}
       </div>
+
+      {admin && (
+        <div className="mt-6 rounded-2xl border border-[#E6E8EF] bg-white p-6">
+          <div className="font-bold">Procesos automáticos (cron)</div>
+          {procesos === null ? (
+            <p className="mt-1 text-[#5B6981]">Sin registro (falta la migración 260).</p>
+          ) : procesos.length === 0 ? (
+            <p className="mt-1 text-[#5B6981]">Todavía no hay corridas registradas.</p>
+          ) : (
+            <div className="mt-2 overflow-x-auto">
+              <table className="w-full text-left text-[13px]">
+                <thead>
+                  <tr className="text-[#5B6981]">
+                    <th className="py-1 pr-3">Proceso</th>
+                    <th className="py-1 pr-3">Estado</th>
+                    <th className="py-1 pr-3">Última corrida</th>
+                    <th className="py-1">Detalle</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {procesos.map((p) => {
+                    const d = (p.detalle ?? {}) as { errores?: { clienteId: string | null; error: string; en: string }[] };
+                    const ultimo = d.errores?.[0];
+                    return (
+                      <tr key={p.nombre} className="border-t border-[#E6E8EF] align-top">
+                        <td className="py-1 pr-3 font-semibold">{p.nombre}</td>
+                        <td
+                          className={`py-1 pr-3 ${
+                            p.estado === "fallando" ? "text-[#B91C1C]" : p.estado === "con_errores" ? "text-[#B45309]" : "text-[#16A34A]"
+                          }`}
+                        >
+                          {p.estado}
+                        </td>
+                        <td className="py-1 pr-3 whitespace-nowrap">{p.ultimoEn ?? "—"}</td>
+                        <td className="py-1">
+                          {p.texto}
+                          {ultimo?.clienteId ? ` · negocio ${ultimo.clienteId.slice(0, 8)}` : ""}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      )}
     </main>
   );
 }

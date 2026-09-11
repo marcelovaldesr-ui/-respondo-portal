@@ -1,4 +1,5 @@
 import { db } from "@/lib/db";
+import { COL_DESCARTADO } from "@/lib/seguimientosCore";
 import { idsEmpleadosDeCliente } from "@/lib/empleadosCache";
 import { configPorCliente, enviarTexto } from "@/lib/whatsapp";
 import { enviarTextoWaha } from "@/lib/waha";
@@ -162,7 +163,9 @@ async function leerSeguimientos(
       .from("ed_seguimientos")
       .select("chat_id, tipo, enviado_en, respuesta_recibida")
       .in("empleado_id", ids)
-      .not("enviado_en", "is", null);
+      .not("enviado_en", "is", null)
+      // Solo lo que salió de verdad: un descartado no es un mensaje enviado.
+      .is(COL_DESCARTADO, null);
     if (hasta) q = q.lte("enviado_en", hasta);
     return q
       .gte("enviado_en", desde)

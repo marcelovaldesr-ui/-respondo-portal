@@ -382,7 +382,7 @@ export async function ejecutarAccionAgenda(params: {
 
       const r = await reagendar(params.clienteId, vigente.id, cupo.inicio, supa);
       if (r.ok) {
-        await anularSeguimientosDeCita(vigente.id, supa);
+        await anularSeguimientosDeCita(vigente.id, params.clienteId, supa);
         await programarSeguimientosCita({
           cita: r.cita,
           servicioNombre: cupo.servicioNombre,
@@ -411,7 +411,7 @@ export async function ejecutarAccionAgenda(params: {
     if (!vigente) return { tipo: "ninguna" };
     const r = await cambiarEstado(params.clienteId, vigente.id, "cancelada", supa);
     if (!r.ok) return { tipo: "error" };
-    await anularSeguimientosDeCita(vigente.id, supa);
+    await anularSeguimientosDeCita(vigente.id, params.clienteId, supa);
     return {
       tipo: "cancelada",
       textoExtra: `Tu hora del ${formatearSlot(vigente.inicio)} quedó cancelada ✅ Cuando quieras retomamos.`,

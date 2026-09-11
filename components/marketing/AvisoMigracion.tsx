@@ -1,14 +1,18 @@
 /**
- * Cuando las tablas del estudio y del asistente no existen todavía, se dice
- * con nombre y apellido. Una galería vacía por falta de migración se ve igual
- * que una galería vacía por falta de trabajo, y son cosas opuestas.
+ * Cuando las tablas del estudio y del asistente no existen todavía, se dice —
+ * pero en el idioma del dueño. Una galería vacía por falta de configuración se
+ * ve igual que una galería vacía por falta de trabajo, y son cosas opuestas:
+ * en la primera el dueño puede trabajar horas y perderlo todo al guardar.
+ *
+ * Lo que NO va acá: el nombre del archivo de migración, el documento interno
+ * donde está anotado ni la etiqueta de prioridad. Eso es información nuestra,
+ * no suya, y publicarla no le da ninguna acción —él no puede aplicarla—.
  */
 export default function AvisoMigracion() {
   return (
-    <div className="tarjeta mb-4 p-4" style={{ borderLeft: "3px solid var(--alerta)", fontSize: "var(--t-menor)" }}>
-      <strong>Falta un paso del lado del servidor.</strong> Las creatividades y los borradores de campaña se guardan en tablas que todavía no
-      existen en la base de datos: hay que aplicar la migración <code>sql/303_marketing.sql</code> (está en <code>ADS_OWNER_ACTIONS.md</code>,
-      como P0). Mientras tanto se puede generar y previsualizar, pero no guardar.
+    <div className="mk-panel mk-aviso mb-4" style={{ borderLeft: "3px solid var(--alerta)" }}>
+      <strong>Falta terminar de habilitar el guardado.</strong> Puedes escribir anuncios, generar imágenes y armar campañas, pero todavía no
+      se pueden guardar en tu cuenta. Es un paso nuestro y ya está avisado; escríbenos si lo necesitas hoy.
     </div>
   );
 }

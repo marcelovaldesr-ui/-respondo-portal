@@ -152,13 +152,47 @@ export type TarjetaEmbudo = {
 };
 
 /**
- * Recalcula las etapas automáticas y devuelve el tablero listo para pintar.
+ * El tablero listo para pintar, con las etapas automáticas recalculadas EN
+ * MEMORIA.
  *
- * Se recalcula al abrir la página (no hay proceso de fondo): para el volumen de
- * una pyme es instantáneo y evita un cron más que mantener. Solo escribe cuando
- * la etapa cambia de verdad, así no genera tráfico inútil.
+ * ⚠️ SOLO LECTURA DESDE LA FASE 0 (11-sep-2026). Antes, ABRIR la página
+ * escribía las etapas nuevas en la base y avisaba cada cambio al sistema del
+ * cliente (Gestión), esperando hasta 4 s. Consecuencias: el estado de un
+ * contacto dependía de si alguien había abierto el embudo; dos personas
+ * abriéndolo a la vez duplicaban avisos; y elegir «Todas» podía cerrar como
+ * perdidas cientos de conversaciones viejas y mandarle cada una a Gestión, con
+ * un simple GET. Ahora la página muestra lo mismo que antes, pero la escritura
+ * y los avisos los hace el cron (`recalcularEtapasEmbudo`, una vez por hora).
  */
 export async function cargarEmbudo(
+  clienteId: string,
+  diasActividad = 14,
+  supaOpt?: SupabaseClient,
+): Promise<TarjetaEmbudo[]> {
+  return (await calcularEmbudo(clienteId, diasActividad, supaOpt)).tarjetas;
+}
+
+/**
+ * Lo que antes hacía el GET del embudo: recalcular Y persistir las etapas, y
+ * avisar al puente. Lo llama el cron. Devuelve cuántos contactos cambiaron.
+ */
+export async function recalcularEtapasEmbudo(
+  clienteId: string,
+  diasActividad = 14,
+  supaOpt?: SupabaseClient,
+): Promise<{ cambios: number }> {
+  const supa = supaOpt ?? db();
+  const calc = await calcularEmbudo(clienteId, diasActividad, supa);
+  await persistirEmbudo(clienteId, calc, supa);
+  return { cambios: calc.cambios.length };
+}
+
+type CalculoEmbudo = {
+  tarjetas: TarjetaEmbudo[];
+  cambios: { chat_id: string; etapa: Etapa; motivo: string | null }[];
+};
+
+async function calcularEmbudo(
   clienteId: string,
   /**
    * Solo conversaciones con actividad en los últimos N días (0 = todas).
@@ -171,11 +205,15 @@ export async function cargarEmbudo(
    */
   diasActividad = 14,
   supaOpt?: SupabaseClient,
-): Promise<TarjetaEmbudo[]> {
+): Promise<CalculoEmbudo> {
   const supa = supaOpt ?? db();
 
-  const ids = await idsEmpleadosDeCliente(clienteId);
-  if (!ids.length) return [];
+  // Con cliente inyectado (cron, pruebas) se consulta con ESE cliente; en el
+  // render se usa el caché por petición.
+  const ids = supaOpt
+    ? ((await supa.from("ed_empleados").select("id").eq("cliente_id", clienteId)).data ?? []).map((e) => e.id as string)
+    : await idsEmpleadosDeCliente(clienteId);
+  if (!ids.length) return { tarjetas: [], cambios: [] };
 
   const corteActividad =
     diasActividad > 0
@@ -204,7 +242,7 @@ export async function cargarEmbudo(
     .limit(500);
 
   const contactos = contactosR.data ?? [];
-  if (!contactos.length) return [];
+  if (!contactos.length) return { tarjetas: [], cambios: [] };
   const chats = contactos.map((c) => c.chat_id as string);
   const [resultadosR, escalacionesR] = await Promise.all([
     supa
@@ -313,6 +351,18 @@ export async function cargarEmbudo(
     });
   }
 
+  // Más recientes primero dentro de cada columna.
+  tarjetas.sort((a, b) => (b.ultimoEn ?? "").localeCompare(a.ultimoEn ?? ""));
+
+  return { tarjetas, cambios };
+}
+
+async function persistirEmbudo(clienteId: string, calc: CalculoEmbudo, supa: SupabaseClient): Promise<void> {
+  const { tarjetas } = calc;
+  // Un mismo chat puede generar DOS cambios en la misma pasada (avanza a
+  // "cotizado" y el silencio lo cierra en "perdido"). Antes iban en dos
+  // updates en paralelo y podía quedar el primero. Gana el último (Fase 0).
+  const cambios = [...new Map(calc.cambios.map((c) => [c.chat_id, c])).values()];
   /**
    * Persistir lo que cambió — AGRUPADO, no fila por fila.
    *
@@ -401,13 +451,6 @@ export async function cargarEmbudo(
     }
   }
 
-  // Más recientes primero dentro de cada columna.
-  tarjetas.sort((a, b) => (b.ultimoEn ?? "").localeCompare(a.ultimoEn ?? ""));
-
-  // Corte por actividad. Se aplica DESPUÉS de recalcular las etapas para que el
-  // estado quede guardado igual, aunque la tarjeta no se muestre hoy: si el
-  // cliente vuelve a escribir, reaparece en la etapa correcta.
-  return tarjetas;
 }
 
 /**

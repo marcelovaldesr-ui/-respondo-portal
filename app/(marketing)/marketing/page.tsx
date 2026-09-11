@@ -6,7 +6,6 @@ import type { Metrica } from "@/lib/ads/metricas";
 import { cargarMarketing } from "@/lib/marketing/datos";
 import { modoDemo } from "@/lib/marketing/modo";
 import { PREGUNTAS_SUGERIDAS } from "@/lib/marketing/copilotoCore";
-import { NEGOCIO_DEMO } from "@/lib/marketing/demo";
 import Cabecera from "@/components/marketing/Cabecera";
 import FranjaKpis, { type Kpi } from "@/components/marketing/FranjaKpis";
 import GraficoTendencia from "@/components/marketing/GraficoTendencia";
@@ -43,7 +42,6 @@ export default async function InicioMarketing({ searchParams }: { searchParams: 
 
   const metrica = (clave: string): Metrica | undefined => p.metricas.flatMap((g) => g.metricas).find((m) => m.clave === clave);
   const calificados = p.leads.filter((l) => l.calificado).length;
-  const gasto = metrica("gasto");
 
   const mCalificados: Metrica = {
     clave: "calificados",
@@ -52,26 +50,6 @@ export default async function InicioMarketing({ searchParams }: { searchParams: 
     certeza: "medida",
     ayuda: "Conversaciones que avanzaron a interesado o más, o que cotizaron, reservaron o compraron.",
   };
-  const mCostoLead: Metrica =
-    !gasto || gasto.certeza === "no_disponible" || !gasto.monto
-      ? {
-          clave: "costo_lead",
-          etiqueta: "Costo por lead calificado",
-          valor: null,
-          certeza: "no_disponible",
-          ayuda: "Invertido dividido por leads calificados.",
-          motivo: gasto?.motivo ?? "Requiere la cuenta de Meta conectada para saber cuánto costó.",
-        }
-      : {
-          clave: "costo_lead",
-          etiqueta: "Costo por lead calificado",
-          valor: calificados ? gasto.monto.valor / calificados : null,
-          monto: calificados ? { valor: gasto.monto.valor / calificados, moneda: gasto.monto.moneda } : null,
-          certeza: "derivada",
-          ayuda: "Invertido dividido por leads calificados.",
-          menosEsMejor: true,
-        };
-
   const kpis: Kpi[] = [
     { m: metrica("gasto")!, etiqueta: "Invertido", serie: p.serie.map((d) => d.gasto) },
     { m: metrica("conversaciones")!, etiqueta: "Conversaciones", serie: p.serie.map((d) => d.conversaciones) },
@@ -81,17 +59,34 @@ export default async function InicioMarketing({ searchParams }: { searchParams: 
     { m: metrica("roas")!, etiqueta: "Retorno (ROAS)" },
   ].filter((k) => k.m) as Kpi[];
 
-  const destacadas = p.campanas.filter((c) => c.origen !== "borrador").slice(0, 5);
+  const conDatos = p.campanas.filter((c) => c.origen !== "borrador");
+  const destacadas = conDatos.slice(0, 5);
   const conRendimiento = p.creatividades
     .filter((c) => c.rendimiento && c.rendimiento.conversaciones > 0)
     .sort((a, b) => (b.rendimiento?.ventas ?? 0) - (a.rendimiento?.ventas ?? 0))
     .slice(0, 4);
   const sinRendimiento = p.creatividades.filter((c) => c.estado !== "archivada").slice(0, 4);
   const galeria = conRendimiento.length ? conRendimiento : sinRendimiento;
+  /**
+   * ¿HAY ALGO QUE MOSTRAR TODAVÍA?
+   *
+   * Un negocio que recién entra no necesita ver seis KPI en cero, un gráfico
+   * plano de 30 días y un embudo de puros ceros: eso no es un panel vacío, es
+   * un panel que dice «acá no pasa nada» y desanima. Mientras no haya ni una
+   * conversación atribuida ni cifras de la cuenta publicitaria, la pantalla
+   * muestra la puesta en marcha y las puertas que SÍ funcionan sin conectar
+   * nada —escribir un anuncio, armar una campaña— y el analítica aparece sola
+   * en cuanto hay con qué llenarla.
+   *
+   * En demostración nunca se oculta: la demo existe para mostrar el producto
+   * completo.
+   */
+  const hayQueMostrar = p.demo || p.leads.length > 0 || p.metaConectada || conDatos.length > 0;
+
   const enlacesEmbudo = {
     conversaciones: `/marketing/leads?p=${rango.clave}`,
     calificados: `/marketing/leads?p=${rango.clave}&f=calificados`,
-    avanzados: `/marketing/leads?p=${rango.clave}&f=cotizados`,
+    avanzados: `/marketing/leads?p=${rango.clave}&f=avanzaron`,
     ventas: `/marketing/leads?p=${rango.clave}&f=compraron`,
   };
 
@@ -100,7 +95,9 @@ export default async function InicioMarketing({ searchParams }: { searchParams: 
       <Cabecera
         titulo="Marketing"
         bajada="Qué está trayendo clientes y cómo hacer mejor la próxima campaña."
-        cuenta={p.demo ? `${NEGOCIO_DEMO.nombre} · CLP` : p.metaConectada ? "Meta conectada" : null}
+        // En demostración el riel ya dice de qué negocio se trata; acá solo va lo
+        // que el riel NO dice: si la cuenta publicitaria está leyendo.
+        cuenta={p.demo ? null : p.capacidades.metaConectada ? "Cuenta publicitaria conectada" : null}
         demo={p.demo}
         rango={rango}
         base="/marketing"
@@ -111,9 +108,9 @@ export default async function InicioMarketing({ searchParams }: { searchParams: 
         }
       />
 
-      {!p.estado.hayAtribucion && !p.demo && <Onboarding estado={p.estado} creatividades={p.creatividades.length} />}
+      {!p.estado.hayAtribucion && !p.demo && <Onboarding estado={p.estado} creatividades={p.creatividades.length} capacidades={p.capacidades} />}
 
-      <FranjaKpis kpis={kpis} monedaNegocio={p.monedaNegocio} />
+      {hayQueMostrar && <FranjaKpis kpis={kpis} monedaNegocio={p.monedaNegocio} />}
 
       {p.hallazgos.length > 0 && (
         <section className="mt-7">
@@ -125,21 +122,24 @@ export default async function InicioMarketing({ searchParams }: { searchParams: 
         </section>
       )}
 
-      <section className="mk-panel mt-7">
-        <div className="mk-panel-cabecera">
-          <h2 className="mk-h2">Rendimiento por día</h2>
-          <span className="mk-meta">{p.serie.length} días · hora de Chile</span>
-        </div>
-        <div className="mk-panel-cuerpo">
-          <GraficoTendencia serie={p.serie} metaConectada={p.metaConectada} />
-        </div>
-      </section>
+      {hayQueMostrar && (
+        <section className="mk-panel mt-7">
+          <div className="mk-panel-cabecera">
+            <h2 className="mk-h2">Rendimiento por día</h2>
+            <span className="mk-meta">{p.serie.length} días · hora de Chile</span>
+          </div>
+          <div className="mk-panel-cuerpo">
+            <GraficoTendencia serie={p.serie} metaConectada={p.metaConectada} />
+          </div>
+        </section>
+      )}
 
+      {hayQueMostrar && (
       <section className="mk-panel mt-7">
         <div className="mk-panel-cabecera">
           <div>
             <h2 className="mk-h2">Del anuncio a la venta</h2>
-            <p className="mk-meta mt-0.5">Meta ve hasta el clic. Lo que pasa después lo cuenta Respondo, persona por persona.</p>
+            <p className="mk-meta mt-0.5">Tu cuenta publicitaria mide el anuncio. Respondo sigue a cada persona hasta la venta.</p>
           </div>
           <Link href={`/marketing/atribucion?p=${rango.clave}`} className="mk-enlace">
             Ver atribución {Ico.flecha({ className: "h-3.5 w-3.5" })}
@@ -149,14 +149,25 @@ export default async function InicioMarketing({ searchParams }: { searchParams: 
           <Embudo escalones={p.embudo} enlaces={enlacesEmbudo} />
         </div>
       </section>
+      )}
 
       <div className="mt-7 grid gap-6 xl:grid-cols-12">
         <section className="mk-panel xl:col-span-8">
           <div className="mk-panel-cabecera">
             <h2 className="mk-h2">Campañas que más traen</h2>
-            <Link href={`/marketing/campanas?p=${rango.clave}`} className="mk-enlace">
-              Todas las campañas {Ico.flecha({ className: "h-3.5 w-3.5" })}
-            </Link>
+            <div className="flex items-center gap-3">
+              {/* Decirlo importa: esta tabla suma menos que el KPI de arriba
+                  cuando hay más de cinco campañas, y sin este rótulo eso se lee
+                  como una cifra que no cuadra. */}
+              {conDatos.length > destacadas.length && (
+                <span className="mk-meta">
+                  Las {destacadas.length} con más ingresos de {conDatos.length}
+                </span>
+              )}
+              <Link href={`/marketing/campanas?p=${rango.clave}`} className="mk-enlace">
+                Todas las campañas {Ico.flecha({ className: "h-3.5 w-3.5" })}
+              </Link>
+            </div>
           </div>
           {destacadas.length === 0 ? (
             <div className="vacio">
@@ -285,7 +296,7 @@ export default async function InicioMarketing({ searchParams }: { searchParams: 
       <p className="mt-9 max-w-3xl leading-relaxed" style={{ fontSize: "11.5px", color: "var(--muted-2)" }}>
         Se cuentan las conversaciones que Meta marcó como venidas de un anuncio de Facebook o Instagram
         {p.sinAnuncio > 0 ? `; en este período hubo además ${formatearNumero(p.sinAnuncio)} contactos por otras vías` : ""}. La venta se
-        atribuye al primer anuncio que trajo a esa persona, aunque haya comprado semanas después. «Ingresos» es un piso: solo lo que pasó
+        atribuye al primer anuncio que trajo a esa persona, aunque haya comprado semanas después. «Ingresos» cuenta al menos: solo entra lo que pasó
         por el enlace de pago.
       </p>
     </main>

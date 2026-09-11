@@ -8,6 +8,7 @@ import {
   type TurnoCopiloto,
 } from "@/lib/marketing/copilotoCore";
 import { cargarMarketing } from "@/lib/marketing/datos";
+import { traducirFalla } from "@/lib/marketing/fallas";
 
 /**
  * EL COPILOTO — orquestación. La lógica pura está en copilotoCore.ts.
@@ -44,6 +45,6 @@ export async function preguntarAlCopiloto(entrada: {
     if (!datos) return { ok: false, motivo: "El copiloto devolvió una respuesta que no se pudo leer. Prueba de nuevo." };
     return { ok: true, datos };
   } catch (e) {
-    return { ok: false, motivo: `No se pudo consultar al copiloto: ${(e as Error).message}` };
+    return { ok: false, motivo: traducirFalla({ proveedor: "ia", operacion: "copiloto", clienteId: entrada.clienteId, crudo: e }) };
   }
 }

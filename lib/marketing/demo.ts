@@ -1,5 +1,6 @@
 import { armarMetricas, type DatosPropios } from "@/lib/ads/metricas";
 import { hallazgos } from "@/lib/ads/insights";
+import { capacidadesDemo } from "@/lib/marketing/capacidades";
 import type { FilaPauta, ResumenPauta } from "@/lib/ads/atribucionCore";
 import { diasEntre, sumarDias, type Rango } from "@/lib/ads/periodos";
 import type {
@@ -296,6 +297,7 @@ function construir(rango: Rango) {
           calificados: 0,
           cotizaciones: 0,
           agendadas: 0,
+          avanzados: 0,
           ventas: 0,
           cobrado: 0,
           conClid: 0,
@@ -304,6 +306,8 @@ function construir(rango: Rango) {
         if (calificado) fa.calificados += 1;
         if (cotizo) fa.cotizaciones += 1;
         if (agendo) fa.agendadas += 1;
+        // Una sola vez por persona, igual que en la atribución real.
+        if (cotizo || agendo) fa.avanzados += 1;
         if (compro) {
           fa.ventas += 1;
           fa.cobrado += cobrado;
@@ -329,6 +333,7 @@ function construir(rango: Rango) {
           calificados: 0,
           cotizaciones: 0,
           agendadas: 0,
+          avanzados: 0,
           ventas: 0,
           cobrado: 0,
           conClid: 0,
@@ -364,7 +369,7 @@ function construir(rango: Rango) {
       clics: sum((a) => a.clics),
       conversaciones,
       calificados: sum((a) => a.calificados),
-      avanzados: sum((a) => a.cotizaciones + a.agendadas),
+      avanzados: sum((a) => a.avanzados),
       ventas,
       cobrado,
       cpc: conversaciones ? gasto / conversaciones : null,
@@ -615,11 +620,13 @@ export function panoramaDemo(rango: Rango): Panorama {
   const tp = { ...totales(previo.serie), ...deMeta(previo.anuncios) };
   const cotizaciones = actual.anuncios.reduce((s, a) => s + a.cotizaciones, 0);
   const agendadas = actual.anuncios.reduce((s, a) => s + a.agendadas, 0);
+  const avanzados = actual.anuncios.reduce((s, a) => s + a.avanzados, 0);
 
   const propios: DatosPropios = {
     conversaciones: t.conversaciones,
     cotizaciones,
     agendadas,
+    avanzados,
     ventas: t.ventas,
     cobrado: { valor: t.cobrado, moneda: "CLP" },
   };
@@ -627,6 +634,7 @@ export function panoramaDemo(rango: Rango): Panorama {
     conversaciones: tp.conversaciones,
     cotizaciones: previo.anuncios.reduce((s, a) => s + a.cotizaciones, 0),
     agendadas: previo.anuncios.reduce((s, a) => s + a.agendadas, 0),
+    avanzados: previo.anuncios.reduce((s, a) => s + a.avanzados, 0),
     ventas: tp.ventas,
     cobrado: { valor: tp.cobrado, moneda: "CLP" },
   };
@@ -650,6 +658,7 @@ export function panoramaDemo(rango: Rango): Panorama {
     tipo: "Anuncio",
     conversaciones: a.conversaciones,
     cotizaciones: a.cotizaciones,
+    avanzados: a.avanzados,
     agendadas: a.agendadas,
     ventas: a.ventas,
     pagado: a.cobrado,
@@ -679,7 +688,7 @@ export function panoramaDemo(rango: Rango): Panorama {
     clics: t.clics,
     conversaciones: t.conversaciones,
     calificados: t.calificados,
-    avanzados: cotizaciones + agendadas,
+    avanzados,
     ventas: t.ventas,
   });
 
@@ -733,7 +742,9 @@ export function panoramaDemo(rango: Rango): Panorama {
     rango,
     demo: true,
     monedaNegocio: "CLP",
+    capacidades: capacidadesDemo(),
     metaConectada: true,
+    errorPublicidad: null,
     metricas,
     serie: actual.serie,
     embudo,

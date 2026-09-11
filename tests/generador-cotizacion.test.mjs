@@ -67,6 +67,12 @@ test("no se persigue a quien ya compró ni a quien dijo que no", () => {
   }
 });
 
+test("⭐ Fase 0: un «perdido por silencio» (sin_respuesta) sigue siendo retomable; un perdido de otro motivo no", () => {
+  const silencio = decidirCotizacion({ ...BASE, etapa: "perdido", etapaMotivo: "sin_respuesta", etiquetas: [] }, AHORA);
+  assert.equal(silencio.enviar, true);
+  assert.equal(decidirCotizacion({ ...BASE, etapa: "perdido", etapaMotivo: null }, AHORA).enviar, false);
+});
+
 test("⭐⭐ si aprobó y falta el abono (pago_pendiente), no se le pregunta si «sigue en pie»", () => {
   // La etiqueta la pone el detector de cierres: el cliente ya dijo que sí.
   // Insistirle con la plantilla de cotización es contradictorio y cuesta $85.

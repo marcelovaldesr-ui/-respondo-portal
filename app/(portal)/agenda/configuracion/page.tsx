@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { estadoConexionGoogle } from "@/lib/estadoGoogleCore";
 import { headers } from "next/headers";
 import { exigirPermisoPortal } from "@/lib/auth";
 import { db } from "@/lib/db";
@@ -577,6 +578,13 @@ export default async function ConfiguracionAgenda({
               Cancelaste la conexión en Google — no se cambió nada.
             </p>
           )}
+          {(avisoOauth === "calendario_ajeno" || avisoOauth === "no_verificado") && (
+            <p className="mt-2 rounded-[7px] px-3 py-2 text-[13px] font-semibold" style={{ color: "#B33A3A", background: "#FBECEC" }}>
+              {avisoOauth === "calendario_ajeno"
+                ? "Ese calendario ya está conectado en otra cuenta de Respondo, así que no se guardó. Si es tuyo, escríbenos."
+                : "No se pudo verificar ese calendario. Intenta guardarlo de nuevo."}
+            </p>
+          )}
           {avisoOauth === "error" && (
             <p className="mt-2 rounded-[7px] px-3 py-2 text-[13px] font-semibold" style={{ color: "#B33A3A", background: "#FBECEC" }}>
               Algo falló al conectar con Google. Probá de nuevo, o usá la opción manual más abajo.
@@ -584,18 +592,23 @@ export default async function ConfiguracionAgenda({
           )}
           {listaProfesionales.map((p) => {
             const conectadoOauth = p.gcal_modo === "oauth" && !!p.gcal_sync;
+            // Estado según lo que respondió Google la última vez, no según si
+            // hay credenciales guardadas (Fase 0). Ver lib/estadoGoogleCore.ts.
+            const eg = estadoConexionGoogle(p);
+            const colorEstado = eg.estado === "conectado" ? "#0E7C66" : eg.estado === "error" ? "#B0842A" : "#B33A3A";
             return (
               <div key={p.id} className="mt-3 rounded-[7px] border p-3" style={{ borderColor: "var(--borde)" }}>
                 <div className="text-[14px] font-bold">{p.nombre}</div>
 
                 {conectadoOauth ? (
                   <>
-                    <p className="mt-2 text-[12.5px] font-semibold" style={{ color: "#0E7C66" }}>
-                      Conectado ✓ {p.gcal_oauth_email ? `· como ${p.gcal_oauth_email}` : ""}
+                    <p className="mt-2 text-[12.5px] font-semibold" style={{ color: colorEstado }}>
+                      {eg.estado === "conectado" ? "Conectado ✓" : eg.texto} {p.gcal_oauth_email ? `· como ${p.gcal_oauth_email}` : ""}
                     </p>
-                    {p.gcal_ultimo_error && (
-                      <p className="mt-1 text-[12.5px] font-semibold" style={{ color: "#B33A3A" }}>
-                        Google respondió: {p.gcal_ultimo_error}
+                    {eg.detalle && (
+                      <p className="mt-1 text-[12.5px] font-semibold" style={{ color: colorEstado }}>
+                        Google respondió: {eg.detalle}
+                        {eg.estado === "necesita_reconexion" && " — desconecta y vuelve a conectar Google Calendar."}
                       </p>
                     )}
                     <form action={desconectarGoogleOauth} className="mt-2">
@@ -637,12 +650,12 @@ export default async function ConfiguracionAgenda({
                         </div>
                       </form>
                     </details>
-                    {p.gcal_ultimo_error && (
-                      <p className="mt-2 text-[12.5px] font-semibold" style={{ color: "#B33A3A" }}>
-                        Google respondió: {p.gcal_ultimo_error}
+                    {eg.detalle && (
+                      <p className="mt-2 text-[12.5px] font-semibold" style={{ color: eg.estado === "desconectado" ? "#B33A3A" : colorEstado }}>
+                        {eg.estado === "desconectado" ? eg.detalle : `${eg.texto} · Google respondió: ${eg.detalle}`}
                       </p>
                     )}
-                    {p.gcal_sync && !p.gcal_ultimo_error && (
+                    {eg.estado === "conectado" && (
                       <p className="mt-2 text-[12.5px] font-semibold" style={{ color: "#0E7C66" }}>Conectado ✓</p>
                     )}
                   </>

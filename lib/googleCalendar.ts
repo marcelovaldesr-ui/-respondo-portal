@@ -97,6 +97,8 @@ async function accessToken(): Promise<ResultadoGCal<string>> {
         assertion: `${cabecera}.${cuerpo}.${firma}`,
       }),
       cache: "no-store",
+      // Con techo (Fase 0): esto corre dentro de la respuesta del asistente.
+      signal: AbortSignal.timeout(8_000),
     });
     const j = (await r.json()) as { access_token?: string; expires_in?: number; error_description?: string };
     if (!r.ok || !j.access_token) {
@@ -128,6 +130,7 @@ async function llamar<T>(
       },
       body: init.body ? JSON.stringify(init.body) : undefined,
       cache: "no-store",
+      signal: AbortSignal.timeout(8_000),
     });
     if (r.status === 204) return { ok: true, datos: undefined as T };
     const j = (await r.json()) as T & { error?: { message?: string } };
@@ -217,7 +220,21 @@ export async function ocupadosDeGoogle(
   desdeIso: string,
   hastaIso: string,
 ): Promise<Ocupacion[]> {
-  if (calendarios.length === 0) return [];
+  return (await ocupadosDeGoogleDetalle(calendarios, desdeIso, hastaIso)).ocupaciones;
+}
+
+/**
+ * Igual, pero además dice si falló y POR QUÉ, en general y por calendario
+ * (Fase 0). La disponibilidad sigue igual que antes —ante un fallo se ofrece
+ * como si no hubiera compromisos—, pero el error queda anotado en el
+ * profesional para que la configuración no diga «Conectado».
+ */
+export async function ocupadosDeGoogleDetalle(
+  calendarios: string[],
+  desdeIso: string,
+  hastaIso: string,
+): Promise<{ ok: boolean; ocupaciones: Ocupacion[]; detalle?: string; erroresPorCalendario: Record<string, string> }> {
+  if (calendarios.length === 0) return { ok: true, ocupaciones: [], erroresPorCalendario: {} };
   const r = await llamar<{
     calendars?: Record<string, { busy?: { start: string; end: string }[] }>;
   }>("/freeBusy", {
@@ -230,18 +247,25 @@ export async function ocupadosDeGoogle(
     },
   });
   if (!r.ok) {
-    if (r.motivo !== "sin_credenciales") {
-      console.error("[googleCalendar] freeBusy:", r.motivo, r.detalle);
-    }
-    return [];
+    if (r.motivo === "sin_credenciales") return { ok: true, ocupaciones: [], erroresPorCalendario: {} };
+    console.error("[googleCalendar] freeBusy:", r.motivo, r.detalle);
+    return { ok: false, ocupaciones: [], detalle: r.detalle ?? r.motivo, erroresPorCalendario: {} };
   }
   const salida: Ocupacion[] = [];
-  for (const [calendarioId, info] of Object.entries(r.datos.calendars ?? {})) {
+  const erroresPorCalendario: Record<string, string> = {};
+  const cals = (r.datos as { calendars?: Record<string, { busy?: { start: string; end: string }[]; errors?: { reason?: string }[] }> }).calendars ?? {};
+  for (const [calendarioId, info] of Object.entries(cals)) {
+    // freeBusy responde 200 aunque un calendario puntual no sea visible: el
+    // motivo viene en `errors` (notFound = no está compartido con la cuenta).
+    if (info.errors?.length) {
+      erroresPorCalendario[calendarioId] = `sin acceso al calendario (${info.errors.map((e) => e.reason ?? "?").join(", ")})`;
+      continue;
+    }
     for (const b of info.busy ?? []) {
       salida.push({ calendarioId, desde: b.start, hasta: b.end });
     }
   }
-  return salida;
+  return { ok: true, ocupaciones: salida, erroresPorCalendario };
 }
 
 /** Comprobación de acceso: ¿la cuenta de servicio ve este calendario? */

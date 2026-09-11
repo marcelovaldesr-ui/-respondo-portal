@@ -88,6 +88,20 @@ export default function Notificaciones() {
       }
 
       const sus = await reg.pushManager.getSubscription();
+      if (sus) {
+        /**
+         * Se vuelve a registrar con la SESIÓN ACTUAL (Fase 0). La suscripción
+         * es del navegador, no de la persona: si en este navegador se entra
+         * con otra cuenta (otro negocio, otra persona), sin esto seguían
+         * llegando acá los avisos de la cuenta anterior. El servidor la ata al
+         * negocio y correo de quien tiene la sesión ahora.
+         */
+        void fetch("/api/push/suscribir", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(sus.toJSON()),
+        }).catch(() => undefined);
+      }
       if (vivo) setEstado(sus ? "encendido" : "apagado");
     })();
 

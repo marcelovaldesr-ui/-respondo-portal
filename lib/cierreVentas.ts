@@ -3,7 +3,7 @@ import { db } from "@/lib/db";
 import { generarJSON } from "@/lib/gemini";
 import { avisarACliente } from "@/lib/push";
 import { notificarConTope } from "@/lib/puenteSalida";
-import { conEtiqueta, etiquetasTrasCierre } from "@/lib/etiquetasCiclo";
+import { conEtiqueta, etiquetasTrasCierre, etiquetasTrasPagoInformado } from "@/lib/etiquetasCiclo";
 import {
   decidirCierre,
   hayPistaDeCierre,
@@ -71,8 +71,22 @@ export async function detectarCierres(
   const fechaLimite = opts.fechaLimite ?? Date.now() + 5 * 60_000;
   const desde = new Date(Date.now() - DIAS_ACTIVIDAD * 86_400_000).toISOString();
 
-  const { data: clientes } = await supa.from("ed_clientes").select("id, nombre, rubro").limit(50);
-  if (!clientes?.length) return out;
+  const { data: todos, error: errClientes } = await supa
+    .from("ed_clientes")
+    .select("id, nombre, rubro")
+    .eq("activo", true)
+    .order("id", { ascending: true })
+    .limit(50);
+  if (errClientes) throw new Error(`no se pudo leer negocios: ${errClientes.message}`);
+  if (!todos?.length) return out;
+  /**
+   * ROTACIÓN (Fase 0). Con 4 revisiones por pasada y los negocios siempre en el
+   * mismo orden, el primero con muchas conversaciones pendientes se llevaba
+   * todas las pasadas y los demás esperaban horas. Antes además entraban
+   * negocios dados de baja (sin filtro `activo`), gastando modelo en ellos.
+   */
+  const giro = Math.floor(Date.now() / 300_000) % todos.length;
+  const clientes = [...todos.slice(giro), ...todos.slice(0, giro)];
 
   let procesados = 0;
   for (const cli of clientes) {
@@ -285,14 +299,36 @@ async function revisarUna(p: {
         nota: { origen: "detector_cierre", evidencia: decision.evidencia },
       });
     }
-    const etiquetas = etiquetasTrasCierre(p.etiquetas, "ganado");
+    /**
+     * PAGO INFORMADO, NO CONFIRMADO (Fase 0). La venta pasa a ganada —hay
+     * evidencia comercial—, pero salvo que exista un cobro YA marcado como
+     * pagado en esta conversación, queda «Pago por confirmar». El aviso dice
+     * lo que se sabe: el cliente informó un pago.
+     */
+    const { data: confirmado } = await supa
+      .from("ed_pagos")
+      .select("id")
+      .eq("cliente_id", clienteId)
+      .eq("chat_id", chatId)
+      .eq("estado", "pagado")
+      .gte("pagado_en", new Date(Date.now() - 7 * 86_400_000).toISOString())
+      .limit(1);
+    const hayConfirmado = Boolean(confirmado?.length);
+    const etiquetas = hayConfirmado ? etiquetasTrasCierre(p.etiquetas, "ganado") : etiquetasTrasPagoInformado(p.etiquetas);
     await marcar({
       etapa: "ganado",
       etapa_motivo: nuevoCiclo ? "nuevo_ciclo" : "pago_detectado",
       etapa_en: new Date().toISOString(),
       etiquetas,
     });
-    avisar(supa, clienteId, chatId, p.nombre, "Pago detectado", decision.evidencia);
+    avisar(
+      supa,
+      clienteId,
+      chatId,
+      p.nombre,
+      hayConfirmado ? "Venta cerrada, pago confirmado" : "Informa que pagó · falta confirmar el pago",
+      decision.evidencia,
+    );
     await puente(supa, clienteId, chatId, p.nombre, "ganado", etiquetas, p.ultimoMensajeEn, nuevoCiclo ? "nuevo_ciclo" : "pago_detectado");
     return { estado: "pagado", consultado: true };
   }

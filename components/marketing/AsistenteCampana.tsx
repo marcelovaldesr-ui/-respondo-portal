@@ -49,6 +49,9 @@ export default function AsistenteCampana({
   zona,
   whatsapp,
   metaConectada,
+  puedeConectarMeta,
+  puedePublicar,
+  puedeGenerarConIa,
   demo,
   creatividadInicial,
 }: {
@@ -59,6 +62,12 @@ export default function AsistenteCampana({
   zona: string | null;
   whatsapp: string | null;
   metaConectada: boolean;
+  /** Si la instalación permite conectar una cuenta publicitaria. */
+  puedeConectarMeta: boolean;
+  /** Si Respondo puede publicar campañas en Meta por API. Hoy: no, a propósito. */
+  puedePublicar: boolean;
+  /** Si hay motor de IA para sugerir copies. */
+  puedeGenerarConIa: boolean;
   demo: boolean;
   creatividadInicial?: string | null;
 }) {
@@ -84,6 +93,7 @@ export default function AsistenteCampana({
   const [ocupado, setOcupado] = useState<"" | "guardar" | "copies" | "eliminar">("");
   const [aviso, setAviso] = useState<{ tono: "ok" | "error"; texto: string } | null>(null);
   const [copiado, setCopiado] = useState(false);
+  const [confirmarBorrar, setConfirmarBorrar] = useState(false);
   const [, iniciar] = useTransition();
 
   const seleccionadas = creatividades.filter((c) => creatividadIds.includes(c.id));
@@ -212,17 +222,30 @@ export default function AsistenteCampana({
             </p>
             {/* Guardar vive SIEMPRE abajo a la derecha del paso, en un solo lugar.
                 Acá queda únicamente lo que no es parte del avance: borrar. */}
-            {id && (
-              <button
-                type="button"
-                className="btn-texto mt-3 w-full"
-                style={{ color: "var(--peligro)" }}
-                disabled={ocupado !== ""}
-                onClick={eliminar}
-              >
-                Eliminar borrador
-              </button>
-            )}
+            {/* Confirmación en dos pasos, igual que en el editor de
+                creatividades: eliminar un borrador con todo el trabajo de ocho
+                pasos no puede ser un clic suelto y sin vuelta atrás. */}
+            {id &&
+              (confirmarBorrar ? (
+                <div className="mt-3 flex items-center gap-2">
+                  <button type="button" className="btn-peligro flex-1" disabled={ocupado !== ""} onClick={eliminar}>
+                    {ocupado === "eliminar" ? "Eliminando…" : "Sí, eliminar"}
+                  </button>
+                  <button type="button" className="btn-texto" onClick={() => setConfirmarBorrar(false)}>
+                    No
+                  </button>
+                </div>
+              ) : (
+                <button
+                  type="button"
+                  className="btn-texto mt-3 w-full"
+                  style={{ color: "var(--peligro)" }}
+                  disabled={ocupado !== ""}
+                  onClick={() => setConfirmarBorrar(true)}
+                >
+                  Eliminar borrador
+                </button>
+              ))}
             {demo && (
               <p className="mt-2.5" style={{ fontSize: "11px", color: "var(--alerta)" }}>
                 En demostración no se guarda.
@@ -443,9 +466,13 @@ export default function AsistenteCampana({
                         Usar el de la creatividad
                       </button>
                     )}
-                    <button type="button" className="btn-chico" disabled={ocupado !== ""} onClick={sugerirCopies}>
-                      {ocupado === "copies" ? "Escribiendo…" : "Sugerir con IA"}
-                    </button>
+                    {/* Sin motor de IA no se ofrece: el botón terminaba en un
+                        error que nombraba una variable de entorno. */}
+                    {puedeGenerarConIa && (
+                      <button type="button" className="btn-chico" disabled={ocupado !== ""} onClick={sugerirCopies}>
+                        {ocupado === "copies" ? "Escribiendo…" : "Sugerir con IA"}
+                      </button>
+                    )}
                   </div>
                 </div>
                 <div className="space-y-3">
@@ -522,10 +549,16 @@ export default function AsistenteCampana({
                 </label>
                 {!metaConectada && (
                   <p className="mk-ayuda mt-3">
-                    Sin la cuenta de Meta conectada, cuando la campaña corra se verán sus conversaciones y ventas, pero no su costo.{" "}
-                    <Link href="/marketing/integraciones" className="mk-enlace">
-                      Conectar Meta
-                    </Link>
+                    Sin las cifras de tu cuenta publicitaria, cuando la campaña corra se verán sus conversaciones y ventas, pero no su
+                    costo.{" "}
+                    {/* El enlace solo si conectar es posible: en una instalación
+                        sin la app de Meta este botón llevaba a una pantalla que
+                        decía «no disponible». */}
+                    {puedeConectarMeta && (
+                      <Link href="/marketing/integraciones" className="mk-enlace">
+                        Conectar la cuenta
+                      </Link>
+                    )}
                   </p>
                 )}
               </>
@@ -576,13 +609,19 @@ export default function AsistenteCampana({
                       {Ico.externo({ className: "h-4 w-4" })} Continuar en Meta
                     </a>
                   </div>
+                  {/* Publicar por API es una decisión de producto, no una
+                      limitación temporal: Respondo es de solo lectura sobre la
+                      cuenta publicitaria. Se dice sin nombrar permisos de OAuth,
+                      que al dueño no le dicen nada. */}
                   <div className="mk-hundido mt-4 flex items-start gap-3 px-4 py-3" style={{ fontSize: "11.5px", color: "var(--muted)" }}>
                     <span className="btn-chico shrink-0" aria-disabled="true" style={{ opacity: 0.5 }}>
                       Publicar desde Respondo
                     </span>
                     <span>
-                      No disponible: requiere el permiso <code>ads_management</code> y la revisión de la aplicación en Meta. Nunca vas a ver
-                      «Publicada» acá sin que lo esté de verdad.
+                      {puedePublicar
+                        ? "Disponible."
+                        : "Respondo lee tu cuenta publicitaria pero no la modifica: no crea, no pausa ni cambia presupuestos. La campaña se sube en Meta."}{" "}
+                      Nunca vas a ver «Publicada» acá sin que lo esté de verdad.
                     </span>
                   </div>
                   <details className="mt-4">

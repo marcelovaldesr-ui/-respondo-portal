@@ -443,6 +443,10 @@ export default function InboxConversacion({
         >
           {enControl ? (
             <>🙋 Tú tienes el control · {empleadoNombre} está en silencio</>
+          ) : modo === "pausado" ? (
+            // Fase 0: antes un chat PAUSADO decía "está atendiendo", y nadie
+            // estaba contestando.
+            <>⏸ {empleadoNombre} está pausado en este chat · nadie responde automáticamente</>
           ) : (
             <>🤖 {empleadoNombre} está atendiendo este chat</>
           )}

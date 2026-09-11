@@ -2,6 +2,7 @@
 
 import { randomBytes } from "node:crypto";
 import { revalidatePath } from "next/cache";
+import { redirect } from "next/navigation";
 import { db } from "@/lib/db";
 import { obtenerUsuarioConPermiso } from "@/lib/auth";
 import { auditarAccion } from "@/lib/auditoria";
@@ -329,6 +330,32 @@ export async function configurarGoogleProfesional(formData: FormData) {
   const gcalId = texto(formData, "gcal_id").slice(0, 200);
   const sync = texto(formData, "gcal_sync") === "on" && gcalId !== "";
 
+  /**
+   * BARRERA ENTRE NEGOCIOS (Fase 0, 11-sep-2026). La cuenta de servicio de
+   * Respondo es UNA para todos: ve cada calendario que cualquier negocio le
+   * compartió. Sin esto, un negocio podía pegar el ID de un calendario ajeno
+   * (suele ser un gmail, fácil de adivinar) y leer sus horas ocupadas o
+   * escribirle eventos. Un calendario ya conectado por otro negocio no se acepta.
+   * (Límite: no impide que alguien lo registre ANTES que su dueño; ver doc Fase 0.)
+   */
+  if (gcalId) {
+    const { data: ajenos, error: eAjenos } = await supa
+      .from("ed_profesionales")
+      .select("id")
+      .ilike("gcal_id", gcalId.replace(/[%_\\]/g, (c) => `\\${c}`))
+      .neq("cliente_id", clienteId)
+      // Solo cuenta un uso VIGENTE por la cuenta de servicio: un gcal_id viejo
+      // con la sincronización apagada (o que quedó tras pasar a OAuth) no bloquea.
+      .eq("gcal_sync", true)
+      .or("gcal_modo.is.null,gcal_modo.eq.cuenta_servicio")
+      .limit(1);
+    if (eAjenos || (ajenos ?? []).length > 0) {
+      // No se toca NADA de lo que el profesional tenía (ni su sync ni su
+      // estado): el aviso va en la URL y se muestra una vez en la pantalla.
+      redirect(`/agenda/configuracion?gcal_oauth=${eAjenos ? "no_verificado" : "calendario_ajeno"}`);
+    }
+  }
+
   const { error } = await supa
     .from("ed_profesionales")
     .update({
@@ -549,7 +576,7 @@ export async function cambiarEstadoCita(formData: FormData) {
   // seguimientos filtra por `cita_id` sin cliente, así que con un id ajeno
   // apagaba los recordatorios de otro negocio.
   if (r.ok && r.encontrada && (estado === "cancelada" || estado === "no_show")) {
-    await anularSeguimientosDeCita(id);
+    await anularSeguimientosDeCita(id, clienteId);
   }
   revalidatePath("/agenda", "layout"); // "layout" = también /agenda/configuracion
 }

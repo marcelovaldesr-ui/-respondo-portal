@@ -342,6 +342,10 @@
   margin-top: 10px;
   display: flex;
   align-items: center;
+  /* Con seis columnas a 1440 px, delta + certeza no siempre caben en una línea.
+     Que bajen enteros a la siguiente, nunca partidos por la mitad. */
+  flex-wrap: wrap;
+  row-gap: 4px;
   gap: 8px;
   min-height: 20px;
   font-size: var(--t-micro);
@@ -360,6 +364,8 @@
 .mk-delta {
   display: inline-flex;
   align-items: center;
+  flex-shrink: 0;
+  white-space: nowrap;
   gap: 3px;
   padding: 1px 6px;
   border-radius: 5px;
@@ -383,12 +389,22 @@
 .mk-certeza {
   display: inline-flex;
   align-items: center;
+  /* Los rótulos en castellano («Dato directo») son más largos que los internos
+     que había antes («Medida»): sin esto, la palabra se partía en dos líneas y
+     desalineaba la franja entera. */
+  flex-shrink: 0;
+  white-space: nowrap;
   gap: 5px;
   font-size: 10.5px;
   font-weight: 600;
   letter-spacing: 0.02em;
   color: var(--muted-2);
   cursor: default;
+}
+/* Sin palabra (el caso «medida»), el punto queda solo: se le da un área de
+   toque y el `title` del propio elemento lo explica. */
+.mk-certeza.medida {
+  padding: 2px 0;
 }
 .mk-certeza::before {
   content: "";
@@ -416,6 +432,17 @@
   border-radius: 8px;
   background: var(--fondo-hundido);
   border: 1px solid var(--borde);
+  /* Con siete filtros (Personas) la fila mide 943 px y empujaba la página
+     entera a scroll horizontal en tablet. Que se desplace ella, no el sitio. */
+  max-width: 100%;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.mk-segmentos::-webkit-scrollbar {
+  display: none;
+}
+.mk-segmento {
+  flex-shrink: 0;
 }
 .mk-segmento {
   padding: 5px 11px;
@@ -430,6 +457,7 @@
   color: var(--tinta);
 }
 .mk-segmento[aria-pressed="true"],
+.mk-segmento[aria-selected="true"],
 .mk-segmento[aria-current="page"] {
   background: var(--superficie);
   color: var(--tinta);
@@ -567,7 +595,7 @@
   border-left: 2px solid var(--indigo);
 }
 .mk-embudo-etapa.frontera::before {
-  content: "Respondo ve desde acá";
+  content: "Lo que hace el cliente";
   position: absolute;
   left: 10px;
   top: -22px;
@@ -579,7 +607,7 @@
   white-space: nowrap;
 }
 .mk-embudo-etapa.meta-fin::after {
-  content: "Meta ve hasta acá";
+  content: "Lo que hace el anuncio";
   position: absolute;
   right: 12px;
   top: -22px;

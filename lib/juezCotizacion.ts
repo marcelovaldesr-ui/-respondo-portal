@@ -31,7 +31,8 @@ export async function empleadosDelCliente(
   clienteId: string,
   supa: SupabaseClient = db(),
 ): Promise<string[]> {
-  const { data } = await supa.from("ed_empleados").select("id").eq("cliente_id", clienteId);
+  const { data, error } = await supa.from("ed_empleados").select("id").eq("cliente_id", clienteId);
+  if (error) throw new Error(`no se pudieron leer los empleados: ${error.message}`);
   return (data ?? []).map((e) => e.id as string);
 }
 
@@ -53,13 +54,16 @@ export async function hiloReciente(p: {
   const supa = p.supa ?? db();
   if (!p.empleadoIds.length) return [];
 
-  const { data } = await supa
+  const { data, error } = await supa
     .from("ed_mensajes")
     .select("rol, texto, creado_en")
     .eq("chat_id", p.chatId)
     .in("empleado_id", p.empleadoIds)
     .order("creado_en", { ascending: false })
     .limit(p.limite ?? MENSAJES_HILO);
+  // Un error de lectura NO es un hilo vacío (Fase 0): "vacío" hace que el juez
+  // diga "no hay cotización" y ese no queda guardado. Que lance → abierta null.
+  if (error) throw new Error(error.message);
 
   return (data ?? [])
     .reverse()

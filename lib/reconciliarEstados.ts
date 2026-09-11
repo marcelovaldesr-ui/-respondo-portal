@@ -50,6 +50,8 @@ export type ResumenReconciliar = {
   contactosLimpiados: number;
   contactosReabiertos: number;
   agendadosCorregidos: number;
+  /** Subpasos que lanzaron (observabilidad del cron). */
+  errores?: string[];
 };
 
 export async function reconciliarEstados(
@@ -76,6 +78,7 @@ export async function reconciliarEstados(
     out.escalacionesCerradas = await cerrarDerivacionesAtendidas(supa, hayTiempo);
   } catch (e) {
     console.error("[reconciliar] derivaciones:", (e as Error).message);
+    out.errores = [...(out.errores ?? []), `derivaciones: ${(e as Error).message}`];
   }
   if (!hayTiempo()) return out;
   try {
@@ -84,12 +87,14 @@ export async function reconciliarEstados(
     out.contactosReabiertos = r.reabiertos;
   } catch (e) {
     console.error("[reconciliar] cerradas:", (e as Error).message);
+    out.errores = [...(out.errores ?? []), `cerradas: ${(e as Error).message}`];
   }
   if (!hayTiempo()) return out;
   try {
     out.agendadosCorregidos = await sincronizarAgendado(supa, hayTiempo);
   } catch (e) {
     console.error("[reconciliar] agendado:", (e as Error).message);
+    out.errores = [...(out.errores ?? []), `agendado: ${(e as Error).message}`];
   }
   return out;
 }
@@ -246,26 +251,60 @@ async function sincronizarAgendado(supa: SupabaseClient, hayTiempo: HayTiempo): 
   const ahora = new Date().toISOString();
 
   // Chats con una cita activa futura, por cliente.
-  const { data: citas } = await supa
+  const { data: citas, error: errCitas } = await supa
     .from("ed_citas")
     .select("cliente_id, chat_id")
     .in("estado", CITA_ACTIVA)
     .gte("fin", ahora)
     .not("chat_id", "is", null)
     .limit(1000);
+  /**
+   * ⚠️ FALLA CERRADO (Fase 0, 11-sep-2026). Antes, si esta lectura fallaba
+   * —o venía cortada en 1.000 filas—, el conjunto quedaba vacío o incompleto y
+   * el paso siguiente le QUITABA «Agendado» a contactos de TODOS los negocios
+   * que sí tenían cita, avisando cada cambio a su sistema. Ahora un error corta
+   * el paso, y la ausencia de cita se confirma negocio por negocio antes de
+   * quitar nada.
+   */
+  if (errCitas) throw new Error(`no se pudieron leer las citas activas: ${errCitas.message}`);
   const conCita = new Set((citas ?? []).map((c) => `${c.cliente_id}|${c.chat_id}`));
 
   let corregidos = 0;
 
   // Tienen la etiqueta y ya no tienen cita → quitar.
-  const { data: etiquetados } = await supa
+  const { data: etiquetados, error: errEtiquetados } = await supa
     .from("ed_contactos")
     .select("cliente_id, chat_id, nombre, etapa, etiquetas, ultimo_mensaje_en")
     .contains("etiquetas", ["agendado"])
     .limit(500);
-  for (const c of etiquetados ?? []) {
+  if (errEtiquetados) throw new Error(`no se pudieron leer los agendados: ${errEtiquetados.message}`);
+
+  // Confirmación acotada: para los candidatos a perder la etiqueta, se pregunta
+  // por SUS citas, filtrando por su negocio. Sin cita confirmada ausente, no se toca.
+  const candidatos = (etiquetados ?? []).filter((c) => !conCita.has(`${c.cliente_id}|${c.chat_id}`));
+  const porNegocio = new Map<string, string[]>();
+  for (const c of candidatos) {
+    const cid = c.cliente_id as string;
+    porNegocio.set(cid, [...(porNegocio.get(cid) ?? []), c.chat_id as string]);
+  }
+  const confirmadosSinCita = new Set<string>();
+  for (const [cid, chats] of porNegocio) {
     if (!hayTiempo()) return corregidos;
-    if (conCita.has(`${c.cliente_id}|${c.chat_id}`)) continue;
+    const { data: vigentes, error } = await supa
+      .from("ed_citas")
+      .select("chat_id")
+      .eq("cliente_id", cid)
+      .in("chat_id", chats)
+      .in("estado", CITA_ACTIVA)
+      .gte("fin", ahora);
+    if (error) continue; // sin confirmar, no se quita nada de este negocio
+    const conCitaReal = new Set((vigentes ?? []).map((v) => v.chat_id as string));
+    for (const ch of chats) if (!conCitaReal.has(ch)) confirmadosSinCita.add(`${cid}|${ch}`);
+  }
+
+  for (const c of candidatos) {
+    if (!hayTiempo()) return corregidos;
+    if (!confirmadosSinCita.has(`${c.cliente_id}|${c.chat_id}`)) continue;
     const actuales = (c.etiquetas as string[] | null) ?? [];
     const nuevas = sinEtiqueta(actuales, "agendado");
     if (nuevas === actuales) continue;

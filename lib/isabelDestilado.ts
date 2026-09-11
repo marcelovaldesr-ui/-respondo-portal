@@ -133,7 +133,7 @@ export async function destilarDia(
   clienteId: string,
   dia: string,
   opts?: { fechaLimite?: number },
-): Promise<{ ok: boolean; motivo?: string; nuevos?: number; vistos?: number }> {
+): Promise<{ ok: boolean; motivo?: string; omitido?: boolean; nuevos?: number; vistos?: number }> {
   const supa = db();
 
   const { data: cliente } = await supa
@@ -141,14 +141,19 @@ export async function destilarDia(
     .select("nombre, rubro")
     .eq("id", clienteId)
     .maybeSingle();
-  if (!cliente) return { ok: false, motivo: "cliente_no_encontrado" };
+  if (!cliente) return { ok: false, omitido: true, motivo: "cliente_no_encontrado" };
 
   const { data: empleados } = await supa
     .from("ed_empleados")
     .select("id")
     .eq("cliente_id", clienteId);
   const ids = (empleados ?? []).map((e) => e.id as string);
-  if (!ids.length) return { ok: false, motivo: "sin_empleados" };
+  if (!ids.length) {
+    // Se marca el día igual que con poca actividad (Fase 0): sin marca, un
+    // negocio sin empleados quedaba primero en cada corrida de la madrugada.
+    await marcarDia(clienteId, dia, { nuevos: 0, vistos: 0, mensajes: 0 });
+    return { ok: false, omitido: true, motivo: "sin_empleados" };
+  }
 
   // Rango UTC que cubre el día completo en Chile, con holgura a los dos lados
   // (Chile está entre UTC-3 y UTC-4; el margen evita perder la primera y la
@@ -176,7 +181,7 @@ export async function destilarDia(
     // Igual se deja la marca del día: si no, mañana se reintenta un día que
     // nunca va a tener suficiente y se gasta la corrida en él para siempre.
     await marcarDia(clienteId, dia, { nuevos: 0, vistos: 0, mensajes: mensajes.length });
-    return { ok: false, motivo: "poca_actividad" };
+    return { ok: false, omitido: true, motivo: "poca_actividad" };
   }
 
   const prompt = armarPromptDestilado({
@@ -245,20 +250,35 @@ export async function destilarPendientes(opts?: {
   forzar?: boolean;
   maxClientes?: number;
   fechaLimite?: number;
-}): Promise<{ destilados: number; detalle: string[] }> {
+}): Promise<{
+  destilados: number;
+  detalle: string[];
+  /** Fallos por negocio (observabilidad del cron). */
+  errores: { clienteId: string; error: string }[];
+  sinTrabajo?: boolean;
+}> {
   const ahora = opts?.ahora ?? new Date();
   const detalle: string[] = [];
+  const errores: { clienteId: string; error: string }[] = [];
 
   if (!opts?.forzar && !esHoraDeDestilar(ahora)) {
-    return { destilados: 0, detalle: ["fuera_de_horario"] };
+    return { destilados: 0, detalle: ["fuera_de_horario"], errores, sinTrabajo: true };
   }
 
   const ayer = diaChile(new Date(ahora.getTime() - 86_400_000));
   const supa = db();
 
   try {
-    const { data: clientes } = await supa.from("ed_clientes").select("id, nombre").limit(50);
-    if (!clientes?.length) return { destilados: 0, detalle: ["sin_clientes"] };
+    // Solo activos y en orden estable (Fase 0): antes entraban negocios dados de
+    // baja y, sin orden, el recorte de 50 era arbitrario.
+    const { data: clientes, error: errClientes } = await supa
+      .from("ed_clientes")
+      .select("id, nombre")
+      .eq("activo", true)
+      .order("id", { ascending: true })
+      .limit(50);
+    if (errClientes) throw new Error(`no se pudo leer negocios: ${errClientes.message}`);
+    if (!clientes?.length) return { destilados: 0, detalle: ["sin_clientes"], errores };
 
     const { data: hechos } = await supa
       .from("ed_isabel_destilados")
@@ -266,12 +286,15 @@ export async function destilarPendientes(opts?: {
       .eq("dia", ayer);
     const yaHechos = new Set((hechos ?? []).map((f) => f.cliente_id as string));
 
-    const pendientes = clientes
-      .filter((c) => !yaHechos.has(c.id as string))
-      .slice(0, opts?.maxClientes ?? MAX_CLIENTES);
+    const pendientes = clientes.filter((c) => !yaHechos.has(c.id as string));
+    const tope = opts?.maxClientes ?? MAX_CLIENTES;
 
     let destilados = 0;
+    let conModelo = 0;
     for (const c of pendientes) {
+      // El tope cuenta solo los que llamaron al modelo: un omitido (poca
+      // actividad) es barato y no debe dejar esperando al siguiente.
+      if (conModelo >= tope) break;
       // Si ya no queda tiempo de función, lo que falte sale en el latido
       // siguiente. Mismo criterio que el informe semanal.
       if (opts?.fechaLimite && Date.now() > opts.fechaLimite - 12_000) {
@@ -281,10 +304,16 @@ export async function destilarPendientes(opts?: {
       const r = await destilarDia(c.id as string, ayer, { fechaLimite: opts?.fechaLimite });
       detalle.push(`${c.nombre ?? c.id}: ${r.ok ? `+${r.nuevos}/${r.vistos}` : r.motivo}`);
       if (r.ok) destilados += 1;
+      else if (!r.omitido) errores.push({ clienteId: c.id as string, error: r.motivo ?? "destilado falló" });
+      if (!r.omitido) conModelo += 1;
     }
 
-    return { destilados, detalle };
+    return { destilados, detalle, errores };
   } catch (e) {
-    return { destilados: 0, detalle: [`error: ${(e as Error).message}`] };
+    return {
+      destilados: 0,
+      detalle: [`error: ${(e as Error).message}`],
+      errores: [{ clienteId: "", error: (e as Error).message }],
+    };
   }
 }

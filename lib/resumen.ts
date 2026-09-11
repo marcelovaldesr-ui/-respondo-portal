@@ -1,4 +1,6 @@
 import { db } from "@/lib/db";
+import { COL_DESCARTADO } from "@/lib/seguimientosCore";
+import { contarEsperando, leerTodo, leerTodoParalelo, unaPorChat } from "@/lib/metricas";
 
 /**
  * Capa de datos del portal. TODO se filtra por clienteId — es la única barrera
@@ -32,9 +34,19 @@ export type ResumenEmpleado = {
   conversaciones: number;
   mensajesEnviados: number;
   escalaciones: number;
+  /**
+   * Conversaciones DISTINTAS de este empleado con una derivación sin atender,
+   * de cualquier fecha (antes: filas creadas este mes, que ocultaba lo viejo y
+   * contaba dos veces un chat con dos derivaciones).
+   */
   escalacionesPendientes: number;
+  /** Seguimientos que de verdad salieron (sin los descartados) este mes. */
   seguimientosEnviados: number;
   seguimientosConRespuesta: number;
+  /** Los mismos envíos reales, por tipo (encuesta_postventa, cotizacion_sin_respuesta…). */
+  seguimientosPorTipo: Record<string, number>;
+  /** false si alguna lectura quedó incompleta: la tarjeta no debe afirmar ceros. */
+  completo: boolean;
   ultimaActividad: string | null;
   /** Conteo por tipo de resultado. Lo que no ocurrió, no aparece. */
   resultados: Partial<Record<TipoResultado, number>>;
@@ -61,8 +73,9 @@ export { nombreMes } from "@/lib/fechas";
 /** Actividad real de cada empleado del cliente, en el mes en curso. */
 export async function resumenEmpleados(
   clienteId: string,
+  supaOpt?: ReturnType<typeof db>,
 ): Promise<ResumenEmpleado[]> {
-  const supa = db();
+  const supa = supaOpt ?? db();
 
   const { data: empleados } = await supa
     .from("ed_empleados")
@@ -76,35 +89,88 @@ export async function resumenEmpleados(
   const ids = empleados.map((e) => e.id as string);
   const desde = inicioDeMesChile();
 
-  const [mensajes, escalaciones, seguimientos, resultados] = await Promise.all([
-    supa
-      .from("ed_mensajes")
-      .select("empleado_id, chat_id, rol, creado_en")
-      .in("empleado_id", ids)
-      .gte("creado_en", desde),
-    supa
-      .from("ed_escalaciones")
-      .select("empleado_id, atendida_en, creado_en")
-      .in("empleado_id", ids)
-      .gte("creado_en", desde),
-    supa
-      .from("ed_seguimientos")
-      .select("empleado_id, enviado_en, respuesta_recibida")
-      .in("empleado_id", ids)
-      .not("enviado_en", "is", null)
-      .gte("enviado_en", desde),
-    supa
-      .from("ed_resultados")
-      .select("empleado_id, tipo, valor_clp")
-      .in("empleado_id", ids)
-      .gte("creado_en", desde),
+  /**
+   * PAGINADO (Fase 0). Antes los mensajes del mes se leían en UNA consulta y
+   * PostgREST corta en 1.000 filas sin avisar: un negocio con 3.000 mensajes en
+   * lo que va del mes veía un tercio de sus conversaciones en la portada.
+   */
+  const [mensajesR, escMesR, abiertasR, seguimientosR, resultadosR] = await Promise.all([
+    leerTodoParalelo<{ empleado_id: string; chat_id: string; rol: string; creado_en: string }>(
+      () =>
+        supa
+          .from("ed_mensajes")
+          .select("id", { count: "exact", head: true })
+          .in("empleado_id", ids)
+          .gte("creado_en", desde),
+      (a, z) =>
+        supa
+          .from("ed_mensajes")
+          .select("empleado_id, chat_id, rol, creado_en")
+          .in("empleado_id", ids)
+          .gte("creado_en", desde)
+          // Orden total (creado_en + id): con solo creado_en, dos mensajes del
+          // mismo instante podían repetirse o faltar entre páginas.
+          .order("creado_en", { ascending: true })
+          .order("id", { ascending: true })
+          .range(a, z),
+      { concurrencia: 4, tope: 30_000 },
+    ),
+    leerTodo<{ empleado_id: string; creado_en: string }>((a, z) =>
+      supa
+        .from("ed_escalaciones")
+        .select("empleado_id, creado_en")
+        .in("empleado_id", ids)
+        .gte("creado_en", desde)
+        .order("creado_en", { ascending: true })
+        .range(a, z),
+    ),
+    leerTodo<{ empleado_id: string; chat_id: string }>((a, z) =>
+      supa
+        .from("ed_escalaciones")
+        .select("empleado_id, chat_id")
+        .in("empleado_id", ids)
+        .is("atendida_en", null)
+        .order("creado_en", { ascending: true })
+        .range(a, z),
+    ),
+    leerTodo<{ empleado_id: string; tipo: string; respuesta_recibida: boolean | null }>((a, z) =>
+      supa
+        .from("ed_seguimientos")
+        .select("empleado_id, tipo, respuesta_recibida")
+        .in("empleado_id", ids)
+        .not("enviado_en", "is", null)
+        // Un descartado (cita vencida, no_contactar…) no salió: no se cuenta.
+        .is(COL_DESCARTADO, null)
+        .gte("enviado_en", desde)
+        .order("enviado_en", { ascending: true })
+        .range(a, z),
+    ),
+    leerTodo<{ empleado_id: string; tipo: string; valor_clp: number | null }>((a, z) =>
+      supa
+        .from("ed_resultados")
+        .select("empleado_id, tipo, valor_clp")
+        .in("empleado_id", ids)
+        .gte("creado_en", desde)
+        .order("creado_en", { ascending: true })
+        .range(a, z),
+    ),
   ]);
+  const completo = [mensajesR, escMesR, abiertasR, seguimientosR, resultadosR].every((r) => r.completo);
+  const mensajes = { data: mensajesR.filas };
+  const escalaciones = { data: escMesR.filas };
+  const seguimientos = { data: seguimientosR.filas };
+  const resultados = { data: resultadosR.filas };
 
   return empleados.map((e) => {
     const id = e.id as string;
     const msgs = (mensajes.data ?? []).filter((m) => m.empleado_id === id);
     const esc = (escalaciones.data ?? []).filter((x) => x.empleado_id === id);
     const seg = (seguimientos.data ?? []).filter((s) => s.empleado_id === id);
+    const pendientesChats = new Set(
+      abiertasR.filas.filter((x) => x.empleado_id === id).map((x) => x.chat_id),
+    );
+    const porTipo: Record<string, number> = {};
+    for (const s of seg) porTipo[s.tipo] = (porTipo[s.tipo] ?? 0) + 1;
 
     const chats = new Set(msgs.map((m) => m.chat_id as string));
     const fechas = msgs
@@ -128,9 +194,11 @@ export async function resumenEmpleados(
       conversaciones: chats.size,
       mensajesEnviados: msgs.filter((m) => m.rol === "empleado").length,
       escalaciones: esc.length,
-      escalacionesPendientes: esc.filter((x) => !x.atendida_en).length,
+      escalacionesPendientes: pendientesChats.size,
       seguimientosEnviados: seg.length,
       seguimientosConRespuesta: seg.filter((s) => s.respuesta_recibida).length,
+      seguimientosPorTipo: porTipo,
+      completo,
       ultimaActividad: fechas[0] ?? null,
       resultados: conteo,
       montoRecuperado,
@@ -212,16 +280,25 @@ export async function esperandoHumano(
   const ids = (empleados ?? []).map((e) => e.id as string);
   if (!ids.length) return { items: [], total: 0 };
 
-  const { data, count } = await supa
-    .from("ed_escalaciones")
-    .select("empleado_id, chat_id, trigger, resumen, creado_en", { count: "exact" })
-    .in("empleado_id", ids)
-    .is("atendida_en", null)
-    .order("creado_en", { ascending: true }) // la más antigua primero: es la que peor está
-    .limit(limite);
+  /**
+   * Total = CONVERSACIONES esperando, con la misma función que el menú y la
+   * bandeja (Fase 0: antes eran filas de escalaciones, 53 vs 52). La lista se
+   * deduplica por chat: un chat con dos derivaciones abiertas aparece una vez,
+   * con la más antigua.
+   */
+  const [total, { data }] = await Promise.all([
+    contarEsperando(clienteId, ids, supa),
+    supa
+      .from("ed_escalaciones")
+      .select("empleado_id, chat_id, trigger, resumen, creado_en")
+      .in("empleado_id", ids)
+      .is("atendida_en", null)
+      .order("creado_en", { ascending: true }) // la más antigua primero: es la que peor está
+      .limit(limite * 5),
+  ]);
 
-  const filas = data ?? [];
-  if (!filas.length) return { items: [], total: count ?? 0 };
+  const filas = unaPorChat((data ?? []) as { empleado_id: string; chat_id: string; trigger: string | null; resumen: string | null; creado_en: string }[]).slice(0, limite);
+  if (!filas.length) return { items: [], total };
 
   // Nombre del contacto, solo para los chats que se van a mostrar.
   const chats = [...new Set(filas.map((f) => f.chat_id as string))];
@@ -230,10 +307,12 @@ export async function esperandoHumano(
     .select("chat_id, nombre")
     .eq("cliente_id", clienteId)
     .in("chat_id", chats);
-  const nombre = new Map((contactos ?? []).map((c) => [c.chat_id as string, c.nombre as string]));
+  const nombre = new Map<string, string>(
+    (contactos ?? []).map((c) => [c.chat_id as string, (c.nombre as string | null) ?? ""]),
+  );
 
   return {
-    total: count ?? filas.length,
+    total: Math.max(total, filas.length),
     items: filas.map((f) => ({
       empleadoId: f.empleado_id as string,
       chatId: f.chat_id as string,

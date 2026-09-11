@@ -246,6 +246,11 @@ export type SituacionNegocio = {
   citas: { cuando: string; quien: string; servicio: string; estado: string }[];
   /** Cobros emitidos y sin pagar. */
   cobrosPendientes: { quien: string; monto: number; concepto: string; dias: number }[];
+  /**
+   * Totales REALES de cobros pendientes (Fase 0). La lista de arriba trae solo
+   * los más antiguos; antes el "en total" se sumaba sobre esa lista recortada.
+   */
+  cobrosPendientesTotal?: { cantidad: number; monto: number };
   /** Derivaciones abiertas: por qué se derivó y el resumen que dejó el asistente. */
   esperando: { quien: string; motivo: string; resumen: string; dias: number }[];
   /** Cierres que detectó el sistema, con la evidencia textual que los sostiene. */
@@ -346,9 +351,14 @@ export function situacionEnTexto(s: SituacionNegocio): string {
   }
 
   if (s.cobrosPendientes.length) {
-    const total = s.cobrosPendientes.reduce((t, c) => t + c.monto, 0);
+    const listado = s.cobrosPendientes.reduce((t, c) => t + c.monto, 0);
+    const tot = s.cobrosPendientesTotal;
+    const encabezado =
+      tot && tot.cantidad > s.cobrosPendientes.length
+        ? `${tot.cantidad} cobros, ${pesos(tot.monto)} en total; abajo los ${s.cobrosPendientes.length} más antiguos`
+        : `${pesos(tot?.monto ?? listado)} en total`;
     partes.push(
-      `COBROS EMITIDOS SIN PAGAR (${pesos(total)} en total):\n` +
+      `COBROS EMITIDOS SIN PAGAR (${encabezado}):\n` +
         s.cobrosPendientes
           .map(
             (c) =>

@@ -4,11 +4,11 @@ import { resolverRango } from "@/lib/ads/periodos";
 import { formatearMonto, formatearNumero, formatearPorcentaje } from "@/lib/ads/moneda";
 import { cargarMarketing } from "@/lib/marketing/datos";
 import { modoDemo } from "@/lib/marketing/modo";
-import { NEGOCIO_DEMO } from "@/lib/marketing/demo";
 import Cabecera from "@/components/marketing/Cabecera";
 import Embudo from "@/components/marketing/Embudo";
 import TablaAnuncios from "@/components/marketing/TablaAnuncios";
 import { Ico } from "@/components/marketing/Iconos";
+import { motivoSinPublicidad } from "@/lib/marketing/capacidades";
 
 export const dynamic = "force-dynamic";
 
@@ -44,7 +44,7 @@ export default async function Atribucion({ searchParams }: { searchParams: Promi
   const enlaces = {
     conversaciones: `/marketing/leads?p=${rango.clave}`,
     calificados: `/marketing/leads?p=${rango.clave}&f=calificados`,
-    avanzados: `/marketing/leads?p=${rango.clave}&f=cotizados`,
+    avanzados: `/marketing/leads?p=${rango.clave}&f=avanzaron`,
     ventas: `/marketing/leads?p=${rango.clave}&f=compraron`,
   };
 
@@ -52,8 +52,7 @@ export default async function Atribucion({ searchParams }: { searchParams: Promi
     <main className="mk-pagina">
       <Cabecera
         titulo="Atribución"
-        bajada="De qué anuncio salió cada conversación, cada cotización y cada venta."
-        cuenta={p.demo ? `${NEGOCIO_DEMO.nombre} · CLP` : null}
+        bajada="De qué anuncio salió cada conversación que entró por WhatsApp, y en qué terminó."
         demo={p.demo}
         rango={rango}
         base="/marketing/atribucion"
@@ -63,7 +62,10 @@ export default async function Atribucion({ searchParams }: { searchParams: Promi
         <div className="mk-panel-cabecera">
           <div>
             <h2 className="mk-h2">Del anuncio a la venta</h2>
-            <p className="mk-meta mt-0.5">Cada etapa se puede abrir hasta las personas que la componen.</p>
+            <p className="mk-meta mt-0.5">
+              Tu cuenta publicitaria mide la entrega del aviso; Respondo sigue a la persona hasta la venta. Cada etapa se abre hasta las
+              personas que la componen.
+            </p>
           </div>
           <span className="mk-meta">{rango.etiqueta}</span>
         </div>
@@ -73,7 +75,8 @@ export default async function Atribucion({ searchParams }: { searchParams: Promi
         <div className="mk-panel-pie flex flex-wrap items-center justify-between gap-3">
           <span>
             Modelo: <strong style={{ color: "var(--tinta)" }}>primer contacto pagado</strong>. Cada persona se atribuye al primer anuncio
-            desde el que escribió, aunque compre semanas después. Una venta cuenta una vez, en un solo lugar.
+            desde el que escribió, aunque compre semanas después. Una venta cuenta una vez, en un solo lugar. Solo entran las
+            conversaciones que llegaron con la marca del anuncio: si alguien te escribe después por su cuenta, no se le puede asignar.
           </span>
           <Link href={`/marketing/leads?p=${rango.clave}`} className="mk-enlace">
             Ver todas las personas {Ico.flecha({ className: "h-3.5 w-3.5" })}
@@ -96,7 +99,7 @@ export default async function Atribucion({ searchParams }: { searchParams: Promi
         <Dato
           titulo="Ventas atribuidas"
           valor={`${formatearNumero(totalVentas)} · ${cobrado > 0 ? formatearMonto({ valor: cobrado, moneda: p.monedaNegocio }) : "—"}`}
-          nota="Cobrado por enlace (piso)"
+          nota="Al menos: lo cobrado por enlace de pago"
           fuerte
         />
       </div>
@@ -187,7 +190,7 @@ export default async function Atribucion({ searchParams }: { searchParams: Promi
           </div>
           <span className="mk-meta">{formatearNumero(p.anuncios.length)} con actividad</span>
         </div>
-        <TablaAnuncios anuncios={p.anuncios} monedaNegocio={p.monedaNegocio} periodo={rango.clave} mostrarCampana />
+        <TablaAnuncios anuncios={p.anuncios} monedaNegocio={p.monedaNegocio} periodo={rango.clave} mostrarCampana puedeConectarMeta={p.capacidades.puedeConectarMeta} motivoSinPublicidad={motivoSinPublicidad(p.capacidades, p.errorPublicidad)} />
       </section>
     </main>
   );

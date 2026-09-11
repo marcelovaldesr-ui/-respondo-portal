@@ -5,11 +5,19 @@ import type { EscalonEmbudo } from "@/lib/marketing/tipos";
 /**
  * DEL ANUNCIO A LA VENTA — la visualización insignia de Respondo.
  *
- * La idea que tiene que entrar en cinco segundos: **Meta ve hasta el clic;
- * Respondo sigue hasta la venta.** Por eso el embudo se dibuja en horizontal,
- * como una línea de tiempo, y lleva una frontera marcada: a la izquierda, en
- * tono apagado, lo que reporta la plataforma; a la derecha, en color, lo que
- * solo nosotros podemos contar.
+ * La idea que tiene que entrar en cinco segundos: **la plataforma mide el
+ * anuncio; Respondo mide al cliente.** Por eso el embudo se dibuja en
+ * horizontal, como una línea de tiempo, y lleva una frontera marcada: a la
+ * izquierda, en tono apagado, lo que reporta la plataforma sobre la entrega del
+ * aviso; a la derecha, en color, lo que pasa en el negocio —persona, nombre,
+ * conversación y monto—.
+ *
+ * ⚠️ CUIDADO CON EL CLAIM. Antes decía «Meta ve hasta acá / Respondo ve desde
+ * acá», y eso es falso: con el Pixel y la API de conversiones —que nosotros
+ * mismos alimentamos— Meta recibe señales de lo que pasa después del clic. La
+ * diferencia real no es quién ve, es QUÉ se mide: Meta mide la entrega del
+ * anuncio y recibe señales agregadas para optimizar; Respondo tiene el hilo
+ * completo de cada persona. Esa versión es igual de fuerte y además es cierta.
  *
  * Cada etapa muestra tres cosas y ninguna más: la cifra (grande), qué es, y
  * qué porcentaje del paso anterior sobrevivió. La barra es proporcional

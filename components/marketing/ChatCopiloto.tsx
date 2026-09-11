@@ -44,7 +44,7 @@ export default function ChatCopiloto({
   periodo: string;
   preguntaInicial?: string;
   demo: boolean;
-  herramientas: { nombre: string; descripcion: string }[];
+  herramientas: { nombre: string; etiqueta: string; descripcion: string }[];
   /** Qué se está analizando: se muestra en vez de la documentación interna. */
   contexto: { etiqueta: string; valor: string }[];
 }) {
@@ -171,8 +171,8 @@ export default function ChatCopiloto({
               </dl>
             </div>
             <div className="mk-panel-pie">
-              Las cifras las calcula Respondo con las mismas funciones que alimentan las pantallas. El copiloto solo las interpreta: no
-              inventa ni estima números.
+              Las cifras las calcula Respondo, las mismas que ves en el resto de Marketing. El copiloto solo las interpreta: no inventa
+              ni estima números.
             </div>
           </div>
         ) : (
@@ -199,6 +199,7 @@ export default function ChatCopiloto({
                           guardadoId={t.guardadoId}
                           demo={demo}
                           error={t.error}
+                          herramientas={herramientas}
                         />
                       ) : t.error ? (
                         <span style={{ color: "var(--peligro)" }}>{t.error}</span>
@@ -207,7 +208,7 @@ export default function ChatCopiloto({
                           <i />
                           <i />
                           <i />
-                          Corriendo las herramientas sobre el período…
+                          Leyendo tus cifras del período…
                         </span>
                       )}
                     </div>
@@ -249,9 +250,7 @@ export default function ChatCopiloto({
                 <ul className="space-y-2 px-5 pb-5">
                   {herramientas.map((h) => (
                     <li key={h.nombre} style={{ fontSize: "11.5px" }}>
-                      <code className="rounded px-1" style={{ background: "var(--fondo-hundido)", fontSize: 11 }}>
-                        {h.nombre}
-                      </code>
+                      <span style={{ fontWeight: 600 }}>{h.etiqueta}</span>
                       <span style={{ color: "var(--muted-2)" }}> · {h.descripcion}</span>
                     </li>
                   ))}
@@ -332,6 +331,7 @@ function Respuesta({
   guardadoId,
   demo,
   error,
+  herramientas,
 }: {
   r: RespuestaCopiloto;
   guardar: () => void;
@@ -339,6 +339,7 @@ function Respuesta({
   guardadoId?: string;
   demo: boolean;
   error?: string;
+  herramientas: { nombre: string; etiqueta: string }[];
 }) {
   return (
     <div>
@@ -415,9 +416,12 @@ function Respuesta({
         </div>
       )}
 
+      {/* Qué miró, en palabras. El nombre interno de la herramienta se queda
+          del lado del servidor: al dueño no le dice nada y publica el interior
+          del producto. */}
       {r.herramientasUsadas.length > 0 && (
         <div className="mt-3" style={{ fontSize: "11px", color: "var(--muted-3)" }}>
-          Calculado con: {r.herramientasUsadas.join(", ")}
+          Miró: {r.herramientasUsadas.map((n) => etiquetaDe(n, herramientas)).join(" · ")}
         </div>
       )}
     </div>
@@ -431,4 +435,9 @@ function DatoB({ etiqueta, valor }: { etiqueta: string; valor: string }) {
       <div style={{ fontSize: "12.5px", color: "var(--tinta)", lineHeight: 1.4 }}>{valor}</div>
     </div>
   );
+}
+
+/** El nombre legible de una herramienta. Si no la reconoce, no muestra nada. */
+function etiquetaDe(nombre: string, herramientas: { nombre: string; etiqueta: string }[]): string {
+  return herramientas.find((h) => h.nombre === nombre)?.etiqueta ?? "tus cifras";
 }

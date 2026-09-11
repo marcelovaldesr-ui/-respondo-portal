@@ -90,7 +90,7 @@ export const ERRORES: Record<CodigoErrorAds, ErrorAds> = {
   },
   no_configurado: {
     codigo: "no_configurado",
-    mensaje: "La conexión con Meta todavía no está habilitada en esta instalación de Respondo.",
+    mensaje: "La lectura de tu cuenta publicitaria no está habilitada en tu plan.",
   },
 };
 

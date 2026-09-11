@@ -1,5 +1,6 @@
 import Link from "next/link";
 import type { ItemPauta } from "@/lib/ads/estado";
+import type { Capacidades } from "@/lib/marketing/capacidades";
 import { Ico } from "@/components/marketing/Iconos";
 
 /**
@@ -16,15 +17,31 @@ import { Ico } from "@/components/marketing/Iconos";
 export default function Onboarding({
   estado,
   creatividades,
+  capacidades,
 }: {
   estado: { items: ItemPauta[]; listos: number; total: number };
   creatividades: number;
+  capacidades: Capacidades;
 }) {
+  /**
+   * Un paso que la instalación NO ofrece —el estado `manual`— no puede contar
+   * en el denominador: dejaba el contador clavado en «0 de 6» sin forma de
+   * llegar nunca a 6, que es la manera más rápida de que alguien deje de mirar
+   * esta lista. Se sigue mostrando (es información honesta sobre qué falta),
+   * pero aparte de la cuenta.
+   */
   const pasos = [
-    ...estado.items.map((i) => ({ titulo: i.titulo, listo: i.estado === "ok", detalle: i.detalle, accion: i.accion })),
+    ...estado.items.map((i) => ({
+      titulo: i.titulo,
+      listo: i.estado === "ok",
+      cuenta: i.estado !== "manual",
+      detalle: i.detalle,
+      accion: i.accion,
+    })),
     {
       titulo: "Primera creatividad",
       listo: creatividades > 0,
+      cuenta: true,
       detalle:
         creatividades > 0
           ? `${creatividades} en el estudio.`
@@ -32,7 +49,8 @@ export default function Onboarding({
       accion: creatividades > 0 ? undefined : { texto: "Crear", href: "/marketing/creatividades/nueva" },
     },
   ];
-  const listos = pasos.filter((p) => p.listo).length;
+  const contables = pasos.filter((p) => p.cuenta);
+  const listos = contables.filter((p) => p.listo).length;
 
   return (
     <section className="mk-panel mb-7 overflow-hidden">
@@ -49,12 +67,21 @@ export default function Onboarding({
             después.
           </p>
           <div className="mt-5 flex flex-wrap gap-2">
-            <Link href="/marketing/creatividades/nueva" className="btn-primario mk-btn-lg">
-              {Ico.creatividades({ className: "h-4 w-4" })} Crear una creatividad
-            </Link>
-            <Link href="/marketing/integraciones" className="btn-suave mk-btn-lg">
-              Conectar Meta
-            </Link>
+            {/* La primera puerta funciona SIEMPRE: escribir un anuncio no
+                necesita ninguna integración. Por eso es la primaria. */}
+            {capacidades.puedeGenerarConIa && (
+              <Link href="/marketing/creatividades/nueva" className="btn-primario mk-btn-lg">
+                {Ico.creatividades({ className: "h-4 w-4" })} Crear una creatividad
+              </Link>
+            )}
+            {/* La segunda solo existe si de verdad se puede conectar. Ofrecer
+                «Conectar Meta» en una instalación sin la app de Meta mandaba al
+                dueño a una pantalla que le decía «no disponible». */}
+            {capacidades.puedeConectarMeta && !capacidades.metaConectada && (
+              <Link href="/marketing/integraciones" className="btn-suave mk-btn-lg">
+                Conectar Meta
+              </Link>
+            )}
           </div>
           <p className="mt-4" style={{ fontSize: "11.5px", color: "var(--muted-2)" }}>
             ¿Quieres ver el producto completo antes? Enciende «Datos de demostración» abajo a la izquierda.
@@ -65,7 +92,7 @@ export default function Onboarding({
           <div className="flex items-center justify-between">
             <span className="mk-hallazgo-tipo">Puesta en marcha</span>
             <span className="cifra" style={{ fontSize: "12px", color: "var(--muted-2)" }}>
-              {listos} de {pasos.length}
+              {listos} de {contables.length}
             </span>
           </div>
           <div className="mt-2.5 h-1.5 w-full overflow-hidden rounded-full" style={{ background: "var(--fondo-hundido)" }}>

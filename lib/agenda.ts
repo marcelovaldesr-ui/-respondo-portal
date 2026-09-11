@@ -141,6 +141,23 @@ export async function disponibilidad(
     .select("profesional_id")
     .eq("servicio_id", servicioId);
   let profesionalIds = (mapeo ?? []).map((m) => m.profesional_id as string);
+  /**
+   * BARRERA ENTRE NEGOCIOS (Fase 0, 11-sep-2026). ed_servicio_profesional se
+   * leía solo por servicio_id. El trigger de la 273 impide mapeos cruzados
+   * NUEVOS, pero no borró los viejos: un servicio de A mapeado a un profesional
+   * de B hacía que la página pública de A leyera las horas —y el Google
+   * Calendar, con el token— del profesional de B. Se intersecta con los
+   * profesionales del negocio, sin depender de que la 273 esté aplicada.
+   */
+  if (profesionalIds.length) {
+    const { data: propios } = await supa
+      .from("ed_profesionales")
+      .select("id")
+      .eq("cliente_id", clienteId)
+      .in("id", profesionalIds);
+    const deEsteNegocio = new Set((propios ?? []).map((p) => p.id as string));
+    profesionalIds = profesionalIds.filter((id) => deEsteNegocio.has(id));
+  }
   if (profesionalIds.length === 0) {
     const { data: todos } = await supa
       .from("ed_profesionales")
@@ -185,7 +202,7 @@ export async function disponibilidad(
   // Compromisos personales del dueño en SU Google Calendar (F5). Devuelve []
   // si no hay credenciales o si nadie tiene la sincronización encendida, así
   // que la disponibilidad se calcula igual que siempre en ese caso.
-  const ocupadosGoogle = await ocupadosDesdeGoogle(profesionalIds, ahoraIso, hastaIso, supa);
+  const ocupadosGoogle = await ocupadosDesdeGoogle(profesionalIds, ahoraIso, hastaIso, supa, clienteId);
 
   const ocupados: Ocupado[] = [
     // Los bloqueos NO llevan preparación: si el negocio para 13-14 para

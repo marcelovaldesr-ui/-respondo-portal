@@ -148,7 +148,16 @@ Responde SOLO con este JSON, sin texto alrededor:
 export async function generarInsight(
   clienteId: string,
   opts?: { semanasAtras?: number; fechaLimite?: number },
-): Promise<{ ok: boolean; motivo?: string; insight?: Insight }> {
+): Promise<{
+  ok: boolean;
+  motivo?: string;
+  /**
+   * true cuando no hay informe por una razón ESPERABLE (poca actividad, sin
+   * empleados): no es un fallo y no debe alertar. Lo usa el cron.
+   */
+  omitido?: boolean;
+  insight?: Insight;
+}> {
   const supa = db();
   const { desde, hasta } = semanaDe(new Date(), opts?.semanasAtras ?? 0);
 
@@ -164,7 +173,7 @@ export async function generarInsight(
     .select("id")
     .eq("cliente_id", clienteId);
   const ids = (empleados ?? []).map((e) => e.id as string);
-  if (!ids.length) return { ok: false, motivo: "El cliente no tiene empleados digitales" };
+  if (!ids.length) return { ok: false, omitido: true, motivo: "El cliente no tiene empleados digitales" };
 
   // Rango en UTC que cubre la semana completa en hora de Chile (con holgura de
   // un día a cada lado; el filtro fino se hace después con la fecha local).
@@ -192,6 +201,7 @@ export async function generarInsight(
   if (filas.length < 10) {
     return {
       ok: false,
+      omitido: true,
       motivo: "Hay muy poca actividad esta semana para generar un informe útil.",
     };
   }

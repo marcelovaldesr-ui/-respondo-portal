@@ -30,6 +30,8 @@ export type ResultadoAvisos = {
   revisados: number;
   avisados: number;
   detalle: string[];
+  /** Fallos por negocio (observabilidad del cron). Opcional por compatibilidad. */
+  errores?: { clienteId: string; error: string }[];
 };
 
 /**
@@ -71,7 +73,7 @@ export async function revisarCuposYAvisar(ahora: Date = new Date()): Promise<Res
     .eq("umbral", 100);
   const cerrados = new Set((yaAl100 ?? []).map((a) => a.cliente_id as string));
 
-  const resultado: ResultadoAvisos = { revisados: 0, avisados: 0, detalle: [] };
+  const resultado: ResultadoAvisos = { revisados: 0, avisados: 0, detalle: [], errores: [] };
 
   for (const cli of clientes) {
     const clienteId = cli.id as string;
@@ -119,9 +121,11 @@ export async function revisarCuposYAvisar(ahora: Date = new Date()): Promise<Res
         resultado.detalle.push(`${cli.nombre}: avisado ${umbral}%`);
       } else {
         resultado.detalle.push(`${cli.nombre}: ${umbral}% registrado, envío falló (${envio.error})`);
+        resultado.errores?.push({ clienteId, error: `aviso de cupo ${umbral}% no se pudo enviar: ${envio.error}` });
       }
     } catch (e) {
       resultado.detalle.push(`${cli.nombre}: error ${(e as Error).message}`);
+      resultado.errores?.push({ clienteId, error: (e as Error).message });
     }
   }
 

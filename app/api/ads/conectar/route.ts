@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { obtenerUsuarioConPermiso } from "@/lib/auth";
 import { firmarEstado } from "@/lib/cifrado";
 import { metaAdsConfigurado, urlAutorizacionAds } from "@/lib/ads/meta";
+import { huellaEstado, nombreCookieVinculo, opcionesCookieVinculo } from "@/lib/oauthVinculo";
 
 /**
  * ⚠️ `new URL(ruta, base)` LANZA si `base` es undefined. Por eso el respaldo va
@@ -41,5 +42,8 @@ export async function GET() {
   }
 
   const estado = firmarEstado({ clienteId: usuario.clienteId }, "ads-estado");
-  return NextResponse.redirect(urlAutorizacionAds(estado));
+  // Ata el `state` a ESTE navegador (Fase 0): ver lib/oauthVinculo.ts.
+  const res = NextResponse.redirect(urlAutorizacionAds(estado));
+  res.cookies.set(nombreCookieVinculo("ads"), huellaEstado(estado), opcionesCookieVinculo());
+  return res;
 }

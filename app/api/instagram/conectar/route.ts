@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { obtenerUsuarioConPermiso } from "@/lib/auth";
 import { instagramConfigurado, urlAutorizacionIg } from "@/lib/instagramOAuth";
+import { estadoDeUrl, huellaEstado, nombreCookieVinculo, opcionesCookieVinculo } from "@/lib/oauthVinculo";
 
 export const dynamic = "force-dynamic";
 
@@ -22,5 +23,10 @@ export async function GET(req: NextRequest) {
     return NextResponse.redirect(new URL("/whatsapp?ig=sin_configurar", req.url));
   }
 
-  return NextResponse.redirect(urlAutorizacionIg(usuario.clienteId));
+  // Ata el `state` a ESTE navegador (Fase 0): ver lib/oauthVinculo.ts.
+  const url = urlAutorizacionIg(usuario.clienteId);
+  const state = estadoDeUrl(url);
+  const res = NextResponse.redirect(url);
+  if (state) res.cookies.set(nombreCookieVinculo("instagram"), huellaEstado(state), opcionesCookieVinculo());
+  return res;
 }

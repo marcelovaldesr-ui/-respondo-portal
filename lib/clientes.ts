@@ -1,4 +1,5 @@
 import { db } from "@/lib/db";
+import { COL_DESCARTADO } from "@/lib/seguimientosCore";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Etapa } from "@/lib/embudo";
 
@@ -210,7 +211,9 @@ export async function fichaCliente(
       .select("tipo, enviado_en, respuesta_recibida")
       .in("empleado_id", ids)
       .eq("chat_id", chatId)
-      .not("enviado_en", "is", null),
+      .not("enviado_en", "is", null)
+      // La ficha no puede decir "se le envió" algo que se descartó.
+      .is(COL_DESCARTADO, null),
     supa.from("ed_empleados").select("id").eq("cliente_id", clienteId).eq("rol", "tino").maybeSingle(),
   ]);
 

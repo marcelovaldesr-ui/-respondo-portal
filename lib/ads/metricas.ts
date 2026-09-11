@@ -68,6 +68,8 @@ export type DatosPropios = {
   conversaciones: number;
   cotizaciones: number;
   agendadas: number;
+  /** Conversaciones que cotizaron o reservaron, contadas UNA vez por persona. */
+  avanzados: number;
   ventas: number;
   /** Solo lo cobrado por enlace de pago. Es un piso, nunca el total. */
   cobrado: Monto;

@@ -27,6 +27,12 @@ export const ETIQUETAS: Etiqueta[] = [
    * sola cuando aparece el pago o la conversación se cierra.
    */
   { valor: "pago_pendiente", label: "Falta pago", color: "#7C2D12", fondo: "#FFEDD5", auto: true },
+  /**
+   * El cliente INFORMÓ que pagó (comprobante, «ya transferí») y nadie lo ha
+   * verificado. La venta cuenta como ganada; el cobro no. Se quita cuando una
+   * persona marca el cobro como pagado. Ver etiquetasCiclo.ts (Fase 0).
+   */
+  { valor: "pago_por_confirmar", label: "Pago por confirmar", color: "#854D0E", fondo: "#FEF3C7", auto: true },
   { valor: "cliente", label: "Cliente", color: "#166534", fondo: "#DCFCE7", auto: false },
   { valor: "resuelto", label: "Resuelto", color: "#475569", fondo: "#F1F5F9", auto: false },
 ];

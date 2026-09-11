@@ -2,6 +2,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import { db } from "@/lib/db";
 import { obtenerUsuarioConPermiso } from "@/lib/auth";
 import { oauthConfigurado, urlAutorizacion, firmarEstado } from "@/lib/googleOAuth";
+import { huellaEstado, nombreCookieVinculo, opcionesCookieVinculo } from "@/lib/oauthVinculo";
 
 export const dynamic = "force-dynamic";
 
@@ -36,5 +37,8 @@ export async function GET(req: NextRequest) {
   if (!data) return NextResponse.redirect(new URL("/agenda/configuracion", req.url));
 
   const estado = firmarEstado({ profesionalId, clienteId: usuario.clienteId });
-  return NextResponse.redirect(urlAutorizacion(estado));
+  // Ata el `state` a ESTE navegador (Fase 0): ver lib/oauthVinculo.ts.
+  const res = NextResponse.redirect(urlAutorizacion(estado));
+  res.cookies.set(nombreCookieVinculo("google"), huellaEstado(estado), opcionesCookieVinculo());
+  return res;
 }

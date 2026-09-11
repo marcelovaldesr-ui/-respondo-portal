@@ -1,4 +1,5 @@
 import { NextResponse, type NextRequest } from "next/server";
+import { nombreCookieVinculo, vinculoValido } from "@/lib/oauthVinculo";
 import { db } from "@/lib/db";
 import {
   cifrarTokenIg,
@@ -44,6 +45,11 @@ export async function GET(req: NextRequest) {
 
   const clienteId = clienteDelEstadoIg(state);
   if (!clienteId) return NextResponse.redirect(destino("estado_invalido"));
+  // El `state` tiene que haber salido de ESTE navegador (Fase 0, CSRF de OAuth).
+  if (!vinculoValido(state, req.cookies.get(nombreCookieVinculo("instagram"))?.value)) {
+    console.warn("[instagram/callback] state sin vínculo con este navegador: rechazado");
+    return NextResponse.redirect(destino("estado_invalido"));
+  }
 
   const corto = await intercambiarCodigoIg(code);
   if (!corto.ok) {
@@ -95,5 +101,7 @@ export async function GET(req: NextRequest) {
     return NextResponse.redirect(destino("guardar"));
   }
 
-  return NextResponse.redirect(destino("ok"));
+  const res = NextResponse.redirect(destino("ok"));
+  res.cookies.delete(nombreCookieVinculo("instagram"));
+  return res;
 }
