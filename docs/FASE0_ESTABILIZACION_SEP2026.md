@@ -387,7 +387,7 @@
 ## H. Lo que deliberadamente NO se cambió
 
 - **Rediseño, Inicio nuevo, Equipo IA, visión/audio.** Nada. Solo copy donde un texto mentía.
-- **`reingreso_activo`.** Sigue configurable y apagado.
+- **`reingreso_activo`.** No se cambió. ⚠️ Corrección del 11-sep: decía «apagado», pero el chequeo de procesos en producción muestra que el vigilante sí trabaja, y lo tiene encendido Impresora, por decisión de Marcelo. Se queda así.
 - **Beto en Impresora.** `cotizacion_seguimiento` sigue en `false` y el modo por defecto es aprobación. No se tocó ningún dato de producción.
 - **Usuarios y permisos.** No se reconstruyó nada. Solo se agregó un permiso de dueño para aprobar mensajes pagados de Beto (ver decisiones al final).
 - **freeBusy.** Ante un fallo de Google se siguen ofreciendo horas (fail-open), como antes. Lo nuevo es que el fallo queda visible.
@@ -631,3 +631,18 @@ from ed_latidos where clave like 'proceso:%' order by clave;
 3. **`ed_metricas`.** No se toca en Fase 0: Inicio ya la ignora si no es del mes en curso. En Fase 1 se revisa si el motor 2.0 la escribe; si no, se quita el bloque.
 4. **Dominio del portal.** Se verifica en el despliegue: `NEXT_PUBLIC_SITE_URL` tiene que ser exactamente la dirección con la que se entra al portal (paso de verificación en `docs/FASE0_PENDIENTES_MARCELO.md`).
 5. **Avisos push al cerrar sesión.** Sí deben apagarse. Queda para Fase 1 (requiere que el botón de salir corra en el navegador).
+
+---
+
+## Después del despliegue (11-sep-2026)
+
+Commit `2c7e455` en producción, migración 304 aplicada, variables de Vercel corregidas (`NEXT_PUBLIC_SITE_URL` recreada como Config; `RESPONDO_ADMIN_EMAILS` solo con la cuenta de Respondo).
+
+**Primer hallazgo del chequeo de procesos.** `/api/salud` respondió `degradado` (503): `vigilante_abandonadas` con 6 errores en 6 h, «Vapid subject is not a valid URL».
+
+- **Causa.** `VAPID_SUBJECT` en Vercel es un correo sin `mailto:`. `web-push` rechaza la configuración, así que **ningún aviso push salió nunca** en producción (preexistente, invisible hasta ahora).
+- **Efecto extra.** En el vigilante, el aviso «el cliente le respondió a Tino» no estaba dentro de un `try`: el error cortaba el barrido completo cada 5 minutos. No se enviaron mensajes repetidos a clientes (la marca de revisado se escribe antes de mandar).
+- **Arreglo.** `lib/push.ts`: `sujetoVapid()` agrega `mailto:` a un correo pelado y usa el sujeto por defecto ante cualquier valor inválido; `setVapidDetails` queda dentro de `try`, así que un aviso ya no puede lanzar. Test en `tests/push-vigentes.test.mjs`.
+- **Reingreso de Tino.** Encendido en Impresora a propósito (confirmado por Marcelo). Con este arreglo, los avisos al equipo cuando Tino retoma o calla empiezan a llegar por primera vez.
+- **Informes semanales.** Chequeo en verde: la semana del 31-ago tiene informe en todos los negocios con actividad.
+

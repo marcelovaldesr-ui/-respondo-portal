@@ -37,17 +37,42 @@ export function pushConfigurado(): boolean {
   );
 }
 
+const SUJETO_POR_DEFECTO = "mailto:hola@respon-do.com";
+
+/**
+ * El "subject" de VAPID: a quién contactar si un servicio de push detecta abuso.
+ * Debe ser un mailto o una URL https nuestra, no un dato del cliente.
+ *
+ * ⚠️ POR QUÉ SE NORMALIZA (11-sep-2026). En producción VAPID_SUBJECT estaba
+ * cargado como correo pelado, sin `mailto:`. `web-push` lanza «Vapid subject is
+ * not a valid URL» y NINGÚN aviso salió nunca. Peor: el vigilante de
+ * conversaciones abandonadas no atrapaba ese error y el barrido completo se
+ * cortaba cada 5 minutos. Lo destapó el chequeo de procesos de la Fase 0.
+ */
+export function sujetoVapid(valor: string | null | undefined): string {
+  const v = (valor ?? "").trim();
+  if (!v) return SUJETO_POR_DEFECTO;
+  if (/^mailto:\S+@\S+$/i.test(v) || /^https:\/\/\S+$/i.test(v)) return v;
+  if (/^[^\s@<>]+@[^\s@<>]+\.[^\s@<>]+$/.test(v)) return `mailto:${v}`;
+  return SUJETO_POR_DEFECTO;
+}
+
 let listo = false;
 function configurar(): boolean {
   if (listo) return true;
   if (!pushConfigurado()) return false;
-  webpush.setVapidDetails(
-    // El "subject" es a quién contactar si un servicio de push detecta abuso.
-    // Debe ser un mailto o una URL nuestra, no un dato del cliente.
-    process.env.VAPID_SUBJECT || "mailto:hola@respon-do.com",
-    process.env.VAPID_PUBLIC_KEY!,
-    process.env.VAPID_PRIVATE_KEY!,
-  );
+  try {
+    webpush.setVapidDetails(
+      sujetoVapid(process.env.VAPID_SUBJECT),
+      process.env.VAPID_PUBLIC_KEY!,
+      process.env.VAPID_PRIVATE_KEY!,
+    );
+  } catch (e) {
+    // Llaves mal copiadas, por ejemplo. Un aviso nunca puede tumbar a quien lo
+    // pide (el webhook, el vigilante): se registra y no se avisa.
+    console.warn("[push] configuración VAPID inválida:", (e as Error).message);
+    return false;
+  }
   listo = true;
   return true;
 }
