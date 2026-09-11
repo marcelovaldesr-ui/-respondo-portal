@@ -37,6 +37,44 @@ export const maxDuration = 30;
  * nuevo entra por Cloud API, en la práctica **las fotos de los clientes no se
  * podían ver** salvo en el único negocio que quedó en WAHA.
  */
+/**
+ * TIPOS QUE SE PUEDEN MOSTRAR DENTRO DEL PORTAL (auditoría 11-sep-2026).
+ *
+ * El tipo de un adjunto lo declara QUIEN LO MANDA: cualquier número de WhatsApp
+ * puede enviar un documento `cotizacion.html` o un `.svg` con un script adentro.
+ * Si este endpoint lo devolviera con su tipo declarado, el navegador lo
+ * ejecutaría en el MISMO origen del portal, con la sesión de la persona que lo
+ * abrió: podría leer conversaciones, mandar mensajes como el negocio, etc.
+ *
+ * Por eso: solo imágenes, audio, video y PDF se muestran inline; todo lo demás
+ * sale como descarga binaria. Antes de esta fecha el camino del archivo ya
+ * archivado (`sb:`) devolvía el tipo declarado tal cual — ese era el hueco.
+ */
+const TIPOS_INLINE = new Set([
+  "image/jpeg",
+  "image/png",
+  "image/webp",
+  "image/gif",
+  "audio/mpeg",
+  "audio/ogg",
+  "audio/mp4",
+  "audio/wav",
+  "audio/aac",
+  "audio/amr",
+  "video/mp4",
+  "application/pdf",
+]);
+
+function cabecerasDeTipo(tipoDeclarado: string, nombre: string): Record<string, string> {
+  const tipo = tipoDeclarado.split(";")[0].trim().toLowerCase();
+  const inline = TIPOS_INLINE.has(tipo);
+  return {
+    "Content-Type": inline ? tipo : "application/octet-stream",
+    "Content-Disposition": `${inline ? "inline" : "attachment"}; filename="${nombre.replace(/[^\w.\- ]/g, "_")}"`,
+    "X-Content-Type-Options": "nosniff",
+  };
+}
+
 export async function GET(request: NextRequest) {
   const id = new URL(request.url).searchParams.get("id") ?? "";
   if (!id) return new NextResponse("Falta id", { status: 400 });
@@ -102,9 +140,13 @@ export async function GET(request: NextRequest) {
       console.error("[media] archivado pero no se pudo leer:", error?.message);
       return new NextResponse("No disponible", { status: 502 });
     }
+    const seguro = cabecerasDeTipo(
+      mime || data.type || "",
+      (msg.media_nombre as string | null) || "archivo",
+    );
     return new NextResponse(data, {
       headers: {
-        "Content-Type": mime || data.type || "application/octet-stream",
+        ...seguro,
         // Un año: el contenido de un mensaje es inmutable. Ya archivado, además,
         // no hay ningún viaje a Meta que ahorrar en las visitas siguientes.
         "Cache-Control": "private, max-age=31536000, immutable",
@@ -193,27 +235,10 @@ export async function GET(request: NextRequest) {
     });
     if (!r.ok) return new NextResponse("No disponible", { status: 502 });
 
-    const tipoDeclarado = (mime || r.headers.get("content-type") || "")
-      .split(";")[0]
-      .trim()
-      .toLowerCase();
-    const tiposInline = new Set([
-      "image/jpeg",
-      "image/png",
-      "image/webp",
-      "image/gif",
-      "audio/mpeg",
-      "audio/ogg",
-      "audio/mp4",
-      "audio/wav",
-      "audio/aac",
-      "audio/amr",
-      "video/mp4",
-      "application/pdf",
-    ]);
-    const seguroInline = tiposInline.has(tipoDeclarado);
-    const tipo = seguroInline ? tipoDeclarado : "application/octet-stream";
-    const nombre = (msg.media_nombre as string | null) || "archivo";
+    const seguro = cabecerasDeTipo(
+      mime || r.headers.get("content-type") || "",
+      (msg.media_nombre as string | null) || "archivo",
+    );
     const largo = Number(r.headers.get("content-length") ?? "0");
     if (Number.isFinite(largo) && largo > 25 * 1024 * 1024) {
       return new NextResponse("Archivo demasiado grande", { status: 413 });
@@ -223,9 +248,8 @@ export async function GET(request: NextRequest) {
     return new NextResponse(r.body, {
       status: 200,
       headers: {
-        "Content-Type": tipo,
         // Se muestra inline (imágenes/PDF) pero con nombre por si se descarga.
-        "Content-Disposition": `${seguroInline ? "inline" : "attachment"}; filename="${nombre.replace(/[^\w.\- ]/g, "_")}"`,
+        ...seguro,
         /**
          * CACHÉ LARGA, A PROPÓSITO (21-ago-2026). Antes eran 5 minutos, así que
          * volver a abrir una conversación volvía a descargar cada foto — y en

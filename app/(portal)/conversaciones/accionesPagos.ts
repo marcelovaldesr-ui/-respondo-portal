@@ -257,13 +257,27 @@ export async function avisarPedidoListo(formData: FormData): Promise<{
   );
   if (!aplica) return { ok: false, error: "Este rubro no usa avisos de pedido." };
 
-  const { data: contacto } = await supa
-    .from("ed_contactos")
-    .select("nombre")
-    .eq("cliente_id", usuario.clienteId)
-    .eq("chat_id", chatId)
-    .maybeSingle();
-  if (!contacto) return { ok: false, error: "Sin acceso a este chat" };
+  /**
+   * AISLAMIENTO (auditoría 11-sep-2026): el empleado TAMBIÉN tiene que ser de
+   * este negocio. Antes solo se validaba el contacto, y el cron resuelve el
+   * número de WhatsApp desde el empleado: un `empleadoId` ajeno mandaba el
+   * aviso desde el WhatsApp de OTRO negocio. Mismo patrón que `cobrarEnChat`.
+   */
+  const [{ data: empleado }, { data: contacto }] = await Promise.all([
+    supa
+      .from("ed_empleados")
+      .select("id")
+      .eq("id", empleadoId)
+      .eq("cliente_id", usuario.clienteId)
+      .maybeSingle(),
+    supa
+      .from("ed_contactos")
+      .select("nombre")
+      .eq("cliente_id", usuario.clienteId)
+      .eq("chat_id", chatId)
+      .maybeSingle(),
+  ]);
+  if (!empleado || !contacto) return { ok: false, error: "Sin acceso a este chat" };
 
   /**
    * ⚠️ IDEMPOTENCIA (auditoría 27-ago): `programarSeguimiento` NO deduplica —

@@ -15,7 +15,14 @@ import type { Panorama } from "@/lib/marketing/tipos";
 
 const pesos = (n: number | null | undefined) =>
   n === null || n === undefined ? "—" : `$${Math.round(n).toLocaleString("es-CL")}`;
-const pct = (n: number | null | undefined) => (n === null || n === undefined ? "—" : `${n.toFixed(1)}%`);
+/**
+ * Los números que ve el modelo van YA escritos como los escribiría un chileno:
+ * coma decimal y punto de miles. El modelo repite literalmente lo que lee, así
+ * que si acá sale «23.17×» en la respuesta al dueño también sale «23.17×».
+ */
+const dec = (n: number, d: number) => n.toLocaleString("es-CL", { minimumFractionDigits: d, maximumFractionDigits: d });
+const pct = (n: number | null | undefined) => (n === null || n === undefined ? "—" : `${dec(n, 1)}%`);
+const veces = (n: number | null | undefined) => (n === null || n === undefined ? "—" : `${dec(n, 1)}×`);
 
 export type Herramienta = {
   nombre: string;
@@ -35,7 +42,7 @@ export const HERRAMIENTAS: Herramienta[] = [
             L.push(`  ${m.etiqueta}: no disponible (${m.motivo ?? "sin dato"})`);
             continue;
           }
-          const v = m.monto ? pesos(m.monto.valor) : m.clave === "ctr" || m.clave === "conversion" ? pct(m.valor) : m.clave === "roas" ? `${m.valor?.toFixed(2)}×` : String(m.valor);
+          const v = m.monto ? pesos(m.monto.valor) : m.clave === "ctr" || m.clave === "conversion" ? pct(m.valor) : m.clave === "roas" ? veces(m.valor) : String(m.valor);
           const antes = m.antes === null || m.antes === undefined ? "" : ` (antes: ${m.monto ? pesos(m.antes) : m.clave === "ctr" || m.clave === "conversion" ? pct(m.antes) : m.antes})`;
           L.push(`  ${m.etiqueta}: ${v}${antes} [${m.certeza}]`);
         }
@@ -60,7 +67,7 @@ export const HERRAMIENTAS: Herramienta[] = [
       return activas
         .map(
           (c) =>
-            `  «${c.nombre}» [${c.estado}${c.origen === "atribucion" ? ", solo atribución" : ""}]: gasto ${pesos(c.gasto)} · ${c.conversaciones} conv · ${c.calificados} calif · ${c.avanzados} cotiz/reservas · ${c.ventas} ventas · cobrado ${pesos(c.cobrado)} · CPC ${pesos(c.cpc)} · CPV ${pesos(c.cpv)} · ROAS ${c.roas === null ? "—" : c.roas.toFixed(2) + "×"} · ${c.anuncios} anuncios`,
+            `  «${c.nombre}» [${c.estado}${c.origen === "atribucion" ? ", solo atribución" : ""}]: gasto ${pesos(c.gasto)} · ${c.conversaciones} conv · ${c.calificados} calif · ${c.avanzados} cotiz/reservas · ${c.ventas} ventas · cobrado ${pesos(c.cobrado)} · CPC ${pesos(c.cpc)} · CPV ${pesos(c.cpv)} · ROAS ${veces(c.roas)} · ${c.anuncios} anuncios`,
         )
         .join("\n");
     },
@@ -220,7 +227,7 @@ REGLAS
 1. Cada afirmación con número tiene que salir de las herramientas de arriba. No calcules cifras nuevas ni las estimes. Si el dato no está o el volumen es chico (menos de ~8 conversaciones o ~3 ventas en lo que se compara), dilo con esas palabras: «con este volumen no se puede concluir».
 2. Habla en español de Chile, directo, como un asesor que respeta el tiempo del dueño. Sin listas de diez puntos: la conclusión primero, después la evidencia, después qué haría.
 3. «Calificado» significa que la conversación avanzó a interesado o más, o cotizó, reservó o compró. Úsalo así.
-4. Cuando compares campañas o anuncios, nombra el mejor y el peor con sus cifras exactas.
+4. Cuando compares campañas o anuncios, nombra el mejor y el peor con sus cifras exactas. Copia los números TAL COMO aparecen arriba (coma decimal, punto de miles: «23,2×», «$1.177.000», «5,5%»); no los reescribas al formato inglés.
 5. Si la persona pide CREAR una campaña, arma un borrador completo con la información del negocio: objetivo, oferta concreta (con precio si el contexto lo tiene), audiencia razonable (ubicación de la zona del negocio, edad, 2-4 intereses), presupuesto diario sugerido (entre $2.000 y $10.000 salvo que el gasto actual indique otra escala), DOS copies (titular ≤40 caracteres, texto ≤300, CTA de: Enviar mensaje · Cotizar por WhatsApp · Escribir ahora · Pedir información · Reservar · Comprar) y una descripción de imagen. No inventes precios que no estén en el contexto.
 6. Recomienda rutas concretas del producto cuando corresponda: /marketing/campanas, /marketing/campanas/{id}, /marketing/atribucion, /marketing/leads, /marketing/creatividades, /marketing/campanas/nueva, /marketing/integraciones. Las "acciones" son enlaces para VER una pantalla («Ver campaña X», «Ver personas»): Respondo no activa, pausa ni publica campañas en Meta, así que nunca escribas una acción que prometa eso; si conviene reactivar o pausar algo, dilo en la respuesta como recomendación para hacer en Meta.
 

@@ -544,8 +544,11 @@ export async function cambiarEstadoCita(formData: FormData) {
   const estado = texto(formData, "estado");
   if (!id || !["confirmada", "cancelada", "no_show", "completada"].includes(estado)) return;
 
-  await cambiarEstado(clienteId, id, estado as "confirmada" | "cancelada" | "no_show" | "completada");
-  if (estado === "cancelada" || estado === "no_show") {
+  const r = await cambiarEstado(clienteId, id, estado as "confirmada" | "cancelada" | "no_show" | "completada");
+  // Solo si la cita ERA de este negocio (auditoría 11-sep-2026): el borrado de
+  // seguimientos filtra por `cita_id` sin cliente, así que con un id ajeno
+  // apagaba los recordatorios de otro negocio.
+  if (r.ok && r.encontrada && (estado === "cancelada" || estado === "no_show")) {
     await anularSeguimientosDeCita(id);
   }
   revalidatePath("/agenda", "layout"); // "layout" = también /agenda/configuracion

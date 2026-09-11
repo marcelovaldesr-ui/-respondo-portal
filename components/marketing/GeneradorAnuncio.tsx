@@ -3,31 +3,37 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
-import { generarImagenCreativa, generarTextoCreativo, guardarCreatividadAccion } from "@/app/(marketing)/marketing/creatividades/acciones";
+import {
+  generarImagenCreativa,
+  generarTextoCreativo,
+  guardarCreatividadAccion,
+} from "@/app/(marketing)/marketing/creatividades/acciones";
 import { CTAS_META, LIMITES, type PaqueteCreativo } from "@/lib/marketing/creatividadesCore";
+import type { PlantillaCreativa } from "@/lib/marketing/plantillasCreativas";
 import { OBJETIVOS, type FormatoCreatividad, type PlataformaCreatividad } from "@/lib/marketing/tipos";
 import VistaPreviaAnuncio from "@/components/marketing/VistaPreviaAnuncio";
+import { Ico } from "@/components/marketing/Iconos";
 
 /**
- * EL GENERADOR — de un brief de cuatro campos a un anuncio listo.
+ * EL ESTUDIO — de un brief de cuatro campos a un anuncio listo.
  *
- * Tres pasos y una vista previa que se actualiza sola:
- *   1. Brief: objetivo, producto, oferta, plataforma, formato. Las ofertas
- *      se sugieren desde el conocimiento del negocio; se puede escribir otra.
- *   2. Texto: el modelo escribe concepto, gancho, titular, texto y CTA, más
- *      dos variantes. Todo se edita a mano; los límites de Meta se muestran
- *      mientras se escribe, no después de publicar.
- *   3. Imagen: se genera con la descripción propuesta (editable). Si falla,
- *      la creatividad se guarda igual, sin imagen, y lo dice.
+ * COMPOSICIÓN: controles a la izquierda, LIENZO al centro. La creatividad es
+ * el producto de esta pantalla, así que ocupa el centro y crece: cuando la
+ * imagen llega, llega grande. No hay miniaturas.
  *
- * Nunca hay un spinner sin texto: cada espera dice qué está pasando.
+ * TRES MOMENTOS, uno por vez, y el lienzo cambia con cada uno:
+ *   1. Brief     → el lienzo muestra qué se va a anunciar y con qué contexto.
+ *   2. Texto     → el lienzo muestra el anuncio armado; los ángulos alternativos
+ *                  se prueban con un clic y se ven al instante.
+ *   3. Imagen    → el lienzo muestra la foto en su formato real.
+ *
+ * Nunca hay un spinner mudo: cada espera dice qué está pasando y cuánto tarda.
  */
-
 const FORMATOS: { clave: FormatoCreatividad; texto: string; ayuda: string }[] = [
-  { clave: "1:1", texto: "Cuadrado 1:1", ayuda: "Feed de Facebook e Instagram" },
-  { clave: "4:5", texto: "Vertical 4:5", ayuda: "Feed de Instagram, ocupa más pantalla" },
-  { clave: "9:16", texto: "Historia 9:16", ayuda: "Historias y reels" },
-  { clave: "16:9", texto: "Horizontal 16:9", ayuda: "Feed de Facebook, enlaces" },
+  { clave: "1:1", texto: "Cuadrado", ayuda: "Feed de Facebook e Instagram" },
+  { clave: "4:5", texto: "Vertical", ayuda: "Feed de Instagram, ocupa más pantalla" },
+  { clave: "9:16", texto: "Historia", ayuda: "Historias y reels" },
+  { clave: "16:9", texto: "Horizontal", ayuda: "Feed de Facebook, enlaces" },
 ];
 
 const PLATAFORMAS: { clave: PlataformaCreatividad; texto: string }[] = [
@@ -55,27 +61,30 @@ export type BaseVariacion = {
 export default function GeneradorAnuncio({
   negocio,
   ofertas,
+  saber,
   demo,
   campanaId,
   campanaNombre,
   base,
+  plantilla,
 }: {
   negocio: string;
   ofertas: { titulo: string; detalle: string }[];
+  saber: number;
   demo: boolean;
   campanaId?: string | null;
   campanaNombre?: string | null;
-  /** Cuando se crea una variación de otra creatividad. */
   base?: BaseVariacion | null;
+  plantilla?: PlantillaCreativa | null;
 }) {
   const router = useRouter();
   const [paso, setPaso] = useState<1 | 2 | 3>(1);
-  const [objetivo, setObjetivo] = useState(base?.objetivo ?? "conversaciones");
+  const [objetivo, setObjetivo] = useState(base?.objetivo ?? plantilla?.objetivo ?? "conversaciones");
   const [producto, setProducto] = useState(base?.producto ?? "");
   const [oferta, setOferta] = useState(base?.oferta ?? "");
-  const [plataforma, setPlataforma] = useState<PlataformaCreatividad>(base?.plataforma ?? "ambas");
-  const [formato, setFormato] = useState<FormatoCreatividad>(base?.formato ?? "1:1");
-  const [indicaciones, setIndicaciones] = useState("");
+  const [plataforma, setPlataforma] = useState<PlataformaCreatividad>(base?.plataforma ?? plantilla?.plataforma ?? "ambas");
+  const [formato, setFormato] = useState<FormatoCreatividad>(base?.formato ?? plantilla?.formato ?? "1:1");
+  const [indicaciones, setIndicaciones] = useState(plantilla?.indicaciones ?? "");
 
   const [paquete, setPaquete] = useState<PaqueteCreativo | null>(null);
   const [nombre, setNombre] = useState("");
@@ -92,15 +101,15 @@ export default function GeneradorAnuncio({
   const [error, setError] = useState<string | null>(null);
   const [, iniciar] = useTransition();
 
-  const aplicar = (p: PaqueteCreativo) => {
-    setPaquete(p);
-    setNombre(p.nombre);
-    setConcepto(p.concepto);
-    setGancho(p.gancho);
-    setTitular(p.titular);
-    setTexto(p.texto);
-    setCta(p.cta);
-    setImagenPrompt(p.imagenPrompt);
+  const aplicar = (pk: PaqueteCreativo) => {
+    setPaquete(pk);
+    setNombre(pk.nombre);
+    setConcepto(pk.concepto);
+    setGancho(pk.gancho);
+    setTitular(pk.titular);
+    setTexto(pk.texto);
+    setCta(pk.cta);
+    setImagenPrompt(pk.imagenPrompt);
   };
 
   const generarTexto = () => {
@@ -115,7 +124,16 @@ export default function GeneradorAnuncio({
         formato,
         indicaciones,
         base: base
-          ? { nombre: base.nombre, concepto: base.concepto, gancho: base.gancho, titular: base.titular, texto: base.texto, cta: base.cta, imagenPrompt: base.imagenPrompt ?? "", variantes: [] }
+          ? {
+              nombre: base.nombre,
+              concepto: base.concepto,
+              gancho: base.gancho,
+              titular: base.titular,
+              texto: base.texto,
+              cta: base.cta,
+              imagenPrompt: base.imagenPrompt ?? "",
+              variantes: [],
+            }
           : null,
       });
       setOcupado("");
@@ -172,268 +190,326 @@ export default function GeneradorAnuncio({
     setCta(v.cta);
   };
 
-  const Contador = ({ n, max }: { n: number; max: number }) => (
-    <span className="cifra" style={{ fontSize: "var(--t-micro)", color: n > max ? "var(--peligro)" : "var(--muted-3)" }}>
-      {n}/{max}
-    </span>
-  );
+  const esHistoria = formato === "9:16";
+  const PASOS = [
+    { n: 1 as const, t: "Brief", sub: "Qué anunciar" },
+    { n: 2 as const, t: "Texto", sub: "Lo que dice" },
+    { n: 3 as const, t: "Imagen", sub: "Cómo se ve" },
+  ];
 
   return (
-    <div className="grid gap-5 lg:grid-cols-12">
-      <div className="lg:col-span-7">
-        {/* Pasos */}
-        <div className="mk-segmentos mb-4" role="tablist" aria-label="Pasos">
-          {[
-            { n: 1 as const, t: "Brief" },
-            { n: 2 as const, t: "Texto" },
-            { n: 3 as const, t: "Imagen y guardar" },
-          ].map((s) => (
-            <button key={s.n} type="button" role="tab" className="mk-segmento" aria-pressed={paso === s.n} disabled={s.n > 1 && !paquete} onClick={() => setPaso(s.n)}>
-              <span className="mk-paso-numero mr-1.5" style={{ width: 16, height: 16, fontSize: 9.5 }}>{s.n}</span>
-              {s.t}
-            </button>
-          ))}
-        </div>
-
-        {campanaNombre && (
-          <div className="mb-4 rounded-md border px-3 py-2" style={{ borderColor: "var(--indigo-borde)", background: "var(--indigo-suave)", fontSize: "var(--t-menor)" }}>
-            Esta creatividad va a quedar asociada a la campaña <strong>{campanaNombre}</strong>.
+    <div className="grid gap-6 xl:grid-cols-12">
+      {/* ── Controles ──────────────────────────────────────────────────── */}
+      <div className="xl:col-span-5">
+        <div className="mk-panel">
+          <div className="mk-panel-cabecera" style={{ padding: "10px 12px" }}>
+            <div className="mk-segmentos w-full" role="tablist" aria-label="Pasos">
+              {PASOS.map((s) => (
+                <button
+                  key={s.n}
+                  type="button"
+                  role="tab"
+                  className="mk-segmento flex-1"
+                  aria-pressed={paso === s.n}
+                  disabled={s.n > 1 && !paquete}
+                  onClick={() => setPaso(s.n)}
+                >
+                  {s.n}. {s.t}
+                </button>
+              ))}
+            </div>
           </div>
-        )}
-        {base && (
-          <div className="mb-4 rounded-md border px-3 py-2" style={{ borderColor: "var(--borde)", background: "var(--fondo-fila)", fontSize: "var(--t-menor)" }}>
-            Variación de <strong>{base.nombre}</strong>. El modelo va a cambiar el ángulo, no repetirlo.
-          </div>
-        )}
 
-        {paso === 1 && (
-          <section className="tarjeta p-5">
-            <h2 className="h-seccion">¿Qué vamos a anunciar?</h2>
-            <p className="mt-1" style={{ fontSize: "var(--t-menor)", color: "var(--muted)" }}>
-              Respondo ya sabe cómo hablan tus clientes y qué preguntan. Con esto escribe el anuncio en sus palabras.
-            </p>
-
-            <div className="mt-5">
-              <div className="eyebrow mb-2">Objetivo</div>
-              <div className="grid gap-2 sm:grid-cols-2">
-                {OBJETIVOS.map((o) => (
-                  <button key={o.clave} type="button" className="mk-opcion" aria-pressed={objetivo === o.clave} onClick={() => setObjetivo(o.clave)}>
-                    <span className="font-semibold" style={{ fontSize: "var(--t-fila)" }}>{o.texto}</span>
-                    <span style={{ fontSize: "var(--t-micro)", color: "var(--muted-2)" }}>{o.ayuda}</span>
-                  </button>
-                ))}
+          <div className="mk-panel-cuerpo">
+            {campanaNombre && (
+              <div className="mk-hundido mb-5 px-4 py-3" style={{ fontSize: "12.5px" }}>
+                Va a quedar asociada a la campaña <strong>{campanaNombre}</strong>.
               </div>
-            </div>
-
-            <div className="mt-5 grid gap-4 sm:grid-cols-2">
-              <label className="block">
-                <span className="font-semibold" style={{ fontSize: "var(--t-menor)" }}>Producto o servicio</span>
-                <input className="campo mt-1" value={producto} onChange={(e) => setProducto(e.target.value)} placeholder="Ej: pendón roller 80×200" list="ofertas-sugeridas" />
-                <datalist id="ofertas-sugeridas">
-                  {ofertas.map((o) => (
-                    <option key={o.titulo} value={o.titulo} />
-                  ))}
-                </datalist>
-              </label>
-              <label className="block">
-                <span className="font-semibold" style={{ fontSize: "var(--t-menor)" }}>Oferta o gancho</span>
-                <input className="campo mt-1" value={oferta} onChange={(e) => setOferta(e.target.value)} placeholder="Ej: listo en 24 horas, diseño incluido" />
-              </label>
-            </div>
-
-            {ofertas.length > 0 && (
-              <div className="mt-3">
-                <div style={{ fontSize: "var(--t-micro)", color: "var(--muted-2)" }}>Lo que Respondo sabe que vendes:</div>
-                <div className="mt-1.5 flex flex-wrap gap-1.5">
-                  {ofertas.slice(0, 8).map((o) => (
-                    <button
-                      key={o.titulo}
-                      type="button"
-                      className="btn-chico"
-                      title={o.detalle}
-                      onClick={() => {
-                        setProducto(o.titulo);
-                        if (!oferta) setOferta(o.detalle.slice(0, 80));
-                      }}
-                    >
-                      {o.titulo}
-                    </button>
-                  ))}
-                </div>
+            )}
+            {base && (
+              <div className="mk-hundido mb-5 px-4 py-3" style={{ fontSize: "12.5px" }}>
+                Variación de <strong>{base.nombre}</strong>. El modelo cambia el ángulo, no lo repite.
               </div>
             )}
 
-            <div className="mt-5 grid gap-4 sm:grid-cols-2">
-              <div>
-                <div className="eyebrow mb-2">Plataforma</div>
-                <div className="flex flex-col gap-1.5">
-                  {PLATAFORMAS.map((p) => (
-                    <button key={p.clave} type="button" className="mk-opcion py-2" aria-pressed={plataforma === p.clave} onClick={() => setPlataforma(p.clave)}>
-                      <span style={{ fontSize: "var(--t-menor)", fontWeight: 600 }}>{p.texto}</span>
-                    </button>
-                  ))}
-                </div>
-              </div>
-              <div>
-                <div className="eyebrow mb-2">Formato</div>
-                <div className="flex flex-col gap-1.5">
-                  {FORMATOS.map((f) => (
-                    <button key={f.clave} type="button" className="mk-opcion py-2" aria-pressed={formato === f.clave} onClick={() => setFormato(f.clave)}>
-                      <span className="flex items-center gap-2" style={{ fontSize: "var(--t-menor)", fontWeight: 600 }}>
-                        <Proporcion formato={f.clave} /> {f.texto}
-                      </span>
-                      <span style={{ fontSize: "var(--t-micro)", color: "var(--muted-2)" }}>{f.ayuda}</span>
-                    </button>
-                  ))}
-                </div>
-              </div>
-            </div>
+            {paso === 1 && (
+              <>
+                {plantilla && (
+                  <div
+                    className="mb-5 flex items-start gap-3 rounded-lg border px-4 py-3"
+                    style={{ borderColor: "var(--indigo-borde)", background: "var(--indigo-suave)" }}
+                  >
+                    <span className="mk-arranque-icono" style={{ width: 30, height: 30 }}>
+                      {Ico[plantilla.icono]({ className: "h-4 w-4" })}
+                    </span>
+                    <div className="min-w-0">
+                      <div className="font-semibold" style={{ fontSize: "13px" }}>
+                        {plantilla.titulo}
+                      </div>
+                      <div style={{ fontSize: "12px", color: "var(--muted)" }}>Objetivo, formato e indicaciones ya cargados. Cámbialos si quieres.</div>
+                    </div>
+                  </div>
+                )}
 
-            <label className="mt-5 block">
-              <span className="font-semibold" style={{ fontSize: "var(--t-menor)" }}>Indicaciones (opcional)</span>
-              <input className="campo mt-1" value={indicaciones} onChange={(e) => setIndicaciones(e.target.value)} placeholder="Ej: tono cercano, sin mencionar precios, para gente de Chillán" />
-            </label>
-
-            <div className="mt-5 flex flex-wrap items-center gap-3">
-              <button type="button" className="btn-primario" disabled={ocupado !== ""} onClick={generarTexto}>
-                {ocupado === "texto" ? "Escribiendo el anuncio…" : paquete ? "Volver a escribir" : "Escribir el anuncio"}
-              </button>
-              {paquete && (
-                <button type="button" className="btn-suave" onClick={() => setPaso(2)}>
-                  Seguir con el texto actual
-                </button>
-              )}
-              {ocupado === "texto" && (
-                <span style={{ fontSize: "var(--t-micro)", color: "var(--muted-2)" }}>Leyendo lo que Respondo sabe del negocio y redactando. Unos 10 segundos.</span>
-              )}
-            </div>
-          </section>
-        )}
-
-        {paso === 2 && paquete && (
-          <section className="tarjeta p-5">
-            <div className="flex flex-wrap items-baseline justify-between gap-2">
-              <h2 className="h-seccion">El texto del anuncio</h2>
-              <button type="button" className="btn-texto" onClick={() => setPaso(1)}>
-                Cambiar el brief
-              </button>
-            </div>
-            <p className="mt-1 leading-relaxed" style={{ fontSize: "var(--t-menor)", color: "var(--muted)" }}>
-              <strong style={{ color: "var(--tinta)" }}>Concepto:</strong> {concepto}
-            </p>
-
-            <div className="mt-4 grid gap-3">
-              <Campo etiqueta="Nombre interno" valor={nombre} onChange={setNombre} max={80} contador={Contador} />
-              <Campo etiqueta="Gancho (primera línea)" valor={gancho} onChange={setGancho} max={LIMITES.gancho} contador={Contador} />
-              <Campo etiqueta="Titular" valor={titular} onChange={setTitular} max={LIMITES.titular} contador={Contador} ayuda="Meta lo corta después de 40 caracteres." />
-              <Campo etiqueta="Texto principal" valor={texto} onChange={setTexto} max={LIMITES.texto} contador={Contador} area ayuda={`Los primeros ${LIMITES.textoVisible} caracteres se ven sin apretar «Ver más».`} />
-              <label className="block">
-                <span className="font-semibold" style={{ fontSize: "var(--t-menor)" }}>Botón</span>
-                <select className="campo mt-1" value={cta} onChange={(e) => setCta(e.target.value)}>
-                  {CTAS_META.map((c) => (
-                    <option key={c} value={c}>{c}</option>
-                  ))}
-                </select>
-              </label>
-            </div>
-
-            {paquete.variantes.length > 0 && (
-              <div className="mt-5">
-                <div className="eyebrow mb-2">Otros ángulos</div>
+                <div className="mk-campo-rotulo">¿Qué quieres lograr?</div>
                 <div className="grid gap-2 sm:grid-cols-2">
-                  {paquete.variantes.map((v, i) => (
-                    <button key={i} type="button" className="mk-opcion" onClick={() => usarVariante(v)}>
-                      <span className="font-semibold" style={{ fontSize: "var(--t-menor)" }}>{v.titular}</span>
-                      <span className="line-clamp-3" style={{ fontSize: "var(--t-micro)", color: "var(--muted-2)" }}>{v.texto}</span>
-                      <span className="mt-1 font-semibold" style={{ fontSize: "var(--t-micro)", color: "var(--indigo)" }}>Usar este ángulo</span>
+                  {OBJETIVOS.map((o) => (
+                    <button key={o.clave} type="button" className="mk-opcion" aria-pressed={objetivo === o.clave} onClick={() => setObjetivo(o.clave)}>
+                      <span className="font-semibold" style={{ fontSize: "13px" }}>
+                        {o.texto}
+                      </span>
+                      <span style={{ fontSize: "11.5px", color: "var(--muted-2)" }}>{o.ayuda}</span>
                     </button>
                   ))}
                 </div>
-              </div>
+
+                <div className="mt-6">
+                  <label className="block">
+                    <span className="mk-campo-rotulo">Producto o servicio</span>
+                    <input className="campo" value={producto} onChange={(e) => setProducto(e.target.value)} placeholder="Ej: pendón roller 80×200" list="ofertas-sugeridas" />
+                    <datalist id="ofertas-sugeridas">
+                      {ofertas.map((o) => (
+                        <option key={o.titulo} value={o.titulo} />
+                      ))}
+                    </datalist>
+                  </label>
+                  {ofertas.length > 0 && (
+                    <div className="mt-2.5 flex flex-wrap gap-1.5">
+                      {ofertas.slice(0, 6).map((o) => (
+                        <button
+                          key={o.titulo}
+                          type="button"
+                          className="btn-chico"
+                          title={o.detalle}
+                          onClick={() => {
+                            setProducto(o.titulo);
+                            if (!oferta) setOferta(o.detalle.slice(0, 90));
+                          }}
+                        >
+                          {o.titulo}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                <label className="mt-5 block">
+                  <span className="mk-campo-rotulo">Oferta o gancho</span>
+                  <input className="campo" value={oferta} onChange={(e) => setOferta(e.target.value)} placeholder="Ej: listo en 24 horas, diseño incluido" />
+                </label>
+
+                <div className="mt-6 grid gap-5 sm:grid-cols-2">
+                  <div>
+                    <div className="mk-campo-rotulo">Formato</div>
+                    <div className="flex flex-col gap-1.5">
+                      {FORMATOS.map((f) => (
+                        <button key={f.clave} type="button" className="mk-opcion py-2.5" aria-pressed={formato === f.clave} onClick={() => setFormato(f.clave)}>
+                          <span className="flex items-center gap-2.5" style={{ fontSize: "12.5px", fontWeight: 600 }}>
+                            <Proporcion formato={f.clave} /> {f.texto} <span style={{ color: "var(--muted-3)", fontWeight: 500 }}>{f.clave}</span>
+                          </span>
+                          <span style={{ fontSize: "11px", color: "var(--muted-2)" }}>{f.ayuda}</span>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                  <div>
+                    <div className="mk-campo-rotulo">Plataforma</div>
+                    <div className="flex flex-col gap-1.5">
+                      {PLATAFORMAS.map((pf) => (
+                        <button key={pf.clave} type="button" className="mk-opcion py-2.5" aria-pressed={plataforma === pf.clave} onClick={() => setPlataforma(pf.clave)}>
+                          <span style={{ fontSize: "12.5px", fontWeight: 600 }}>{pf.texto}</span>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+
+                <label className="mt-5 block">
+                  <span className="mk-campo-rotulo">Indicaciones (opcional)</span>
+                  <textarea
+                    className="campo"
+                    rows={3}
+                    value={indicaciones}
+                    onChange={(e) => setIndicaciones(e.target.value)}
+                    placeholder="Ej: tono cercano, sin mencionar precios, para gente de Chillán"
+                  />
+                </label>
+
+                <div className="mt-6 flex flex-wrap items-center gap-3 border-t pt-5" style={{ borderColor: "var(--borde)" }}>
+                  <button type="button" className="btn-primario mk-btn-lg" disabled={ocupado !== ""} onClick={generarTexto}>
+                    {ocupado === "texto" ? "Escribiendo…" : paquete ? "Volver a escribir" : "Escribir el anuncio"}
+                  </button>
+                  {paquete && (
+                    <button type="button" className="btn-suave mk-btn-lg" onClick={() => setPaso(2)}>
+                      Seguir con el texto actual
+                    </button>
+                  )}
+                  {ocupado === "texto" && (
+                    <span className="mk-pensando">
+                      <i />
+                      <i />
+                      <i />
+                      Leyendo {saber > 0 ? `${saber} cosas que sabemos del negocio` : "tu ficha del negocio"}…
+                    </span>
+                  )}
+                </div>
+              </>
             )}
 
-            <div className="mt-5 flex flex-wrap gap-2">
-              <button type="button" className="btn-primario" onClick={() => setPaso(3)} disabled={!titular.trim() || !texto.trim()}>
-                Seguir con la imagen
-              </button>
-              <button type="button" className="btn-suave" disabled={ocupado !== ""} onClick={generarTexto}>
-                {ocupado === "texto" ? "Escribiendo…" : "Pedir otra versión"}
-              </button>
-            </div>
-          </section>
-        )}
+            {paso === 2 && paquete && (
+              <>
+                <div className="mk-hundido mb-5 px-4 py-3">
+                  <div className="mk-hallazgo-tipo">Concepto</div>
+                  <p className="mt-1" style={{ fontSize: "13px", color: "var(--tinta)", lineHeight: 1.5 }}>
+                    {concepto}
+                  </p>
+                </div>
 
-        {paso === 3 && paquete && (
-          <section className="tarjeta p-5">
-            <div className="flex flex-wrap items-baseline justify-between gap-2">
-              <h2 className="h-seccion">La imagen</h2>
-              <button type="button" className="btn-texto" onClick={() => setPaso(2)}>
-                Volver al texto
-              </button>
-            </div>
-            <Campo etiqueta="Descripción de la fotografía" valor={imagenPrompt} onChange={setImagenPrompt} max={LIMITES.imagenPrompt} contador={Contador} area ayuda="Sin texto ni logos dentro de la imagen: Meta penaliza las imágenes con mucho texto." />
-            <div className="mt-3 flex flex-wrap items-center gap-2">
-              <button type="button" className={imagenUrl ? "btn-suave" : "btn-primario"} disabled={ocupado !== "" || !imagenPrompt.trim()} onClick={generarImagen}>
-                {ocupado === "imagen" ? "Generando la imagen…" : imagenUrl ? "Generar otra" : "Generar la imagen"}
-              </button>
-              {ocupado === "imagen" && <span style={{ fontSize: "var(--t-micro)", color: "var(--muted-2)" }}>Unos 5 a 10 segundos.</span>}
-              {imagenEsDemo && <span className="pildora-alerta">Imagen de muestra (demo)</span>}
-            </div>
+                <Campo etiqueta="Gancho (primera línea)" valor={gancho} onChange={setGancho} max={LIMITES.gancho} />
+                <Campo etiqueta="Titular" valor={titular} onChange={setTitular} max={LIMITES.titular} ayuda="Meta lo corta después de 40 caracteres." />
+                <Campo
+                  etiqueta="Texto principal"
+                  valor={texto}
+                  onChange={setTexto}
+                  max={LIMITES.texto}
+                  area
+                  ayuda={`Los primeros ${LIMITES.textoVisible} caracteres se ven sin apretar «Ver más».`}
+                />
+                <div className="grid gap-4 sm:grid-cols-2">
+                  <label className="block">
+                    <span className="mk-campo-rotulo">Botón</span>
+                    <select className="campo" value={cta} onChange={(e) => setCta(e.target.value)}>
+                      {CTAS_META.map((c) => (
+                        <option key={c} value={c}>
+                          {c}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <Campo etiqueta="Nombre interno" valor={nombre} onChange={setNombre} max={80} />
+                </div>
 
-            <div className="mt-5 border-t pt-4" style={{ borderColor: "var(--borde)" }}>
-              <div className="flex flex-wrap gap-2">
-                <button type="button" className="btn-primario" disabled={ocupado !== ""} onClick={() => guardar("lista")}>
-                  {ocupado === "guardar" ? "Guardando…" : "Guardar como lista"}
-                </button>
-                <button type="button" className="btn-suave" disabled={ocupado !== ""} onClick={() => guardar("borrador")}>
-                  Guardar como borrador
-                </button>
+                {paquete.variantes.length > 0 && (
+                  <div className="mt-5">
+                    <div className="mk-campo-rotulo">Otros ángulos</div>
+                    <div className="grid gap-2">
+                      {paquete.variantes.map((v, i) => (
+                        <button key={i} type="button" className="mk-opcion" onClick={() => usarVariante(v)}>
+                          <span className="font-semibold" style={{ fontSize: "12.5px" }}>
+                            {v.titular}
+                          </span>
+                          <span style={{ fontSize: "11.5px", color: "var(--muted-2)", lineHeight: 1.45 }}>{v.texto}</span>
+                          <span className="mk-enlace mt-1" style={{ fontSize: "11.5px" }}>
+                            Probar este ángulo
+                          </span>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                <div className="mt-6 flex flex-wrap gap-2 border-t pt-5" style={{ borderColor: "var(--borde)" }}>
+                  <button type="button" className="btn-primario mk-btn-lg" onClick={() => setPaso(3)} disabled={!titular.trim() || !texto.trim()}>
+                    Seguir con la imagen
+                  </button>
+                  <button type="button" className="btn-suave mk-btn-lg" disabled={ocupado !== ""} onClick={generarTexto}>
+                    {ocupado === "texto" ? "Escribiendo…" : "Pedir otra versión"}
+                  </button>
+                </div>
+              </>
+            )}
+
+            {paso === 3 && paquete && (
+              <>
+                <label className="block">
+                  <span className="mk-campo-rotulo">
+                    Descripción de la fotografía
+                    <span className="cifra" style={{ fontSize: "11px", color: imagenPrompt.length > LIMITES.imagenPrompt ? "var(--peligro)" : "var(--muted-3)" }}>
+                      {imagenPrompt.length}/{LIMITES.imagenPrompt}
+                    </span>
+                  </span>
+                  <textarea className="campo" rows={5} value={imagenPrompt} onChange={(e) => setImagenPrompt(e.target.value)} />
+                  <span className="mk-ayuda">Sin texto ni logos dentro de la imagen: Meta penaliza las imágenes con mucho texto.</span>
+                </label>
+
+                <div className="mt-4 flex flex-wrap items-center gap-3">
+                  <button type="button" className={imagenUrl ? "btn-suave mk-btn-lg" : "btn-primario mk-btn-lg"} disabled={ocupado !== "" || !imagenPrompt.trim()} onClick={generarImagen}>
+                    {ocupado === "imagen" ? "Generando…" : imagenUrl ? "Generar otra" : "Generar la imagen"}
+                  </button>
+                  {ocupado === "imagen" && (
+                    <span className="mk-pensando">
+                      <i />
+                      <i />
+                      <i />
+                      Unos 5 a 10 segundos
+                    </span>
+                  )}
+                  {imagenEsDemo && <span className="mk-demo">Imagen de muestra</span>}
+                </div>
+
+                <div className="mt-6 border-t pt-5" style={{ borderColor: "var(--borde)" }}>
+                  <div className="flex flex-wrap gap-2">
+                    <button type="button" className="btn-primario mk-btn-lg" disabled={ocupado !== ""} onClick={() => guardar("lista")}>
+                      {ocupado === "guardar" ? "Guardando…" : "Guardar como lista"}
+                    </button>
+                    <button type="button" className="btn-suave mk-btn-lg" disabled={ocupado !== ""} onClick={() => guardar("borrador")}>
+                      Guardar como borrador
+                    </button>
+                  </div>
+                  <p className="mk-ayuda mt-2.5">
+                    {imagenUrl ? "Se guarda con la imagen." : "Se puede guardar sin imagen y generarla después."}
+                    {demo && " En demostración no se guarda: apaga la demo para crear de verdad."}
+                  </p>
+                </div>
+              </>
+            )}
+
+            {error && (
+              <div className="mt-5 rounded-lg px-4 py-3" style={{ background: "#fdf1ee", color: "var(--tinta)", fontSize: "13px" }}>
+                {error}
               </div>
-              <p className="mt-2" style={{ fontSize: "var(--t-micro)", color: "var(--muted-2)" }}>
-                {imagenUrl ? "Se guarda con la imagen." : "Se puede guardar sin imagen y generarla después desde la creatividad."}
-                {demo && " En demostración no se guarda: apaga la demo para crear de verdad."}
-              </p>
-            </div>
-          </section>
-        )}
-
-        {error && (
-          <div className="tarjeta mt-4 p-3" style={{ borderLeft: "3px solid var(--peligro)", fontSize: "var(--t-menor)" }}>
-            {error}
+            )}
           </div>
-        )}
+        </div>
       </div>
 
-      {/* Vista previa */}
-      <aside className="lg:col-span-5">
-        <div className="lg:sticky lg:top-4">
-          <div className="mb-2 flex items-baseline justify-between">
-            <span className="eyebrow">Cómo se va a ver</span>
-            <span style={{ fontSize: "var(--t-micro)", color: "var(--muted-2)" }}>{formato} · {PLATAFORMAS.find((p) => p.clave === plataforma)?.texto}</span>
+      {/* ── Lienzo ─────────────────────────────────────────────────────── */}
+      <div className="xl:col-span-7">
+        <div className="xl:sticky xl:top-6">
+          <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+            <span className="mk-hallazgo-tipo">Cómo se va a ver</span>
+            <span className="mk-meta">
+              {formato} · {PLATAFORMAS.find((pf) => pf.clave === plataforma)?.texto}
+            </span>
           </div>
-          <div className="tarjeta-plana flex justify-center p-4" style={{ background: "var(--fondo-hundido)" }}>
+          <div className="mk-lienzo">
             <VistaPreviaAnuncio
               negocio={negocio}
               titular={titular}
-              texto={texto || (paquete ? "" : "El texto del anuncio aparece acá cuando lo escribas o lo genere el estudio.")}
+              texto={texto || (paquete ? "" : "Acá va a aparecer el anuncio cuando Respondo lo escriba.")}
               cta={cta}
               imagenUrl={imagenUrl}
               formato={formato}
               plataforma={plataforma}
+              superficie={esHistoria ? "historia" : "feed"}
+              ancho={esHistoria ? 290 : formato === "16:9" ? 460 : 400}
             />
           </div>
-          {!paquete && (
-            <p className="mt-3 leading-relaxed" style={{ fontSize: "var(--t-micro)", color: "var(--muted-2)" }}>
-              La vista previa reproduce la anatomía real del anuncio en Meta: cabecera, imagen en su formato, titular con botón y texto con el corte de «Ver más». Lo que se corta acá se corta allá.
-            </p>
-          )}
+          <p className="mt-3 leading-relaxed" style={{ fontSize: "11.5px", color: "var(--muted-2)" }}>
+            Reproduce la anatomía real del anuncio en Meta: cabecera, imagen en su formato, titular con botón y el corte de «Ver más» a los{" "}
+            {LIMITES.textoVisible} caracteres. Lo que se corta acá se corta allá.
+          </p>
           {paquete && (
-            <p className="mt-3" style={{ fontSize: "var(--t-micro)", color: "var(--muted-2)" }}>
-              ¿Quieres usarla en una campaña? Guárdala y desde la creatividad tienes <Link href="/marketing/campanas/nueva" className="font-semibold" style={{ color: "var(--indigo)" }}>Usar en campaña</Link>.
+            <p className="mt-2" style={{ fontSize: "11.5px", color: "var(--muted-2)" }}>
+              Guárdala y desde su ficha la puedes{" "}
+              <Link href="/marketing/campanas/nueva" className="mk-enlace">
+                usar en una campaña
+              </Link>
+              .
             </p>
           )}
         </div>
-      </aside>
+      </div>
     </div>
   );
 }
@@ -445,7 +521,6 @@ function Campo({
   max,
   area,
   ayuda,
-  contador: Contador,
 }: {
   etiqueta: string;
   valor: string;
@@ -453,20 +528,22 @@ function Campo({
   max: number;
   area?: boolean;
   ayuda?: string;
-  contador: (p: { n: number; max: number }) => React.ReactElement;
 }) {
+  const largo = valor.length > max;
   return (
-    <label className="block">
-      <span className="flex items-baseline justify-between">
-        <span className="font-semibold" style={{ fontSize: "var(--t-menor)" }}>{etiqueta}</span>
-        <Contador n={valor.length} max={max} />
+    <label className="mb-4 block">
+      <span className="mk-campo-rotulo">
+        {etiqueta}
+        <span className="cifra" style={{ fontSize: "11px", fontWeight: 500, color: largo ? "var(--peligro)" : "var(--muted-3)" }}>
+          {valor.length}/{max}
+        </span>
       </span>
       {area ? (
-        <textarea className="campo mt-1" rows={4} value={valor} onChange={(e) => onChange(e.target.value)} />
+        <textarea className="campo" rows={4} value={valor} onChange={(e) => onChange(e.target.value)} />
       ) : (
-        <input className="campo mt-1" value={valor} onChange={(e) => onChange(e.target.value)} />
+        <input className="campo" value={valor} onChange={(e) => onChange(e.target.value)} />
       )}
-      {ayuda && <span className="mt-0.5 block" style={{ fontSize: "var(--t-micro)", color: "var(--muted-2)" }}>{ayuda}</span>}
+      {ayuda && <span className="mk-ayuda">{ayuda}</span>}
     </label>
   );
 }
@@ -475,8 +552,13 @@ function Proporcion({ formato }: { formato: FormatoCreatividad }) {
   const [w, h] = formato.split(":").map(Number);
   const k = 14 / Math.max(w, h);
   return (
+    // Relleno, no contorno: un cuadrado 1:1 dibujado solo con borde se lee como
+    // una casilla de verificación sin marcar, no como una proporción.
     <span className="inline-grid h-4 w-4 place-items-center" aria-hidden="true">
-      <span className="block rounded-[2px] border" style={{ width: w * k, height: h * k, borderColor: "currentColor" }} />
+      <span
+        className="block rounded-[2px]"
+        style={{ width: w * k, height: h * k, background: "currentColor", opacity: 0.28 }}
+      />
     </span>
   );
 }

@@ -120,6 +120,95 @@ export const Ico = {
       <path d="M20 20l-4-4" />
     </svg>
   ),
+  enviar: (p?: { className?: string }) => (
+    <svg {...base} className={p?.className}>
+      <path d="M4 12l16-8-6 16-2.5-6.2L4 12z" />
+    </svg>
+  ),
+  rayo: (p?: { className?: string }) => (
+    <svg {...base} className={p?.className}>
+      <path d="M13 3L5 13.5h5.5L10 21l8-10.5h-5.5L13 3z" />
+    </svg>
+  ),
+  alerta: (p?: { className?: string }) => (
+    <svg {...base} className={p?.className}>
+      <path d="M12 4.5l8.5 15h-17L12 4.5z" />
+      <path d="M12 10v4M12 17h.01" />
+    </svg>
+  ),
+  producto: (p?: { className?: string }) => (
+    <svg {...base} className={p?.className}>
+      <path d="M4 8l8-4 8 4-8 4-8-4z" />
+      <path d="M4 8v8l8 4 8-4V8" />
+      <path d="M12 12v8" />
+    </svg>
+  ),
+  oferta: (p?: { className?: string }) => (
+    <svg {...base} className={p?.className}>
+      <path d="M20 12.5V5h-7.5L4 13.5 10.5 20 20 12.5z" />
+      <circle cx="16" cy="9" r="1.2" />
+    </svg>
+  ),
+  historia: (p?: { className?: string }) => (
+    <svg {...base} className={p?.className}>
+      <rect x="7" y="3" width="10" height="18" rx="2.5" />
+      <path d="M10 6h4" />
+    </svg>
+  ),
+  testimonio: (p?: { className?: string }) => (
+    <svg {...base} className={p?.className}>
+      <path d="M20 14a2 2 0 0 1-2 2H9l-4 3V6a2 2 0 0 1 2-2h11a2 2 0 0 1 2 2v8z" />
+    </svg>
+  ),
+  promo: (p?: { className?: string }) => (
+    <svg {...base} className={p?.className}>
+      <path d="M12 3l2.3 4.7 5.2.8-3.7 3.6.9 5.1L12 14.8 7.3 17.2l.9-5.1L4.5 8.5l5.2-.8L12 3z" />
+    </svg>
+  ),
+  reloj: (p?: { className?: string }) => (
+    <svg {...base} className={p?.className}>
+      <circle cx="12" cy="12" r="8.5" />
+      <path d="M12 7.5V12l3 1.8" />
+    </svg>
+  ),
+  imagen: (p?: { className?: string }) => (
+    <svg {...base} className={p?.className}>
+      <rect x="3" y="5" width="18" height="14" rx="2" />
+      <circle cx="8.5" cy="10" r="1.5" />
+      <path d="M21 16l-5-5-6 6" />
+    </svg>
+  ),
+  grafico: (p?: { className?: string }) => (
+    <svg {...base} className={p?.className}>
+      <path d="M4 19V5" />
+      <path d="M4 15l5-5 4 3 7-7" />
+      <path d="M20 6v4h-4" />
+    </svg>
+  ),
+  meta: (p?: { className?: string }) => (
+    <svg {...base} className={p?.className}>
+      <path d="M3 15c0-4.5 2-8 4.5-8s3.4 2.4 4.5 4.5C13.1 13.6 14 16 16.5 16S21 12.5 21 9" />
+      <path d="M3 15c0 2 .9 3 2.2 3 2.6 0 4.2-4.4 6.8-9" />
+    </svg>
+  ),
+  pago: (p?: { className?: string }) => (
+    <svg {...base} className={p?.className}>
+      <rect x="3" y="6" width="18" height="12" rx="2" />
+      <path d="M3 10h18" />
+      <path d="M7 15h3" />
+    </svg>
+  ),
+  mas: (p?: { className?: string }) => (
+    <svg {...base} className={p?.className}>
+      <path d="M12 5v14M5 12h14" />
+    </svg>
+  ),
+  descarga: (p?: { className?: string }) => (
+    <svg {...base} className={p?.className}>
+      <path d="M12 4v10M8 11l4 3 4-3" />
+      <path d="M5 18h14" />
+    </svg>
+  ),
 };
 
 export type NombreIcono = keyof typeof Ico;

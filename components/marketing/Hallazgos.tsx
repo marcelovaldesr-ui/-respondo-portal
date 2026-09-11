@@ -1,36 +1,49 @@
 import Link from "next/link";
 import type { Hallazgo } from "@/lib/ads/insights";
+import { Ico } from "@/components/marketing/Iconos";
 
 /**
- * Los hallazgos automáticos como tarjetas. Cada una lleva su evidencia con
- * cifras exactas y un enlace a donde se puede comprobar. Son deterministas:
- * salen de `lib/ads/insights.ts` con umbrales mínimos, no de un modelo.
+ * LO QUE CONVIENE MIRAR — hallazgos con prioridad, no otra tabla.
+ *
+ * Cada tarjeta dice, en este orden: de qué tipo es (alerta u oportunidad), la
+ * conclusión en una línea que se lee sola, la evidencia con cifras exactas, y
+ * a dónde ir a comprobarla. Las cifras salen de `lib/ads/insights.ts`, que es
+ * determinista y tiene umbrales mínimos: si el volumen no alcanza, el
+ * hallazgo no existe. Ningún modelo opina acá.
+ *
+ * El borde izquierdo de color es la única señal cromática: coral cuesta
+ * plata, verde es oportunidad. Nada de fondos de color, que convertirían una
+ * pantalla de trabajo en un semáforo.
  */
-export default function Hallazgos({ items, columnas = 2 }: { items: Hallazgo[]; columnas?: 1 | 2 | 3 }) {
+const TIPO = {
+  alerta: { texto: "Cuesta plata", icono: Ico.alerta },
+  oportunidad: { texto: "Oportunidad", icono: Ico.rayo },
+  neutro: { texto: "Para saber", icono: Ico.grafico },
+} as const;
+
+export default function Hallazgos({ items, max }: { items: Hallazgo[]; max?: number }) {
   if (!items.length) return null;
-  const cols = columnas === 3 ? "lg:grid-cols-3" : columnas === 2 ? "lg:grid-cols-2" : "";
+  const visibles = max ? items.slice(0, max) : items;
   return (
-    <div className={`grid gap-3 ${cols}`}>
-      {items.map((h) => (
-        <div key={h.clave} className={`tarjeta mk-hallazgo ${h.tono}`}>
-          <div className="flex items-start justify-between gap-2">
-            <div className="font-semibold" style={{ fontSize: "var(--t-fila)", lineHeight: 1.3 }}>
-              {h.titulo}
+    <div className="mk-hallazgos">
+      {visibles.map((h) => {
+        const t = TIPO[h.tono];
+        return (
+          <article key={h.clave} className={`mk-hallazgo ${h.tono}`}>
+            <div className="mk-hallazgo-tipo flex items-center gap-1.5">
+              {t.icono({ className: "h-3.5 w-3.5" })}
+              {t.texto}
             </div>
-            <span className={h.tono === "alerta" ? "pildora-peligro" : h.tono === "oportunidad" ? "pildora-ok" : "pildora-neutra"}>
-              {h.tono === "alerta" ? "cuesta plata" : h.tono === "oportunidad" ? "oportunidad" : "para saber"}
-            </span>
-          </div>
-          <p className="leading-relaxed" style={{ fontSize: "var(--t-menor)", color: "var(--muted)" }}>
-            {h.evidencia}
-          </p>
-          {h.href && (
-            <Link href={h.href} className="mt-1 inline-flex items-center gap-1 font-semibold" style={{ fontSize: "var(--t-micro)", color: "var(--indigo)" }}>
-              Ver el detalle →
-            </Link>
-          )}
-        </div>
-      ))}
+            <h3 className="mk-hallazgo-titulo">{h.titulo}</h3>
+            <p className="mk-hallazgo-evidencia">{h.evidencia}</p>
+            {h.href && (
+              <Link href={h.href} className="mk-enlace mt-auto pt-1">
+                {h.tono === "alerta" ? "Analizar" : "Ver el detalle"} {Ico.flecha({ className: "h-3.5 w-3.5" })}
+              </Link>
+            )}
+          </article>
+        );
+      })}
     </div>
   );
 }

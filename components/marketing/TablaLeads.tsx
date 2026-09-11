@@ -3,20 +3,24 @@
 import Link from "next/link";
 import { useMemo, useState } from "react";
 import { formatearMonto, formatearNumero } from "@/lib/ads/moneda";
-import { ETAPAS_LEAD, type Lead } from "@/lib/marketing/tipos";
+import type { Lead } from "@/lib/marketing/tipos";
+import { EstadoDeLead } from "@/components/marketing/Estado";
 import { Ico } from "@/components/marketing/Iconos";
 
 /**
- * LAS PERSONAS QUE TRAJO LA PAUTA — con nombre, anuncio y qué pasó después.
+ * LAS PERSONAS QUE TRAJO LA PAUTA.
  *
- * Los filtros son las mismas etapas del embudo, para que apretar «Calificados»
- * en el embudo y apretar «Calificados» acá muestre exactamente la misma gente.
- * Cada fila abre la ficha del cliente (y desde ahí la conversación), porque la
- * pregunta que sigue a «¿quién llegó?» es siempre «¿qué le dijimos?».
+ * No es una tabla administrativa: es la prueba de la atribución con nombre y
+ * apellido. Por eso la primera columna trae inicial, nombre y la última línea
+ * que escribió esa persona —así se reconoce a alguien— y la segunda dice de
+ * qué campaña y de qué anuncio vino.
  *
- * En demo las fichas no existen: el enlace se reemplaza por una nota.
+ * Los filtros son las mismas etapas del embudo, para que apretar
+ * «Calificados» arriba y apretar «Calificados» acá muestren exactamente la
+ * misma gente. «Avance» resume en tres pasos lo que la conversación logró.
+ *
+ * En demostración no hay conversaciones reales: el enlace se apaga y lo dice.
  */
-
 export const FILTROS_LEADS: { clave: string; texto: string; f: (l: Lead) => boolean }[] = [
   { clave: "todos", texto: "Todos", f: () => true },
   { clave: "nuevos", texto: "Sin avanzar", f: (l) => !l.calificado && l.etapa !== "perdido" },
@@ -29,21 +33,25 @@ export const FILTROS_LEADS: { clave: string; texto: string; f: (l: Lead) => bool
 
 type Clave = "nombre" | "campanaNombre" | "llegoEn" | "etapa" | "cobrado";
 
-/** Filas por tanda. Doscientas personas en una tabla no se leen; cincuenta sí. */
-const PAGINA = 50;
-
+const PAGINA = 40;
 const MESES = ["ene", "feb", "mar", "abr", "may", "jun", "jul", "ago", "sept", "oct", "nov", "dic"];
 
 /**
  * «10 sept · 15:30» en hora de Chile, armado a mano. Se usan partes numéricas
  * en-US (idénticas en Node y en el navegador) y no el formato es-CL, que
- * cambia entre versiones de ICU y rompía la hidratación con un texto distinto
- * en el servidor y en el cliente.
+ * cambia entre versiones de ICU y rompía la hidratación.
  */
 function fechaCorta(iso: string): string {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return "";
-  const partes = new Intl.DateTimeFormat("en-US", { timeZone: "America/Santiago", day: "numeric", month: "numeric", hour: "2-digit", minute: "2-digit", hour12: false }).formatToParts(d);
+  const partes = new Intl.DateTimeFormat("en-US", {
+    timeZone: "America/Santiago",
+    day: "numeric",
+    month: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  }).formatToParts(d);
   const v = (t: string) => partes.find((x) => x.type === t)?.value ?? "";
   const hora = v("hour") === "24" ? "00" : v("hour");
   return `${v("day")} ${MESES[Number(v("month")) - 1] ?? ""} · ${hora}:${v("minute")}`;
@@ -62,7 +70,6 @@ export default function TablaLeads({
   filtroInicial?: string;
   demo?: boolean;
   ocultarCampana?: boolean;
-  /** Para el selector de campaña, cuando se muestran todas. */
   campanas?: { id: string; nombre: string }[];
 }) {
   const [busqueda, setBusqueda] = useState("");
@@ -78,7 +85,11 @@ export default function TablaLeads({
       (l) =>
         f(l) &&
         (!campana || l.campanaId === campana) &&
-        (!q || l.nombre.toLowerCase().includes(q) || l.telefono.includes(q) || l.anuncioTitular.toLowerCase().includes(q) || l.ultimoMensaje.toLowerCase().includes(q)),
+        (!q ||
+          l.nombre.toLowerCase().includes(q) ||
+          l.telefono.includes(q) ||
+          l.anuncioTitular.toLowerCase().includes(q) ||
+          l.ultimoMensaje.toLowerCase().includes(q)),
     );
     const peso: Record<Lead["etapa"], number> = { nuevo: 0, interesado: 1, cotizado: 2, ganado: 3, perdido: -1 };
     out.sort((a, b) => {
@@ -96,10 +107,10 @@ export default function TablaLeads({
     setOrden((o) => (o.clave === clave ? { clave, desc: !o.desc } : { clave, desc: clave !== "nombre" && clave !== "campanaNombre" }));
 
   const Th = ({ clave, texto, num }: { clave: Clave; texto: string; num?: boolean }) => (
-    <th className={num ? "text-right" : ""}>
+    <th className={num ? "num" : ""}>
       <button type="button" onClick={() => cambiarOrden(clave)} aria-sort={orden.clave === clave ? (orden.desc ? "descending" : "ascending") : undefined}>
         {texto}
-        <span aria-hidden="true" style={{ opacity: orden.clave === clave ? 1 : 0.25, fontSize: 9 }}>
+        <span aria-hidden="true" style={{ opacity: orden.clave === clave ? 1 : 0.22, fontSize: 8 }}>
           {orden.clave === clave && !orden.desc ? "▲" : "▼"}
         </span>
       </button>
@@ -107,21 +118,25 @@ export default function TablaLeads({
   );
 
   return (
-    <div className="tarjeta mk-seccion">
-      <div className="mk-seccion-cabecera flex-wrap">
+    <section className="mk-panel">
+      <div className="mk-panel-cabecera flex-wrap">
         <div className="mk-segmentos" role="group" aria-label="Etapa">
           {FILTROS_LEADS.map((f) => (
-            <button key={f.clave} type="button" className="mk-segmento" aria-pressed={filtro === f.clave} onClick={() => setFiltro(f.clave)}>
+            <button key={f.clave} type="button" className="mk-segmento" aria-pressed={filtro === f.clave} onClick={() => { setFiltro(f.clave); setLimite(PAGINA); }}>
               {f.texto}
-              <span className="ml-1" style={{ color: "var(--muted-3)", fontWeight: 500 }}>
-                {leads.filter(f.f).length}
-              </span>
+              <span className="mk-conteo">{leads.filter(f.f).length}</span>
             </button>
           ))}
         </div>
         <div className="flex flex-wrap items-center gap-2">
           {campanas && campanas.length > 1 && (
-            <select className="campo py-1.5" style={{ fontSize: "var(--t-menor)", width: "auto", maxWidth: 240 }} value={campana} onChange={(e) => setCampana(e.target.value)} aria-label="Campaña">
+            <select
+              className="campo py-2"
+              style={{ fontSize: "13px", width: "auto", maxWidth: 230 }}
+              value={campana}
+              onChange={(e) => setCampana(e.target.value)}
+              aria-label="Campaña"
+            >
               <option value="">Todas las campañas</option>
               {campanas.map((c) => (
                 <option key={c.id} value={c.id}>
@@ -131,12 +146,12 @@ export default function TablaLeads({
             </select>
           )}
           <label className="relative flex items-center">
-            <span className="pointer-events-none absolute left-2.5" style={{ color: "var(--muted-3)" }}>
-              {Ico.buscar()}
+            <span className="pointer-events-none absolute left-3" style={{ color: "var(--muted-3)" }}>
+              {Ico.buscar({ className: "h-4 w-4" })}
             </span>
             <input
-              className="campo py-1.5 pl-8"
-              style={{ width: 220, fontSize: "var(--t-menor)" }}
+              className="campo py-2 pl-9"
+              style={{ width: 230, fontSize: "13px" }}
               placeholder="Nombre, teléfono o anuncio"
               value={busqueda}
               onChange={(e) => setBusqueda(e.target.value)}
@@ -154,45 +169,68 @@ export default function TablaLeads({
               : "Cuando alguien entre a WhatsApp desde un anuncio de Facebook o Instagram, aparece acá con su nombre y en qué quedó."}
           </p>
           {!leads.length && (
-            <div className="mt-4 flex flex-wrap justify-center gap-2">
-              <Link href="/marketing/campanas/nueva" className="btn-primario">Crear una campaña</Link>
-              <Link href="/marketing/integraciones" className="btn-suave">Ver integraciones</Link>
+            <div className="mt-5 flex flex-wrap justify-center gap-2">
+              <Link href="/marketing/campanas/nueva" className="btn-primario mk-btn-lg">
+                Crear una campaña
+              </Link>
+              <Link href="/marketing/integraciones" className="btn-suave mk-btn-lg">
+                Ver integraciones
+              </Link>
             </div>
           )}
         </div>
       ) : (
         <div className="overflow-x-auto">
-          <table className="tabla min-w-[860px]">
+          <table className="mk-tabla min-w-[900px]">
             <thead>
               <tr>
                 <Th clave="nombre" texto="Persona" />
-                {!ocultarCampana && <Th clave="campanaNombre" texto="Campaña · anuncio" />}
+                {!ocultarCampana && <Th clave="campanaNombre" texto="De dónde vino" />}
                 <Th clave="llegoEn" texto="Llegó" />
-                <Th clave="etapa" texto="En qué quedó" />
-                <th>Avances</th>
-                <Th clave="cobrado" texto="Cobrado" num />
-                <th />
+                <Th clave="etapa" texto="Estado" />
+                <th>Avance</th>
+                <Th clave="cobrado" texto="Valor" num />
               </tr>
             </thead>
             <tbody>
               {visibles.slice(0, limite).map((l) => (
                 <tr key={l.chatId}>
-                  <td className="max-w-[240px]">
-                    <div className="truncate font-semibold">{l.nombre || l.telefono || "Sin nombre"}</div>
-                    <div className="truncate" style={{ fontSize: "var(--t-micro)", color: "var(--muted-2)" }} title={l.ultimoMensaje}>
-                      {l.ultimoMensaje || l.telefono}
+                  <td className="max-w-[260px]">
+                    <div className="flex items-center gap-3">
+                      <span className="mk-avatar" aria-hidden="true">
+                        {(l.nombre || l.telefono || "?").trim().charAt(0).toUpperCase()}
+                      </span>
+                      <div className="min-w-0">
+                        {demo ? (
+                          <div className="truncate font-semibold" style={{ fontSize: "13.5px" }} data-tip="En la demostración no hay conversaciones reales">
+                            {l.nombre || l.telefono || "Sin nombre"}
+                          </div>
+                        ) : (
+                          <Link
+                            href={`/clientes/${encodeURIComponent(l.chatId)}`}
+                            className="block truncate font-semibold hover:underline"
+                            style={{ fontSize: "13.5px" }}
+                            title="Abrir la conversación"
+                          >
+                            {l.nombre || l.telefono || "Sin nombre"}
+                          </Link>
+                        )}
+                        <div className="truncate" style={{ fontSize: "11.5px", color: "var(--muted-2)" }} title={l.ultimoMensaje}>
+                          {l.ultimoMensaje || l.telefono}
+                        </div>
+                      </div>
                     </div>
                   </td>
                   {!ocultarCampana && (
-                    <td className="max-w-[260px]">
+                    <td className="max-w-[250px]">
                       {l.campanaId ? (
                         <Link href={`/marketing/campanas/${encodeURIComponent(l.campanaId)}`} className="block truncate font-medium hover:underline">
                           {l.campanaNombre}
                         </Link>
                       ) : (
-                        <div className="truncate">{l.campanaNombre}</div>
+                        <div className="truncate font-medium">{l.campanaNombre}</div>
                       )}
-                      <div className="truncate" style={{ fontSize: "var(--t-micro)", color: "var(--muted-2)" }}>
+                      <div className="truncate" style={{ fontSize: "11.5px", color: "var(--muted-2)" }}>
                         {l.anuncioTitular}
                       </div>
                     </td>
@@ -201,30 +239,13 @@ export default function TablaLeads({
                     {fechaCorta(l.llegoEn)}
                   </td>
                   <td>
-                    <span className={ETAPAS_LEAD[l.etapa].clase}>{ETAPAS_LEAD[l.etapa].texto}</span>
+                    <EstadoDeLead etapa={l.etapa} />
                   </td>
                   <td>
-                    <div className="flex flex-wrap gap-1" style={{ fontSize: "var(--t-micro)", color: "var(--muted-2)" }}>
-                      {l.calificado && <span className="pildora-neutra">Calificado</span>}
-                      {l.cotizo && <span className="pildora-neutra">Cotizó</span>}
-                      {l.agendo && <span className="pildora-neutra">Reservó</span>}
-                      {l.compro && <span className="pildora-ok">Compró</span>}
-                      {!l.calificado && !l.cotizo && !l.agendo && !l.compro && <span>—</span>}
-                    </div>
+                    <Avance l={l} />
                   </td>
-                  <td className="cifra text-right font-semibold" style={{ color: l.cobrado > 0 ? "var(--indigo)" : "var(--muted-3)" }}>
-                    {l.cobrado > 0 ? formatearMonto({ valor: l.cobrado, moneda: monedaNegocio }) : "—"}
-                  </td>
-                  <td className="text-right">
-                    {demo ? (
-                      <span className="btn-chico" aria-disabled="true" title="En la demostración no hay conversaciones reales" style={{ opacity: 0.55 }}>
-                        Conversación
-                      </span>
-                    ) : (
-                      <Link href={`/clientes/${encodeURIComponent(l.chatId)}`} className="btn-chico">
-                        Conversación
-                      </Link>
-                    )}
+                  <td className="num cifra plata">
+                    {l.cobrado > 0 ? formatearMonto({ valor: l.cobrado, moneda: monedaNegocio }) : <span className="nulo">—</span>}
                   </td>
                 </tr>
               ))}
@@ -232,8 +253,9 @@ export default function TablaLeads({
           </table>
         </div>
       )}
-      <div className="border-t px-4 py-2.5 flex flex-wrap items-center justify-between gap-2" style={{ borderColor: "var(--borde)", fontSize: "var(--t-micro)", color: "var(--muted-2)" }}>
-        <span className="flex items-center gap-2">
+
+      <div className="mk-panel-pie flex flex-wrap items-center justify-between gap-3">
+        <span className="flex items-center gap-3">
           {formatearNumero(Math.min(limite, visibles.length))} de {formatearNumero(visibles.length)} personas
           {visibles.length > limite && (
             <button type="button" className="btn-chico" onClick={() => setLimite((n) => n + PAGINA)}>
@@ -241,8 +263,39 @@ export default function TablaLeads({
             </button>
           )}
         </span>
-        <span>«Calificado» = avanzó a interesado o más, o cotizó, reservó o compró.</span>
+        <span>
+          {demo ? "En la demostración no hay conversaciones reales." : "El nombre abre la conversación."} «Calificado» = avanzó a
+          interesado o más, o cotizó, reservó o compró.
+        </span>
       </div>
-    </div>
+    </section>
+  );
+}
+
+/** Tres pasos en una línea: qué logró la conversación. Lo apagado no pasó. */
+function Avance({ l }: { l: Lead }) {
+  const pasos = [
+    { t: "Calificó", on: l.calificado },
+    { t: "Cotizó", on: l.cotizo || l.agendo },
+    { t: "Compró", on: l.compro },
+  ];
+  return (
+    <span className="flex items-center gap-1.5">
+      {pasos.map((p, i) => (
+        <span key={p.t} className="flex items-center gap-1.5">
+          <span
+            className="inline-flex items-center gap-1.5"
+            style={{ fontSize: "11.5px", fontWeight: p.on ? 600 : 400, color: p.on ? "var(--tinta)" : "var(--muted-3)" }}
+          >
+            <i
+              className="inline-block h-[7px] w-[7px] rounded-full"
+              style={{ background: p.on ? (i === 2 ? "var(--ok)" : "var(--indigo)") : "var(--borde-fuerte)" }}
+            />
+            {p.t}
+          </span>
+          {i < 2 && <span style={{ color: "var(--borde-fuerte)", fontSize: 10 }}>›</span>}
+        </span>
+      ))}
+    </span>
   );
 }

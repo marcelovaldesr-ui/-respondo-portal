@@ -370,7 +370,7 @@ export async function cambiarEstado(
   citaId: string,
   estado: "confirmada" | "cancelada" | "no_show" | "completada",
   supa: SupabaseClient = db(),
-): Promise<{ ok: boolean; error?: string }> {
+): Promise<{ ok: boolean; error?: string; encontrada?: boolean }> {
   const { data, error } = await supa
     .from("ed_citas")
     .update({ estado, actualizado_en: new Date().toISOString() })
@@ -384,7 +384,9 @@ export async function cambiarEstado(
   if (data && (estado === "cancelada" || estado === "no_show")) {
     await quitarCitaDeGoogle(data.id as string, data.profesional_id as string, supa);
   }
-  return { ok: true };
+  // `encontrada` distingue "se actualizó" de "ese id no es de este negocio":
+  // quien llama no debe tocar nada más (seguimientos) si la cita no era suya.
+  return { ok: true, encontrada: Boolean(data) };
 }
 
 /**

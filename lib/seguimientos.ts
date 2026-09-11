@@ -183,13 +183,30 @@ export async function procesarSeguimientos(opts: {
   const hoy = new Date(ahora);
   hoy.setUTCHours(0, 0, 0, 0);
 
+  /**
+   * VENTANA DE LECTURA MÁS ANCHA QUE LA TANDA (auditoría 11-sep-2026).
+   *
+   * Antes se leían exactamente las 10 filas pendientes más viejas de TODO el
+   * sistema. Las que no pueden salir y NO se cierran —tope diario del cliente
+   * alcanzado, texto libre con la ventana de 24 h cerrada, fila sin texto—
+   * siguen pendientes y vuelven a ser las más viejas en cada pasada. Con diez
+   * así (por ejemplo, diez «reactivar cliente» de un negocio en Cloud API cuyos
+   * contactos no escriben) NINGÚN otro negocio volvía a recibir recordatorios,
+   * sin error visible.
+   *
+   * Ahora se leen hasta 4× la tanda y se sigue recorriendo hasta hacer
+   * `limite` intentos reales (enviado, fallido o descartado). Lo que se omite
+   * sigue omitiéndose igual que antes: no cambia QUÉ sale, solo evita que lo
+   * atascado tape a lo que sí puede salir.
+   */
+  const tanda = opts.limite ?? 10;
   const { data: pendientes, error } = await supa
     .from("ed_seguimientos")
     .select("*")
     .is("enviado_en", null)
     .lte("programado_para", ahora.toISOString())
     .order("programado_para", { ascending: true })
-    .limit(opts.limite ?? 10);
+    .limit(tanda * 4);
   if (error) return { enviados: 0, detalle: [`error_lectura: ${error.message}`] };
   if (!pendientes?.length) return { enviados: 0, detalle: ["sin_pendientes"] };
 
@@ -256,7 +273,9 @@ export async function procesarSeguimientos(opts: {
   }
 
   let enviados = 0;
+  let intentosReales = 0;
   for (const s of pendientes as Seguimiento[]) {
+    if (intentosReales >= tanda) break;
     const intento = (s.intento ?? 0) + 1;
     const maxIntentos = s.max_intentos ?? 1;
     if (intento > maxIntentos) {
@@ -267,6 +286,7 @@ export async function procesarSeguimientos(opts: {
        * sistema para siempre. `enviado_en` con nota en variables = descartado.
        */
       await descartar(supa, s, "max_intentos superado");
+      intentosReales += 1;
       detalle.push(`${s.id.slice(0, 8)}: max_intentos superado, descartado`);
       continue;
     }
@@ -329,6 +349,7 @@ export async function procesarSeguimientos(opts: {
       detalle.push(`${s.id.slice(0, 8)}: pospuesto (${r.error ?? "sin ventana"})`);
       continue;
     }
+    intentosReales += 1;
     if (!r.ok) {
       /**
        * El fallo CONSUME el intento (auditoría 3-sep-2026). Antes no se

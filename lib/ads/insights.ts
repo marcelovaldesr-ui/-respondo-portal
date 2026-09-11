@@ -18,6 +18,9 @@ import type { DatosPropios } from "@/lib/ads/metricas";
  * TypeScript borra), así se prueba con Node pelado.
  */
 
+/** Un decimal, con coma: los hallazgos se leen en Chile. */
+const unDecimal = (n: number) => n.toLocaleString("es-CL", { minimumFractionDigits: 1, maximumFractionDigits: 1 });
+
 export type Hallazgo = {
   clave: string;
   /** Una línea, en el idioma del dueño. */
@@ -141,9 +144,10 @@ export function hallazgos(entrada: {
           dif < 0
             ? "Se está cerrando peor que el período anterior"
             : "Se está cerrando mejor que el período anterior",
-        evidencia: `De cada 100 conversaciones que llegan por anuncios, ahora compran ${ahora.toFixed(
-          1,
-        )}; antes compraban ${antes.toFixed(1)}. Es la atención, no el anuncio: la misma gente está llegando.`,
+        // Coma decimal: el hallazgo lo lee un dueño chileno, no una consola.
+        evidencia: `De cada 100 conversaciones que llegan por anuncios, ahora compran ${unDecimal(
+          ahora,
+        )}; antes compraban ${unDecimal(antes)}. Es la atención, no el anuncio: la misma gente está llegando.`,
         tono: dif < 0 ? "alerta" : "oportunidad",
         prioridad: 85,
       });

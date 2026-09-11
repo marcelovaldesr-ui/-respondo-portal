@@ -6,22 +6,38 @@ import { useState, useTransition } from "react";
 import { eliminarBorradorAccion, guardarBorradorAccion, sugerirCopiesAccion } from "@/app/(marketing)/marketing/campanas/acciones";
 import { borradorEnTexto, faltantesDeBorrador } from "@/lib/marketing/campanasCore";
 import { CTAS_META, LIMITES } from "@/lib/marketing/creatividadesCore";
-import { ESTADO_CAMPANA, OBJETIVOS, type BorradorCampana, type Creatividad, type EstadoCampana } from "@/lib/marketing/tipos";
+import { OBJETIVOS, type BorradorCampana, type Creatividad, type EstadoCampana } from "@/lib/marketing/tipos";
 import VistaPreviaAnuncio from "@/components/marketing/VistaPreviaAnuncio";
+import { EstadoDeCampana } from "@/components/marketing/Estado";
 import { Ico } from "@/components/marketing/Iconos";
 
 /**
- * EL ASISTENTE DE CAMPAÑAS — ocho pasos, un borrador, estados honestos.
+ * EL ASISTENTE DE CAMPAÑAS — hacer simple lo que Meta hace complejo.
  *
- * Arma todo lo que Meta te va a pedir: objetivo, oferta, audiencia,
- * presupuesto, creatividad, copy, destino y revisión. Se guarda como
- * borrador en cualquier momento. Al final NO hay un botón «Publicar» que
- * finja: hay «Copiar configuración» (para pegarla en el Administrador de
- * Anuncios) y «Continuar en Meta». El estado que se muestra lo calcula el
- * servidor con lo que la instalación puede hacer hoy.
+ * Tres columnas y cada una tiene un trabajo:
+ *   IZQUIERDA  el camino: ocho pasos con su estado real (listo, actual,
+ *              pendiente) y el estado de la campaña, que el servidor calcula.
+ *   CENTRO     el paso, con aire. Un solo tema por pantalla y las ayudas
+ *              donde importan, no en un párrafo bajo el título.
+ *   DERECHA    la vista previa, pegada, que cambia con cada tecla: imagen,
+ *              titular, texto, botón y negocio. En formato historia se puede
+ *              alternar entre feed y pantalla completa, porque sí sabemos
+ *              representar las dos.
+ *
+ * El estado NUNCA miente: al final no hay un botón «Publicar» que finja. Hay
+ * «Copiar configuración» —que deja todo listo para pegar en el Administrador
+ * de Anuncios— y «Continuar en Meta».
  */
-
-const PASOS = ["Objetivo", "Oferta", "Audiencia", "Presupuesto", "Creatividades", "Copy", "Destino", "Revisión"];
+const PASOS = [
+  { t: "Objetivo", sub: "Qué quieres lograr" },
+  { t: "Oferta", sub: "Qué vas a ofrecer" },
+  { t: "Audiencia", sub: "A quién" },
+  { t: "Presupuesto", sub: "Cuánto" },
+  { t: "Creatividades", sub: "Con qué imagen" },
+  { t: "Copy", sub: "Qué dice" },
+  { t: "Destino", sub: "A dónde llega" },
+  { t: "Revisión", sub: "Todo junto" },
+];
 
 type Copy = { titular: string; texto: string; cta: string };
 
@@ -64,6 +80,7 @@ export default function AsistenteCampana({
   const [creatividadIds, setCreatividadIds] = useState<string[]>(borrador?.creatividadIds ?? (creatividadInicial ? [creatividadInicial] : []));
   const [copies, setCopies] = useState<Copy[]>(borrador?.copies.length ? borrador.copies : [{ titular: "", texto: "", cta: "Enviar mensaje" }]);
   const [notas, setNotas] = useState(borrador?.notas ?? "");
+  const [superficie, setSuperficie] = useState<"feed" | "historia">("feed");
   const [ocupado, setOcupado] = useState<"" | "guardar" | "copies" | "eliminar">("");
   const [aviso, setAviso] = useState<{ tono: "ok" | "error"; texto: string } | null>(null);
   const [copiado, setCopiado] = useState(false);
@@ -92,6 +109,14 @@ export default function AsistenteCampana({
   });
   const faltantes = faltantesDeBorrador({ ...entrada(), copies });
 
+  const estadoVisible: EstadoCampana = faltantes.length
+    ? "borrador"
+    : estado === "borrador"
+      ? metaConectada
+        ? "requiere_permiso"
+        : "requiere_meta"
+      : estado;
+
   const guardar = (despues?: (id: string) => void) => {
     setAviso(null);
     setOcupado("guardar");
@@ -118,16 +143,14 @@ export default function AsistenteCampana({
     });
   };
 
-  const usarCopyDeCreatividad = (c: Creatividad) => setCopies((cs) => [{ titular: c.titular, texto: c.texto, cta: c.cta }, ...cs.filter((x) => x.titular || x.texto)].slice(0, 6));
-
   const copiarConfiguracion = async () => {
-    const texto = borradorEnTexto({ ...entrada(), id: id ?? "", estado, creadoEn: "", actualizadoEn: "" });
+    const t = borradorEnTexto({ ...entrada(), id: id ?? "", estado, creadoEn: "", actualizadoEn: "" });
     try {
-      await navigator.clipboard.writeText(texto);
+      await navigator.clipboard.writeText(t);
       setCopiado(true);
       setTimeout(() => setCopiado(false), 2500);
     } catch {
-      setAviso({ tono: "error", texto: "No se pudo copiar. Selecciona el texto de abajo y cópialo a mano." });
+      setAviso({ tono: "error", texto: "No se pudo copiar. Abre «Ver la configuración en texto» y cópiala a mano." });
     }
   };
 
@@ -142,347 +165,500 @@ export default function AsistenteCampana({
     });
   };
 
-  // El estado que se muestra sigue lo que hay en pantalla, no lo último guardado:
-  // si ya tiene todo, dice qué le impide publicarse (Meta o el permiso).
-  const estadoVisible: EstadoCampana = faltantes.length
-    ? "borrador"
-    : estado === "borrador"
-      ? metaConectada
-        ? "requiere_permiso"
-        : "requiere_meta"
-      : estado;
-  const est = ESTADO_CAMPANA[estadoVisible];
-  const copyPrincipal = copies.find((c) => c.titular || c.texto) ?? { titular: principal?.titular ?? "", texto: principal?.texto ?? "", cta: principal?.cta ?? "Enviar mensaje" };
+  const copyPrincipal = copies.find((c) => c.titular || c.texto) ?? {
+    titular: principal?.titular ?? "",
+    texto: principal?.texto ?? "",
+    cta: principal?.cta ?? "Enviar mensaje",
+  };
+  const formatoPrev = principal?.formato ?? "1:1";
+  const puedeHistoria = formatoPrev === "9:16" || formatoPrev === "4:5";
+  const superficieReal = puedeHistoria && superficie === "historia" ? "historia" : "feed";
 
   return (
-    <div className="grid gap-5 lg:grid-cols-12">
-      {/* Pasos */}
-      <nav className="lg:col-span-3" aria-label="Pasos">
-        <div className="tarjeta p-2">
-          <ol className="mk-pasos">
-            {PASOS.map((t, i) => {
-              const n = i + 1;
-              const listo = !faltantes.some((f) => f.paso === n) && n !== 8;
-              return (
-                <li key={t}>
-                  <button type="button" className={`mk-paso ${listo ? "listo" : ""}`} aria-current={paso === n ? "step" : undefined} onClick={() => setPaso(n)}>
-                    <span className="mk-paso-numero">{listo ? Ico.ok({ className: "h-3 w-3" }) : n}</span>
-                    {t}
-                  </button>
-                </li>
-              );
-            })}
-          </ol>
-        </div>
-        <div className="tarjeta mt-3 p-3">
-          <div className="flex items-center justify-between">
-            <span className="eyebrow">Estado</span>
-            <span className={est.clase}>{est.texto}</span>
+    <div className="grid gap-6 xl:grid-cols-12">
+      {/* ── El camino ──────────────────────────────────────────────────── */}
+      <nav className="xl:col-span-3" aria-label="Pasos">
+        <div className="xl:sticky xl:top-6">
+          <div className="mk-panel p-2.5">
+            <ol className="mk-pasos">
+              {PASOS.map((s, i) => {
+                const n = i + 1;
+                const listo = !faltantes.some((f) => f.paso === n) && n !== 8;
+                return (
+                  <li key={s.t}>
+                    <button type="button" className={`mk-paso ${listo ? "listo" : ""}`} aria-current={paso === n ? "step" : undefined} onClick={() => setPaso(n)}>
+                      <span className="mk-paso-numero">{listo ? Ico.ok({ className: "h-3 w-3" }) : n}</span>
+                      <span className="min-w-0">
+                        {s.t}
+                        <span className="mk-paso-sub">{s.sub}</span>
+                      </span>
+                    </button>
+                  </li>
+                );
+              })}
+            </ol>
           </div>
-          <p className="mt-1.5 leading-snug" style={{ fontSize: "var(--t-micro)", color: "var(--muted-2)" }}>
-            {estadoVisible === "borrador" && "Le faltan cosas. Se puede guardar igual."}
-            {estadoVisible === "lista" && "Tiene todo. Llévala a Meta con «Continuar en Meta»."}
-            {estadoVisible === "requiere_meta" && "Tiene todo, pero la cuenta de Meta no está conectada: cuando corra no se verá su costo."}
-            {estadoVisible === "requiere_permiso" && "Tiene todo. Publicar desde Respondo requiere un permiso de Meta que no está habilitado; se lleva a mano con «Continuar en Meta»."}
-          </p>
-          <div className="mt-3 flex flex-col gap-1.5">
-            <button type="button" className="btn-suave w-full" disabled={ocupado !== ""} onClick={() => guardar()}>
-              {ocupado === "guardar" ? "Guardando…" : id ? "Guardar cambios" : "Guardar borrador"}
-            </button>
+
+          <div className="mk-panel mt-4 p-4">
+            <div className="flex items-center justify-between">
+              <span className="mk-hallazgo-tipo">Estado</span>
+              <EstadoDeCampana estado={estadoVisible} />
+            </div>
+            <p className="mt-2 leading-snug" style={{ fontSize: "11.5px", color: "var(--muted-2)" }}>
+              {estadoVisible === "borrador" && "Le faltan cosas. Se puede guardar igual."}
+              {estadoVisible === "lista" && "Tiene todo. Llévala a Meta con «Continuar en Meta»."}
+              {estadoVisible === "requiere_meta" && "Tiene todo, pero la cuenta de Meta no está conectada: cuando corra no se verá su costo."}
+              {estadoVisible === "requiere_permiso" && "Tiene todo. Se lleva a Meta con «Copiar configuración»."}
+            </p>
+            {/* Guardar vive SIEMPRE abajo a la derecha del paso, en un solo lugar.
+                Acá queda únicamente lo que no es parte del avance: borrar. */}
             {id && (
-              <button type="button" className="btn-texto w-full" style={{ color: "var(--peligro)" }} disabled={ocupado !== ""} onClick={eliminar}>
+              <button
+                type="button"
+                className="btn-texto mt-3 w-full"
+                style={{ color: "var(--peligro)" }}
+                disabled={ocupado !== ""}
+                onClick={eliminar}
+              >
                 Eliminar borrador
               </button>
             )}
+            {demo && (
+              <p className="mt-2.5" style={{ fontSize: "11px", color: "var(--alerta)" }}>
+                En demostración no se guarda.
+              </p>
+            )}
           </div>
-          {demo && <p className="mt-2" style={{ fontSize: "var(--t-micro)", color: "var(--alerta)" }}>En demostración no se guarda.</p>}
         </div>
       </nav>
 
-      {/* Contenido del paso */}
-      <div className="lg:col-span-6">
-        <section className="tarjeta p-5">
-          {paso === 1 && (
-            <>
-              <h2 className="h-seccion">¿Qué quieres lograr?</h2>
-              <p className="mt-1" style={{ fontSize: "var(--t-menor)", color: "var(--muted)" }}>Todas las campañas llevan a WhatsApp. El objetivo cambia cómo se escribe el anuncio y qué se mide como éxito.</p>
-              <div className="mt-4 grid gap-2 sm:grid-cols-2">
-                {OBJETIVOS.map((o) => (
-                  <button key={o.clave} type="button" className="mk-opcion" aria-pressed={objetivo === o.clave} onClick={() => setObjetivo(o.clave)}>
-                    <span className="font-semibold" style={{ fontSize: "var(--t-fila)" }}>{o.texto}</span>
-                    <span style={{ fontSize: "var(--t-micro)", color: "var(--muted-2)" }}>{o.ayuda}</span>
-                  </button>
-                ))}
-              </div>
-              <label className="mt-5 block">
-                <span className="font-semibold" style={{ fontSize: "var(--t-menor)" }}>Nombre de la campaña</span>
-                <input className="campo mt-1" value={nombre} onChange={(e) => setNombre(e.target.value)} placeholder="Ej: Pendones para ferias · Octubre" />
-              </label>
-            </>
-          )}
+      {/* ── El paso ────────────────────────────────────────────────────── */}
+      <div className="xl:col-span-5">
+        <section className="mk-panel">
+          <div className="mk-panel-cabecera">
+            <h2 className="mk-h2">
+              {paso}. {PASOS[paso - 1].t}
+            </h2>
+            <span className="mk-meta">
+              Paso {paso} de {PASOS.length}
+            </span>
+          </div>
+          <div className="mk-panel-cuerpo">
+            {paso === 1 && (
+              <>
+                <p className="mb-5" style={{ fontSize: "13px", color: "var(--muted)" }}>
+                  Todas las campañas llevan a WhatsApp. El objetivo cambia cómo se escribe el anuncio y qué se mide como éxito.
+                </p>
+                <div className="grid gap-2 sm:grid-cols-2">
+                  {OBJETIVOS.map((o) => (
+                    <button key={o.clave} type="button" className="mk-opcion" aria-pressed={objetivo === o.clave} onClick={() => setObjetivo(o.clave)}>
+                      <span className="font-semibold" style={{ fontSize: "13px" }}>
+                        {o.texto}
+                      </span>
+                      <span style={{ fontSize: "11.5px", color: "var(--muted-2)" }}>{o.ayuda}</span>
+                    </button>
+                  ))}
+                </div>
+                <label className="mt-6 block">
+                  <span className="mk-campo-rotulo">Nombre de la campaña</span>
+                  <input className="campo" value={nombre} onChange={(e) => setNombre(e.target.value)} placeholder="Ej: Pendones para ferias · Octubre" />
+                  <span className="mk-ayuda">Solo lo ves tú y quien suba la campaña a Meta.</span>
+                </label>
+              </>
+            )}
 
-          {paso === 2 && (
-            <>
-              <h2 className="h-seccion">¿Qué vas a ofrecer?</h2>
-              <p className="mt-1" style={{ fontSize: "var(--t-menor)", color: "var(--muted)" }}>Una campaña, una oferta. Cuanto más concreta (producto, precio, plazo), mejor rinde.</p>
-              <div className="mt-4 grid gap-3">
+            {paso === 2 && (
+              <>
+                <p className="mb-5" style={{ fontSize: "13px", color: "var(--muted)" }}>
+                  Una campaña, una oferta. Cuanto más concreta —producto, precio, plazo— mejor rinde.
+                </p>
                 <label className="block">
-                  <span className="font-semibold" style={{ fontSize: "var(--t-menor)" }}>Producto o servicio</span>
-                  <input className="campo mt-1" value={producto} onChange={(e) => setProducto(e.target.value)} placeholder="Ej: pendón roller 80×200" list="ofertas-campana" />
-                  <datalist id="ofertas-campana">{ofertas.map((o) => <option key={o.titulo} value={o.titulo} />)}</datalist>
+                  <span className="mk-campo-rotulo">Producto o servicio</span>
+                  <input className="campo" value={producto} onChange={(e) => setProducto(e.target.value)} placeholder="Ej: pendón roller 80×200" list="ofertas-campana" />
+                  <datalist id="ofertas-campana">
+                    {ofertas.map((o) => (
+                      <option key={o.titulo} value={o.titulo} />
+                    ))}
+                  </datalist>
                 </label>
-                <label className="block">
-                  <span className="font-semibold" style={{ fontSize: "var(--t-menor)" }}>Oferta</span>
-                  <textarea className="campo mt-1" rows={3} value={oferta} onChange={(e) => setOferta(e.target.value)} placeholder="Ej: Pendón roller desde $34.990, listo en 24 horas, diseño incluido." />
-                </label>
-              </div>
-              {ofertas.length > 0 && (
-                <div className="mt-3">
-                  <div style={{ fontSize: "var(--t-micro)", color: "var(--muted-2)" }}>Lo que Respondo sabe que vendes:</div>
-                  <div className="mt-1.5 flex flex-wrap gap-1.5">
-                    {ofertas.slice(0, 8).map((o) => (
-                      <button key={o.titulo} type="button" className="btn-chico" title={o.detalle} onClick={() => { setProducto(o.titulo); setOferta(`${o.titulo}. ${o.detalle}`.slice(0, 300)); }}>
+                {ofertas.length > 0 && (
+                  <div className="mt-2.5 flex flex-wrap gap-1.5">
+                    {ofertas.slice(0, 6).map((o) => (
+                      <button
+                        key={o.titulo}
+                        type="button"
+                        className="btn-chico"
+                        title={o.detalle}
+                        onClick={() => {
+                          setProducto(o.titulo);
+                          setOferta(`${o.titulo}. ${o.detalle}`.slice(0, 300));
+                        }}
+                      >
                         {o.titulo}
                       </button>
                     ))}
                   </div>
-                </div>
-              )}
-            </>
-          )}
+                )}
+                <label className="mt-5 block">
+                  <span className="mk-campo-rotulo">Oferta</span>
+                  <textarea className="campo" rows={4} value={oferta} onChange={(e) => setOferta(e.target.value)} placeholder="Ej: Pendón roller desde $34.990, listo en 24 horas, diseño incluido." />
+                </label>
+              </>
+            )}
 
-          {paso === 3 && (
-            <>
-              <h2 className="h-seccion">¿A quién?</h2>
-              <p className="mt-1" style={{ fontSize: "var(--t-menor)", color: "var(--muted)" }}>Lo mismo que Meta te va a pedir en el conjunto de anuncios. Empieza amplio: Meta encuentra sola a quien responde.</p>
-              <div className="mt-4 grid gap-3">
-                <label className="block">
-                  <span className="font-semibold" style={{ fontSize: "var(--t-menor)" }}>Ubicación</span>
-                  <input className="campo mt-1" value={ubicacion} onChange={(e) => setUbicacion(e.target.value)} placeholder="Ej: Chillán y 30 km a la redonda" />
-                </label>
-                <div className="grid grid-cols-2 gap-3">
-                  <label className="block">
-                    <span className="font-semibold" style={{ fontSize: "var(--t-menor)" }}>Edad desde</span>
-                    <input className="campo cifra mt-1" type="number" min={18} max={65} value={edadDesde} onChange={(e) => setEdadDesde(e.target.value)} />
-                  </label>
-                  <label className="block">
-                    <span className="font-semibold" style={{ fontSize: "var(--t-menor)" }}>Edad hasta</span>
-                    <input className="campo cifra mt-1" type="number" min={18} max={65} value={edadHasta} onChange={(e) => setEdadHasta(e.target.value)} />
-                  </label>
-                </div>
-                <label className="block">
-                  <span className="font-semibold" style={{ fontSize: "var(--t-menor)" }}>Intereses (separados por coma)</span>
-                  <input className="campo mt-1" value={intereses} onChange={(e) => setIntereses(e.target.value)} placeholder="Ej: emprendimiento, ferias, pequeñas empresas" />
-                </label>
-                <label className="block">
-                  <span className="font-semibold" style={{ fontSize: "var(--t-menor)" }}>Nota</span>
-                  <input className="campo mt-1" value={notaAudiencia} onChange={(e) => setNotaAudiencia(e.target.value)} placeholder="Ej: excluir a quienes ya escribieron" />
-                </label>
-              </div>
-            </>
-          )}
-
-          {paso === 4 && (
-            <>
-              <h2 className="h-seccion">¿Cuánto?</h2>
-              <p className="mt-1" style={{ fontSize: "var(--t-menor)", color: "var(--muted)" }}>Un presupuesto diario chico y constante enseña más que uno grande de tres días. Entre $2.000 y $10.000 diarios es un buen punto de partida para una pyme.</p>
-              <div className="mt-4 grid gap-3 sm:grid-cols-2">
-                <label className="block">
-                  <span className="font-semibold" style={{ fontSize: "var(--t-menor)" }}>Diario (CLP)</span>
-                  <input className="campo cifra mt-1" type="number" min={0} step={500} value={presupuestoDiario} onChange={(e) => setPresupuestoDiario(e.target.value)} placeholder="5000" />
-                </label>
-                <label className="block">
-                  <span className="font-semibold" style={{ fontSize: "var(--t-menor)" }}>Tope total (opcional)</span>
-                  <input className="campo cifra mt-1" type="number" min={0} step={1000} value={presupuestoTotal} onChange={(e) => setPresupuestoTotal(e.target.value)} placeholder="150000" />
-                </label>
-              </div>
-              {presupuestoDiario && Number(presupuestoDiario) > 0 && (
-                <p className="mt-3" style={{ fontSize: "var(--t-menor)", color: "var(--muted)" }}>
-                  Son <strong className="cifra">${(Number(presupuestoDiario) * 30).toLocaleString("es-CL")}</strong> al mes si corre todos los días.
+            {paso === 3 && (
+              <>
+                <p className="mb-5" style={{ fontSize: "13px", color: "var(--muted)" }}>
+                  Lo mismo que Meta te va a pedir en el conjunto de anuncios. Empieza amplio: Meta encuentra sola a quien responde.
                 </p>
-              )}
-            </>
-          )}
-
-          {paso === 5 && (
-            <>
-              <div className="flex flex-wrap items-baseline justify-between gap-2">
-                <h2 className="h-seccion">Creatividades</h2>
-                <button type="button" className="btn-chico" disabled={ocupado !== ""} onClick={() => guardar((nuevoId) => router.push(`/marketing/creatividades/nueva?campana=${encodeURIComponent(nuevoId)}`))}>
-                  {Ico.nueva()} Crear una nueva
-                </button>
-              </div>
-              <p className="mt-1" style={{ fontSize: "var(--t-menor)", color: "var(--muted)" }}>Elige una o más del estudio. Con dos o tres, Meta prueba cuál rinde mejor.</p>
-              {creatividades.length === 0 ? (
-                <div className="vacio mt-2">
-                  <div className="vacio-titulo">No hay creatividades todavía</div>
-                  <p className="vacio-texto">Crea la primera con el estudio: escribe el anuncio con lo que Respondo sabe del negocio y genera la imagen. El borrador se guarda antes de salir.</p>
+                <label className="block">
+                  <span className="mk-campo-rotulo">Ubicación</span>
+                  <input className="campo" value={ubicacion} onChange={(e) => setUbicacion(e.target.value)} placeholder="Ej: Chillán y 30 km a la redonda" />
+                </label>
+                <div className="mt-4 grid grid-cols-2 gap-4">
+                  <label className="block">
+                    <span className="mk-campo-rotulo">Edad desde</span>
+                    <input className="campo cifra" type="number" min={18} max={65} value={edadDesde} onChange={(e) => setEdadDesde(e.target.value)} />
+                  </label>
+                  <label className="block">
+                    <span className="mk-campo-rotulo">Edad hasta</span>
+                    <input className="campo cifra" type="number" min={18} max={65} value={edadHasta} onChange={(e) => setEdadHasta(e.target.value)} />
+                  </label>
                 </div>
-              ) : (
-                <div className="mt-4 grid gap-2 sm:grid-cols-2">
-                  {creatividades.map((c) => {
-                    const sel = creatividadIds.includes(c.id);
-                    return (
-                      <button key={c.id} type="button" className="mk-opcion p-2" aria-pressed={sel} onClick={() => setCreatividadIds((ids) => (sel ? ids.filter((x) => x !== c.id) : [...ids, c.id]))}>
-                        <span className="flex items-center gap-2.5">
-                          <span className="h-12 w-12 shrink-0 overflow-hidden rounded" style={{ background: "var(--fondo-hundido)" }}>
-                            {c.imagenUrl && (
-                              // eslint-disable-next-line @next/next/no-img-element
-                              <img src={c.imagenUrl} alt="" className="h-full w-full object-cover" />
-                            )}
+                <label className="mt-4 block">
+                  <span className="mk-campo-rotulo">Intereses</span>
+                  <input className="campo" value={intereses} onChange={(e) => setIntereses(e.target.value)} placeholder="Ej: emprendimiento, ferias, pequeñas empresas" />
+                  <span className="mk-ayuda">Separados por coma. Dos o tres bastan.</span>
+                </label>
+                <label className="mt-4 block">
+                  <span className="mk-campo-rotulo">Nota</span>
+                  <input className="campo" value={notaAudiencia} onChange={(e) => setNotaAudiencia(e.target.value)} placeholder="Ej: excluir a quienes ya escribieron" />
+                </label>
+              </>
+            )}
+
+            {paso === 4 && (
+              <>
+                <p className="mb-5" style={{ fontSize: "13px", color: "var(--muted)" }}>
+                  Un presupuesto diario chico y constante enseña más que uno grande de tres días.
+                </p>
+                <div className="grid gap-4 sm:grid-cols-2">
+                  <label className="block">
+                    <span className="mk-campo-rotulo">Diario (CLP)</span>
+                    <input className="campo cifra" type="number" min={0} step={500} value={presupuestoDiario} onChange={(e) => setPresupuestoDiario(e.target.value)} placeholder="5000" />
+                  </label>
+                  <label className="block">
+                    <span className="mk-campo-rotulo">Tope total (opcional)</span>
+                    <input className="campo cifra" type="number" min={0} step={1000} value={presupuestoTotal} onChange={(e) => setPresupuestoTotal(e.target.value)} placeholder="150000" />
+                  </label>
+                </div>
+                <div className="mt-4 flex flex-wrap gap-1.5">
+                  {[3000, 5000, 8000, 12000].map((v) => (
+                    <button key={v} type="button" className="btn-chico" onClick={() => setPresupuestoDiario(String(v))}>
+                      ${v.toLocaleString("es-CL")}
+                    </button>
+                  ))}
+                </div>
+                {presupuestoDiario && Number(presupuestoDiario) > 0 && (
+                  <div className="mk-hundido mt-5 px-4 py-3.5">
+                    <div className="cifra" style={{ fontSize: "20px", fontWeight: 600, letterSpacing: "-0.025em" }}>
+                      ${(Number(presupuestoDiario) * 30).toLocaleString("es-CL")}
+                    </div>
+                    <div style={{ fontSize: "12px", color: "var(--muted-2)" }}>al mes si corre todos los días</div>
+                  </div>
+                )}
+              </>
+            )}
+
+            {paso === 5 && (
+              <>
+                <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
+                  <p style={{ fontSize: "13px", color: "var(--muted)" }}>Con dos o tres, Meta prueba cuál rinde mejor.</p>
+                  <button
+                    type="button"
+                    className="btn-chico"
+                    disabled={ocupado !== ""}
+                    onClick={() => guardar((nuevoId) => router.push(`/marketing/creatividades/nueva?campana=${encodeURIComponent(nuevoId)}`))}
+                  >
+                    {Ico.nueva({ className: "h-3.5 w-3.5" })} Crear una nueva
+                  </button>
+                </div>
+                {creatividades.length === 0 ? (
+                  <div className="vacio">
+                    <div className="vacio-titulo">No hay creatividades todavía</div>
+                    <p className="vacio-texto">
+                      Crea la primera con el estudio: Respondo escribe el anuncio con lo que sabe del negocio y genera la imagen. El
+                      borrador se guarda antes de salir.
+                    </p>
+                  </div>
+                ) : (
+                  <div className="grid gap-2">
+                    {creatividades.map((c) => {
+                      const sel = creatividadIds.includes(c.id);
+                      return (
+                        <button
+                          key={c.id}
+                          type="button"
+                          className="mk-opcion p-2.5"
+                          aria-pressed={sel}
+                          onClick={() => setCreatividadIds((ids) => (sel ? ids.filter((x) => x !== c.id) : [...ids, c.id]))}
+                        >
+                          <span className="flex items-center gap-3">
+                            <span className="mk-miniatura">
+                              {c.imagenUrl && (
+                                // eslint-disable-next-line @next/next/no-img-element
+                                <img src={c.imagenUrl} alt="" />
+                              )}
+                            </span>
+                            <span className="min-w-0 flex-1 text-left">
+                              <span className="block truncate font-semibold" style={{ fontSize: "13px" }}>
+                                {c.nombre}
+                              </span>
+                              <span className="block truncate" style={{ fontSize: "11.5px", color: "var(--muted-2)" }}>
+                                {c.formato} · {c.titular}
+                              </span>
+                            </span>
                           </span>
-                          <span className="min-w-0">
-                            <span className="block truncate font-semibold" style={{ fontSize: "var(--t-menor)" }}>{c.nombre}</span>
-                            <span className="block truncate" style={{ fontSize: "var(--t-micro)", color: "var(--muted-2)" }}>{c.formato} · {c.titular}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+              </>
+            )}
+
+            {paso === 6 && (
+              <>
+                <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
+                  <p style={{ fontSize: "13px", color: "var(--muted)" }}>
+                    Titular de {LIMITES.titular}, texto de {LIMITES.texto}.
+                  </p>
+                  <div className="flex gap-1.5">
+                    {principal && (
+                      <button
+                        type="button"
+                        className="btn-chico"
+                        onClick={() => setCopies((cs) => [{ titular: principal.titular, texto: principal.texto, cta: principal.cta }, ...cs.filter((x) => x.titular || x.texto)].slice(0, 6))}
+                      >
+                        Usar el de la creatividad
+                      </button>
+                    )}
+                    <button type="button" className="btn-chico" disabled={ocupado !== ""} onClick={sugerirCopies}>
+                      {ocupado === "copies" ? "Escribiendo…" : "Sugerir con IA"}
+                    </button>
+                  </div>
+                </div>
+                <div className="space-y-3">
+                  {copies.map((c, i) => (
+                    <div key={i} className="mk-hundido p-4">
+                      <div className="mb-2 flex items-center justify-between">
+                        <span className="mk-hallazgo-tipo">Anuncio {i + 1}</span>
+                        {copies.length > 1 && (
+                          <button type="button" className="btn-texto" onClick={() => setCopies((cs) => cs.filter((_, j) => j !== i))}>
+                            Quitar
+                          </button>
+                        )}
+                      </div>
+                      <label className="block">
+                        <span className="mk-campo-rotulo" style={{ marginBottom: 3 }}>
+                          Titular
+                          <span className="cifra" style={{ fontSize: "11px", fontWeight: 500, color: c.titular.length > LIMITES.titular ? "var(--peligro)" : "var(--muted-3)" }}>
+                            {c.titular.length}/{LIMITES.titular}
                           </span>
                         </span>
-                      </button>
-                    );
-                  })}
-                </div>
-              )}
-            </>
-          )}
-
-          {paso === 6 && (
-            <>
-              <div className="flex flex-wrap items-baseline justify-between gap-2">
-                <h2 className="h-seccion">Copy</h2>
-                <div className="flex gap-1.5">
-                  {principal && <button type="button" className="btn-chico" onClick={() => usarCopyDeCreatividad(principal)}>Usar el de la creatividad</button>}
-                  <button type="button" className="btn-chico" disabled={ocupado !== ""} onClick={sugerirCopies}>{ocupado === "copies" ? "Escribiendo…" : "Sugerir con Respondo"}</button>
-                </div>
-              </div>
-              <p className="mt-1" style={{ fontSize: "var(--t-menor)", color: "var(--muted)" }}>Hasta seis versiones. Titular de {LIMITES.titular} caracteres, texto de {LIMITES.texto}.</p>
-              <div className="mt-4 space-y-3">
-                {copies.map((c, i) => (
-                  <div key={i} className="rounded-md border p-3" style={{ borderColor: "var(--borde)" }}>
-                    <div className="flex items-center justify-between">
-                      <span className="eyebrow">Anuncio {i + 1}</span>
-                      {copies.length > 1 && <button type="button" className="btn-texto" onClick={() => setCopies((cs) => cs.filter((_, j) => j !== i))}>Quitar</button>}
+                        <input className="campo" value={c.titular} onChange={(e) => setCopies((cs) => cs.map((x, j) => (j === i ? { ...x, titular: e.target.value } : x)))} />
+                      </label>
+                      <label className="mt-3 block">
+                        <span className="mk-campo-rotulo" style={{ marginBottom: 3 }}>
+                          Texto
+                          <span className="cifra" style={{ fontSize: "11px", fontWeight: 500, color: c.texto.length > LIMITES.texto ? "var(--peligro)" : "var(--muted-3)" }}>
+                            {c.texto.length}/{LIMITES.texto}
+                          </span>
+                        </span>
+                        <textarea className="campo" rows={3} value={c.texto} onChange={(e) => setCopies((cs) => cs.map((x, j) => (j === i ? { ...x, texto: e.target.value } : x)))} />
+                      </label>
+                      <label className="mt-3 block">
+                        <span className="mk-campo-rotulo" style={{ marginBottom: 3 }}>Botón</span>
+                        <select className="campo" value={c.cta} onChange={(e) => setCopies((cs) => cs.map((x, j) => (j === i ? { ...x, cta: e.target.value } : x)))}>
+                          {CTAS_META.map((x) => (
+                            <option key={x} value={x}>
+                              {x}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
                     </div>
-                    <label className="mt-2 block">
-                      <span className="flex justify-between" style={{ fontSize: "var(--t-micro)", color: "var(--muted-2)" }}><span>Titular</span><span className="cifra" style={{ color: c.titular.length > LIMITES.titular ? "var(--peligro)" : undefined }}>{c.titular.length}/{LIMITES.titular}</span></span>
-                      <input className="campo mt-0.5" value={c.titular} onChange={(e) => setCopies((cs) => cs.map((x, j) => (j === i ? { ...x, titular: e.target.value } : x)))} />
-                    </label>
-                    <label className="mt-2 block">
-                      <span className="flex justify-between" style={{ fontSize: "var(--t-micro)", color: "var(--muted-2)" }}><span>Texto</span><span className="cifra" style={{ color: c.texto.length > LIMITES.texto ? "var(--peligro)" : undefined }}>{c.texto.length}/{LIMITES.texto}</span></span>
-                      <textarea className="campo mt-0.5" rows={3} value={c.texto} onChange={(e) => setCopies((cs) => cs.map((x, j) => (j === i ? { ...x, texto: e.target.value } : x)))} />
-                    </label>
-                    <label className="mt-2 block">
-                      <span style={{ fontSize: "var(--t-micro)", color: "var(--muted-2)" }}>Botón</span>
-                      <select className="campo mt-0.5" value={c.cta} onChange={(e) => setCopies((cs) => cs.map((x, j) => (j === i ? { ...x, cta: e.target.value } : x)))}>
-                        {CTAS_META.map((x) => <option key={x} value={x}>{x}</option>)}
-                      </select>
-                    </label>
-                  </div>
-                ))}
-                {copies.length < 6 && (
-                  <button type="button" className="btn-suave" onClick={() => setCopies((cs) => [...cs, { titular: "", texto: "", cta: "Enviar mensaje" }])}>Agregar otra versión</button>
-                )}
-              </div>
-            </>
-          )}
-
-          {paso === 7 && (
-            <>
-              <h2 className="h-seccion">Destino</h2>
-              <p className="mt-1" style={{ fontSize: "var(--t-menor)", color: "var(--muted)" }}>El botón del anuncio abre WhatsApp. Es lo que hace que Respondo pueda medir qué pasó después del clic.</p>
-              <div className="tarjeta-plana mt-4 flex items-center gap-3 p-3">
-                <span className="grid h-9 w-9 place-items-center rounded-md" style={{ background: "var(--ok-suave)", color: "var(--ok)" }}>{Ico.whatsapp()}</span>
-                <div>
-                  <div className="font-semibold" style={{ fontSize: "var(--t-fila)" }}>WhatsApp de {negocio}</div>
-                  <div style={{ fontSize: "var(--t-micro)", color: "var(--muted-2)" }}>{whatsapp ? `Número conectado: ${whatsapp}` : "WhatsApp todavía no está conectado en Respondo; la campaña se puede armar igual."}</div>
+                  ))}
+                  {copies.length < 6 && (
+                    <button type="button" className="btn-suave w-full" onClick={() => setCopies((cs) => [...cs, { titular: "", texto: "", cta: "Enviar mensaje" }])}>
+                      Agregar otra versión
+                    </button>
+                  )}
                 </div>
-              </div>
-              <label className="mt-4 block">
-                <span className="font-semibold" style={{ fontSize: "var(--t-menor)" }}>Notas para quien la suba a Meta</span>
-                <textarea className="campo mt-1" rows={3} value={notas} onChange={(e) => setNotas(e.target.value)} placeholder="Ej: activar solo de lunes a viernes; excluir Instagram Reels." />
-              </label>
-              {!metaConectada && (
-                <p className="mt-3" style={{ fontSize: "var(--t-micro)", color: "var(--muted-2)" }}>
-                  Sin la cuenta de Meta conectada, cuando la campaña corra se verán sus conversaciones y ventas, pero no su costo.{" "}
-                  <Link href="/marketing/integraciones" className="font-semibold" style={{ color: "var(--indigo)" }}>Conectar Meta</Link>
-                </p>
-              )}
-            </>
-          )}
-
-          {paso === 8 && (
-            <>
-              <h2 className="h-seccion">Revisión</h2>
-              {faltantes.length > 0 ? (
-                <div className="mt-3 rounded-md border p-3" style={{ borderColor: "var(--alerta-borde)", background: "var(--alerta-suave)" }}>
-                  <div className="font-semibold" style={{ fontSize: "var(--t-menor)" }}>Falta para que esté lista:</div>
-                  <ul className="mt-1 space-y-0.5">
-                    {faltantes.map((f) => (
-                      <li key={f.texto}>
-                        <button type="button" className="font-semibold" style={{ fontSize: "var(--t-menor)", color: "var(--indigo)" }} onClick={() => setPaso(f.paso)}>{f.texto} →</button>
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-              ) : (
-                <p className="mt-1" style={{ fontSize: "var(--t-menor)", color: "var(--muted)" }}>Tiene todo. Guárdala y llévala a Meta.</p>
-              )}
-              <dl className="mt-4 grid gap-x-4 gap-y-2 sm:grid-cols-2" style={{ fontSize: "var(--t-menor)" }}>
-                <Fila t="Nombre" v={entrada().nombre || "—"} />
-                <Fila t="Objetivo" v={OBJETIVOS.find((o) => o.clave === objetivo)?.texto ?? objetivo} />
-                <Fila t="Oferta" v={oferta || "—"} />
-                <Fila t="Audiencia" v={`${ubicacion || "—"}${edadDesde ? ` · ${edadDesde}–${edadHasta}` : ""}${intereses ? ` · ${intereses}` : ""}`} />
-                <Fila t="Presupuesto" v={presupuestoDiario ? `$${Number(presupuestoDiario).toLocaleString("es-CL")} diarios${presupuestoTotal ? ` · tope $${Number(presupuestoTotal).toLocaleString("es-CL")}` : ""}` : "—"} />
-                <Fila t="Creatividades" v={seleccionadas.length ? seleccionadas.map((c) => c.nombre).join(", ") : "—"} />
-                <Fila t="Copies" v={`${copies.filter((c) => c.titular && c.texto).length} completos`} />
-                <Fila t="Destino" v="WhatsApp" />
-              </dl>
-
-              <div className="mt-5 border-t pt-4" style={{ borderColor: "var(--borde)" }}>
-                <div className="flex flex-wrap gap-2">
-                  <button type="button" className="btn-primario" disabled={ocupado !== ""} onClick={() => guardar()}>{ocupado === "guardar" ? "Guardando…" : id ? "Guardar cambios" : "Guardar borrador"}</button>
-                  <button type="button" className="btn-suave" onClick={copiarConfiguracion}>{Ico.copiar()} {copiado ? "Copiado" : "Copiar configuración"}</button>
-                  <a href="https://www.facebook.com/adsmanager/creation" target="_blank" rel="noopener noreferrer" className="btn-suave">
-                    {Ico.externo()} Continuar en Meta
-                  </a>
-                </div>
-                <div className="mt-3 flex items-start gap-2 rounded-md border px-3 py-2" style={{ borderColor: "var(--borde)", background: "var(--fondo-fila)", fontSize: "var(--t-micro)", color: "var(--muted)" }}>
-                  <span className="btn-chico shrink-0" aria-disabled="true" style={{ opacity: 0.5 }}>Publicar desde Respondo</span>
-                  <span>No disponible: requiere el permiso <code>ads_management</code> y la revisión de la aplicación en Meta. Nunca vas a ver «Publicada» acá sin que lo esté de verdad.</span>
-                </div>
-                <details className="mt-3">
-                  <summary className="cursor-pointer font-semibold" style={{ fontSize: "var(--t-micro)", color: "var(--muted-2)" }}>Ver la configuración en texto</summary>
-                  <pre className="mt-2 overflow-x-auto rounded-md p-3" style={{ background: "var(--fondo-hundido)", fontSize: 11.5, lineHeight: 1.5, whiteSpace: "pre-wrap" }}>
-                    {borradorEnTexto({ ...entrada(), id: id ?? "", estado, creadoEn: "", actualizadoEn: "" })}
-                  </pre>
-                </details>
-              </div>
-            </>
-          )}
-
-          {aviso && (
-            <div className="mt-4 rounded-md px-3 py-2" style={{ background: aviso.tono === "ok" ? "var(--ok-suave)" : "var(--alerta-suave)", color: aviso.tono === "ok" ? "var(--ok)" : "var(--tinta)", fontSize: "var(--t-menor)" }}>
-              {aviso.texto}
-            </div>
-          )}
-
-          <div className="mt-5 flex items-center justify-between border-t pt-4" style={{ borderColor: "var(--borde)" }}>
-            <button type="button" className="btn-texto" disabled={paso === 1} onClick={() => setPaso((p) => Math.max(1, p - 1))}>← Anterior</button>
-            {paso < 8 ? (
-              <button type="button" className="btn-primario" onClick={() => setPaso((p) => Math.min(8, p + 1))}>Siguiente →</button>
-            ) : (
-              <Link href="/marketing/campanas" className="btn-texto">Volver a campañas</Link>
+              </>
             )}
+
+            {paso === 7 && (
+              <>
+                <p className="mb-5" style={{ fontSize: "13px", color: "var(--muted)" }}>
+                  El botón del anuncio abre WhatsApp. Es lo que hace que Respondo pueda medir qué pasó después del clic.
+                </p>
+                <div className="mk-hundido flex items-center gap-3.5 p-4">
+                  <span className="mk-integracion-logo whatsapp" style={{ width: 38, height: 38 }}>
+                    {Ico.whatsapp({ className: "h-[18px] w-[18px]" })}
+                  </span>
+                  <div className="min-w-0">
+                    <div className="font-semibold" style={{ fontSize: "13.5px" }}>
+                      WhatsApp de {negocio}
+                    </div>
+                    <div style={{ fontSize: "11.5px", color: "var(--muted-2)" }}>
+                      {whatsapp ? `Número conectado: ${whatsapp}` : "WhatsApp todavía no está conectado; la campaña se puede armar igual."}
+                    </div>
+                  </div>
+                </div>
+                <label className="mt-5 block">
+                  <span className="mk-campo-rotulo">Notas para quien la suba a Meta</span>
+                  <textarea className="campo" rows={4} value={notas} onChange={(e) => setNotas(e.target.value)} placeholder="Ej: activar solo de lunes a viernes; excluir Instagram Reels." />
+                </label>
+                {!metaConectada && (
+                  <p className="mk-ayuda mt-3">
+                    Sin la cuenta de Meta conectada, cuando la campaña corra se verán sus conversaciones y ventas, pero no su costo.{" "}
+                    <Link href="/marketing/integraciones" className="mk-enlace">
+                      Conectar Meta
+                    </Link>
+                  </p>
+                )}
+              </>
+            )}
+
+            {paso === 8 && (
+              <>
+                {faltantes.length > 0 ? (
+                  <div className="mb-5 rounded-lg border px-4 py-3.5" style={{ borderColor: "var(--alerta-borde)", background: "var(--alerta-suave)" }}>
+                    <div className="font-semibold" style={{ fontSize: "12.5px" }}>
+                      Falta para que esté lista:
+                    </div>
+                    <ul className="mt-1.5 space-y-1">
+                      {faltantes.map((f) => (
+                        <li key={f.texto}>
+                          <button type="button" className="mk-enlace" onClick={() => setPaso(f.paso)}>
+                            {f.texto} →
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                ) : (
+                  <p className="mb-5" style={{ fontSize: "13px", color: "var(--muted)" }}>
+                    Tiene todo. Guárdala y llévala a Meta.
+                  </p>
+                )}
+                <dl className="grid gap-x-5 gap-y-3.5 sm:grid-cols-2" style={{ fontSize: "13px" }}>
+                  <Fila t="Nombre" v={entrada().nombre || "—"} />
+                  <Fila t="Objetivo" v={OBJETIVOS.find((o) => o.clave === objetivo)?.texto ?? objetivo} />
+                  <Fila t="Oferta" v={oferta || "—"} />
+                  <Fila t="Audiencia" v={`${ubicacion || "—"}${edadDesde ? ` · ${edadDesde}–${edadHasta}` : ""}${intereses ? ` · ${intereses}` : ""}`} />
+                  <Fila
+                    t="Presupuesto"
+                    v={presupuestoDiario ? `$${Number(presupuestoDiario).toLocaleString("es-CL")} diarios${presupuestoTotal ? ` · tope $${Number(presupuestoTotal).toLocaleString("es-CL")}` : ""}` : "—"}
+                  />
+                  <Fila t="Creatividades" v={seleccionadas.length ? seleccionadas.map((c) => c.nombre).join(", ") : "—"} />
+                  <Fila t="Copies" v={`${copies.filter((c) => c.titular && c.texto).length} completos`} />
+                  <Fila t="Destino" v="WhatsApp" />
+                </dl>
+
+                <div className="mt-6 border-t pt-5" style={{ borderColor: "var(--borde)" }}>
+                  <div className="flex flex-wrap gap-2">
+                    <button type="button" className="btn-suave mk-btn-lg" onClick={copiarConfiguracion}>
+                      {Ico.copiar({ className: "h-4 w-4" })} {copiado ? "Copiado" : "Copiar configuración"}
+                    </button>
+                    <a href="https://www.facebook.com/adsmanager/creation" target="_blank" rel="noopener noreferrer" className="btn-primario mk-btn-lg">
+                      {Ico.externo({ className: "h-4 w-4" })} Continuar en Meta
+                    </a>
+                  </div>
+                  <div className="mk-hundido mt-4 flex items-start gap-3 px-4 py-3" style={{ fontSize: "11.5px", color: "var(--muted)" }}>
+                    <span className="btn-chico shrink-0" aria-disabled="true" style={{ opacity: 0.5 }}>
+                      Publicar desde Respondo
+                    </span>
+                    <span>
+                      No disponible: requiere el permiso <code>ads_management</code> y la revisión de la aplicación en Meta. Nunca vas a ver
+                      «Publicada» acá sin que lo esté de verdad.
+                    </span>
+                  </div>
+                  <details className="mt-4">
+                    <summary className="cursor-pointer font-semibold" style={{ fontSize: "11.5px", color: "var(--muted-2)" }}>
+                      Ver la configuración en texto
+                    </summary>
+                    <pre className="mt-2 overflow-x-auto rounded-lg p-4" style={{ background: "var(--fondo-hundido)", fontSize: 11.5, lineHeight: 1.55, whiteSpace: "pre-wrap" }}>
+                      {borradorEnTexto({ ...entrada(), id: id ?? "", estado, creadoEn: "", actualizadoEn: "" })}
+                    </pre>
+                  </details>
+                </div>
+              </>
+            )}
+
+            {aviso && (
+              <div
+                className="mt-5 rounded-lg px-4 py-3"
+                style={{ background: aviso.tono === "ok" ? "var(--ok-suave)" : "#fdf1ee", color: aviso.tono === "ok" ? "var(--ok)" : "var(--tinta)", fontSize: "13px" }}
+              >
+                {aviso.texto}
+              </div>
+            )}
+          </div>
+
+          <div className="flex items-center justify-between border-t px-5 py-3.5" style={{ borderColor: "var(--borde)" }}>
+            <button type="button" className="btn-texto" disabled={paso === 1} onClick={() => setPaso((x) => Math.max(1, x - 1))}>
+              ← Anterior
+            </button>
+            <div className="flex items-center gap-2">
+              <button type="button" className="btn-suave" disabled={ocupado !== ""} onClick={() => guardar()}>
+                {ocupado === "guardar" ? "Guardando…" : id ? "Guardar cambios" : "Guardar borrador"}
+              </button>
+              {paso < 8 && (
+                <button type="button" className="btn-primario mk-btn-lg" onClick={() => setPaso((x) => Math.min(8, x + 1))}>
+                  Continuar →
+                </button>
+              )}
+            </div>
           </div>
         </section>
       </div>
 
-      {/* Vista previa */}
-      <aside className="lg:col-span-3">
-        <div className="lg:sticky lg:top-4">
-          <div className="eyebrow mb-2">Vista previa</div>
-          <div className="tarjeta-plana flex justify-center p-3" style={{ background: "var(--fondo-hundido)" }}>
-            <VistaPreviaAnuncio negocio={negocio} titular={copyPrincipal.titular} texto={copyPrincipal.texto} cta={copyPrincipal.cta} imagenUrl={principal?.imagenUrl ?? null} formato={principal?.formato ?? "1:1"} plataforma={principal?.plataforma ?? "instagram"} ancho={260} />
+      {/* ── La vista previa ────────────────────────────────────────────── */}
+      <aside className="xl:col-span-4">
+        <div className="xl:sticky xl:top-6">
+          <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+            <span className="mk-hallazgo-tipo">Cómo se va a ver</span>
+            {puedeHistoria && (
+              <div className="mk-segmentos">
+                <button type="button" className="mk-segmento" aria-pressed={superficieReal === "feed"} onClick={() => setSuperficie("feed")}>
+                  Feed
+                </button>
+                <button type="button" className="mk-segmento" aria-pressed={superficieReal === "historia"} onClick={() => setSuperficie("historia")}>
+                  Historia
+                </button>
+              </div>
+            )}
           </div>
-          {seleccionadas.length > 1 && <p className="mt-2" style={{ fontSize: "var(--t-micro)", color: "var(--muted-2)" }}>Se muestra la primera de {seleccionadas.length} creatividades.</p>}
+          <div className="mk-lienzo" style={{ minHeight: 360, padding: 22 }}>
+            <VistaPreviaAnuncio
+              negocio={negocio}
+              titular={copyPrincipal.titular}
+              texto={copyPrincipal.texto}
+              cta={copyPrincipal.cta}
+              imagenUrl={principal?.imagenUrl ?? null}
+              formato={formatoPrev}
+              plataforma={principal?.plataforma ?? "instagram"}
+              superficie={superficieReal}
+              ancho={superficieReal === "historia" ? 260 : 330}
+            />
+          </div>
+          {seleccionadas.length > 1 && (
+            <p className="mt-2.5" style={{ fontSize: "11.5px", color: "var(--muted-2)" }}>
+              Se muestra la primera de {seleccionadas.length} creatividades.
+            </p>
+          )}
         </div>
       </aside>
     </div>
@@ -492,8 +668,10 @@ export default function AsistenteCampana({
 function Fila({ t, v }: { t: string; v: string }) {
   return (
     <div className="min-w-0">
-      <dt style={{ fontSize: "var(--t-micro)", color: "var(--muted-2)" }}>{t}</dt>
-      <dd className="truncate font-medium" title={v}>{v}</dd>
+      <dt className="mk-dato-mini-etiqueta">{t}</dt>
+      <dd className="truncate font-medium" title={v}>
+        {v}
+      </dd>
     </div>
   );
 }

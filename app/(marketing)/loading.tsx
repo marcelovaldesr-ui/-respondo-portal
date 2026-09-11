@@ -1,6 +1,7 @@
 /**
- * Esqueleto del centro de marketing: cabecera, siete métricas y un gráfico.
- * Responde al clic al instante mientras el servidor arma el panorama.
+ * Esqueleto del centro de marketing: cabecera, franja de cifras y gráfico.
+ * Responde al clic al instante mientras el servidor arma el panorama, y tiene
+ * la forma real de la pantalla para que la espera no reencuadre nada.
  */
 export default function CargandoMarketing() {
   return (
@@ -8,24 +9,27 @@ export default function CargandoMarketing() {
       <span className="sr-only">Cargando…</span>
       <div className="mk-cabecera">
         <div>
-          <div className="esqueleto h-3 w-24" />
-          <div className="esqueleto mt-2 h-6 w-40" />
-          <div className="esqueleto mt-2 h-3 w-72" />
+          <div className="esqueleto h-7 w-44" />
+          <div className="esqueleto mt-3 h-4 w-80" />
         </div>
-        <div className="esqueleto h-8 w-64" />
+        <div className="esqueleto h-9 w-72" />
       </div>
-      <div className="mk-metricas mb-5">
-        {[0, 1, 2, 3, 4, 5, 6].map((i) => (
-          <div key={i} className="tarjeta px-4 py-3">
-            <div className="esqueleto h-3 w-16" />
-            <div className="esqueleto mt-2 h-6 w-24" />
-            <div className="esqueleto mt-2 h-3 w-20" />
+      <div className="mk-kpis">
+        {[0, 1, 2, 3, 4, 5].map((i) => (
+          <div key={i} className="mk-kpi">
+            <div className="esqueleto h-3 w-20" />
+            <div className="esqueleto mt-3 h-7 w-28" />
+            <div className="esqueleto mt-4 h-3 w-16" />
           </div>
         ))}
       </div>
-      <div className="tarjeta p-5">
-        <div className="esqueleto h-4 w-32" />
-        <div className="esqueleto mt-4 h-56 w-full" />
+      <div className="mk-panel mt-7">
+        <div className="mk-panel-cabecera">
+          <div className="esqueleto h-4 w-40" />
+        </div>
+        <div className="mk-panel-cuerpo">
+          <div className="esqueleto h-[280px] w-full" />
+        </div>
       </div>
     </main>
   );

@@ -3,35 +3,28 @@
 import Link from "next/link";
 import { useMemo, useState } from "react";
 import { formatearMonto, formatearNumero } from "@/lib/ads/moneda";
-import { ESTADO_CAMPANA, textoObjetivo, type FilaCampana } from "@/lib/marketing/tipos";
+import { textoObjetivo, type FilaCampana } from "@/lib/marketing/tipos";
+import { EstadoDeCampana } from "@/components/marketing/Estado";
 import { Ico } from "@/components/marketing/Iconos";
 
 /**
- * LA TABLA DE CAMPAÑAS — buscar, filtrar, ordenar, entrar.
+ * LA TABLA DE CAMPAÑAS — el centro operativo de «Analizar».
  *
- * Todo ocurre en el navegador sobre las filas que ya vinieron del servidor:
- * son decenas, no miles, y un filtro que hace un viaje a la base por cada
+ * Todo el filtrado ocurre en el navegador sobre las filas que ya vinieron del
+ * servidor: son decenas, no miles, y un filtro que viaja a la base por cada
  * tecla se siente lento sin ganar nada.
  *
- * Las columnas de plata muestran «—» cuando no hay Meta, nunca 0. Y las
- * barras de la columna «Conv.» son relativas a la campaña con más
- * conversaciones, para leer el reparto de un vistazo.
+ * DECISIONES DE LECTURA:
+ *   · La primera columna es una ficha, no un texto: nombre, estado y objetivo
+ *     juntos, porque nadie lee «Activa» en una columna a 400 px del nombre.
+ *   · Las columnas de plata muestran «—» cuando Meta no está conectada, nunca
+ *     un 0 que parece un dato.
+ *   · La tendencia es una chispa de siete días: ocupa 60 px y responde la
+ *     pregunta que sigue a cualquier cifra —«¿y va subiendo?»—.
+ *   · Los borradores conviven con las campañas reales porque para el dueño
+ *     son «mis campañas»; sus celdas de resultado van en raya, no en cero.
  */
-
-type Clave = "nombre" | "gasto" | "conversaciones" | "calificados" | "avanzados" | "ventas" | "cobrado" | "cpc" | "cpv" | "roas";
-
-const COLUMNAS: { clave: Clave; texto: string; num?: boolean; tip?: string }[] = [
-  { clave: "nombre", texto: "Campaña" },
-  { clave: "gasto", texto: "Gasto", num: true, tip: "Lo que Meta cobró en el período. Requiere la cuenta conectada." },
-  { clave: "conversaciones", texto: "Conv.", num: true, tip: "Personas que escribieron por WhatsApp desde esta campaña." },
-  { clave: "calificados", texto: "Calif.", num: true, tip: "Avanzaron a interesado o más, o cotizaron, reservaron o compraron." },
-  { clave: "avanzados", texto: "Cotiz./Res.", num: true, tip: "Se envió cotización o se tomó una hora." },
-  { clave: "ventas", texto: "Ventas", num: true },
-  { clave: "cobrado", texto: "Cobrado", num: true, tip: "Solo lo pagado por enlace de pago. Es un piso." },
-  { clave: "cpc", texto: "CPC", num: true, tip: "Costo por conversación = gasto ÷ conversaciones." },
-  { clave: "cpv", texto: "CPV", num: true, tip: "Costo por venta = gasto ÷ ventas." },
-  { clave: "roas", texto: "ROAS", num: true, tip: "Cobrado ÷ gasto. Como «cobrado» es un piso, el retorno real es mayor." },
-];
+type Clave = "nombre" | "gasto" | "conversaciones" | "calificados" | "ventas" | "cobrado" | "cpl" | "roas";
 
 const FILTROS: { clave: string; texto: string; f: (c: FilaCampana) => boolean }[] = [
   { clave: "todas", texto: "Todas", f: () => true },
@@ -45,29 +38,38 @@ export default function TablaCampanas({
   monedaNegocio,
   periodo,
   metaConectada,
+  series,
 }: {
   filas: FilaCampana[];
   monedaNegocio: string;
   periodo: string;
   metaConectada: boolean;
+  /** Conversaciones por día de cada campaña, para la chispa. */
+  series?: Record<string, number[]>;
 }) {
   const [busqueda, setBusqueda] = useState("");
   const [filtro, setFiltro] = useState("todas");
   const [orden, setOrden] = useState<{ clave: Clave; desc: boolean }>({ clave: "cobrado", desc: true });
 
+  const cpl = (c: FilaCampana) => (c.gasto !== null && c.calificados ? c.gasto / c.calificados : null);
+
   const visibles = useMemo(() => {
     const q = busqueda.trim().toLowerCase();
     const f = FILTROS.find((x) => x.clave === filtro)?.f ?? (() => true);
     const out = filas.filter((c) => f(c) && (!q || c.nombre.toLowerCase().includes(q)));
+    const valor = (c: FilaCampana): number | string => {
+      if (orden.clave === "nombre") return c.nombre;
+      if (orden.clave === "cpl") return cpl(c) ?? -Infinity;
+      const v = c[orden.clave as keyof FilaCampana];
+      return v === null || v === undefined ? -Infinity : Number(v);
+    };
     out.sort((a, b) => {
-      const va = a[orden.clave];
-      const vb = b[orden.clave];
+      const va = valor(a);
+      const vb = valor(b);
       if (typeof va === "string" || typeof vb === "string") {
-        return (String(va).localeCompare(String(vb), "es")) * (orden.desc ? -1 : 1);
+        return String(va).localeCompare(String(vb), "es") * (orden.desc ? -1 : 1);
       }
-      const na = va === null ? -Infinity : Number(va);
-      const nb = vb === null ? -Infinity : Number(vb);
-      return (na - nb) * (orden.desc ? -1 : 1);
+      return (va - vb) * (orden.desc ? -1 : 1);
     });
     return out;
   }, [filas, busqueda, filtro, orden]);
@@ -77,28 +79,42 @@ export default function TablaCampanas({
     setOrden((o) => (o.clave === clave ? { clave, desc: !o.desc } : { clave, desc: clave !== "nombre" }));
 
   const plata = (v: number | null, moneda = monedaNegocio) =>
-    v === null ? <span style={{ color: "var(--muted-3)" }}>—</span> : formatearMonto({ valor: v, moneda }, { monedaDelNegocio: monedaNegocio });
+    v === null ? <span className="nulo">—</span> : formatearMonto({ valor: v, moneda }, { monedaDelNegocio: monedaNegocio });
+
+  const Th = ({ clave, texto, num, tip }: { clave: Clave; texto: string; num?: boolean; tip?: string }) => (
+    <th className={num ? "num" : ""}>
+      <button
+        type="button"
+        onClick={() => cambiarOrden(clave)}
+        data-tip={tip}
+        aria-sort={orden.clave === clave ? (orden.desc ? "descending" : "ascending") : undefined}
+      >
+        {texto}
+        <span aria-hidden="true" style={{ opacity: orden.clave === clave ? 1 : 0.22, fontSize: 8 }}>
+          {orden.clave === clave && !orden.desc ? "▲" : "▼"}
+        </span>
+      </button>
+    </th>
+  );
 
   return (
-    <div className="tarjeta mk-seccion">
-      <div className="mk-seccion-cabecera flex-wrap">
+    <section className="mk-panel">
+      <div className="mk-panel-cabecera flex-wrap">
         <div className="mk-segmentos" role="group" aria-label="Filtro">
           {FILTROS.map((f) => (
             <button key={f.clave} type="button" className="mk-segmento" aria-pressed={filtro === f.clave} onClick={() => setFiltro(f.clave)}>
               {f.texto}
-              <span className="ml-1" style={{ color: "var(--muted-3)", fontWeight: 500 }}>
-                {filas.filter(f.f).length}
-              </span>
+              <span className="mk-conteo">{filas.filter(f.f).length}</span>
             </button>
           ))}
         </div>
         <label className="relative flex items-center">
-          <span className="pointer-events-none absolute left-2.5" style={{ color: "var(--muted-3)" }}>
-            {Ico.buscar()}
+          <span className="pointer-events-none absolute left-3" style={{ color: "var(--muted-3)" }}>
+            {Ico.buscar({ className: "h-4 w-4" })}
           </span>
           <input
-            className="campo py-1.5 pl-8"
-            style={{ width: 220, fontSize: "var(--t-menor)" }}
+            className="campo py-2 pl-9"
+            style={{ width: 240, fontSize: "13px" }}
             placeholder="Buscar campaña"
             value={busqueda}
             onChange={(e) => setBusqueda(e.target.value)}
@@ -110,72 +126,81 @@ export default function TablaCampanas({
         <div className="vacio">
           <div className="vacio-titulo">{filas.length ? "Ninguna campaña coincide" : "Todavía no hay campañas"}</div>
           <p className="vacio-texto">
-            {filas.length ? "Prueba con otro filtro o texto." : "Cuando alguien entre a WhatsApp desde un anuncio, aparece acá. Mientras tanto puedes preparar la primera."}
+            {filas.length
+              ? "Prueba con otro filtro o con otro texto."
+              : "Cuando alguien entre a WhatsApp desde un anuncio, su campaña aparece acá con su costo y su resultado."}
           </p>
           {!filas.length && (
-            <Link href="/marketing/campanas/nueva" className="btn-primario mt-4">Crear primera campaña</Link>
+            <Link href="/marketing/campanas/nueva" className="btn-primario mk-btn-lg mt-5">
+              Crear la primera campaña
+            </Link>
           )}
         </div>
       ) : (
         <div className="overflow-x-auto">
-          <table className="tabla min-w-[980px]">
+          <table className="mk-tabla min-w-[920px]">
             <thead>
               <tr>
-                {COLUMNAS.map((col) => (
-                  <th key={col.clave} className={col.num ? "text-right" : ""}>
-                    <button type="button" onClick={() => cambiarOrden(col.clave)} data-tip={col.tip} aria-sort={orden.clave === col.clave ? (orden.desc ? "descending" : "ascending") : undefined}>
-                      {col.texto}
-                      <span aria-hidden="true" style={{ opacity: orden.clave === col.clave ? 1 : 0.25, fontSize: 9 }}>
-                        {orden.clave === col.clave && !orden.desc ? "▲" : "▼"}
-                      </span>
-                    </button>
-                  </th>
-                ))}
-                <th />
+                <Th clave="nombre" texto="Campaña" />
+                <Th clave="gasto" texto="Gasto" num tip="Lo que Meta cobró en el período. Requiere la cuenta conectada." />
+                <Th clave="conversaciones" texto="Conv." num tip="Personas que escribieron por WhatsApp desde esta campaña." />
+                <Th clave="calificados" texto="Calif." num tip="Avanzaron a interesado o más, o cotizaron, reservaron o compraron." />
+                <Th clave="ventas" texto="Ventas" num />
+                <Th clave="cobrado" texto="Ingresos" num tip="Solo lo pagado por enlace de pago. Es un piso." />
+                <Th clave="cpl" texto="CPL" num tip="Costo por lead calificado = invertido ÷ calificados." />
+                <Th clave="roas" texto="ROAS" num tip="Ingresos ÷ invertido. Como los ingresos son un piso, el retorno real es mayor." />
+                <th className="num solo-ancho" data-tip="Conversaciones por día en la última semana">7 días</th>
               </tr>
             </thead>
             <tbody>
               {visibles.map((c) => {
-                const href = c.origen === "borrador" ? `/marketing/campanas/nueva?id=${encodeURIComponent(c.id)}` : `/marketing/campanas/${encodeURIComponent(c.id)}?p=${periodo}`;
-                const est = ESTADO_CAMPANA[c.estado];
+                const borrador = c.origen === "borrador";
+                const href = borrador
+                  ? `/marketing/campanas/nueva?id=${encodeURIComponent(c.id)}`
+                  : `/marketing/campanas/${encodeURIComponent(c.id)}?p=${periodo}`;
+                const raya = <span className="nulo">—</span>;
                 return (
                   <tr key={c.id}>
-                    <td className="max-w-[300px]">
-                      <Link href={href} className="block truncate font-semibold hover:underline" title={c.nombre}>
+                    <td className="max-w-[290px]">
+                      <Link href={href} className="block truncate font-semibold hover:underline" style={{ fontSize: "13.5px" }} title={c.nombre}>
                         {c.nombre}
                       </Link>
-                      <div className="mt-0.5 flex flex-wrap items-center gap-1.5" style={{ fontSize: "var(--t-micro)", color: "var(--muted-2)" }}>
-                        <span className={est.clase}>{est.texto}</span>
-                        {c.objetivo && <span>{textoObjetivo(c.objetivo)}</span>}
-                        {c.origen === "atribucion" && <span title="Meta no está conectada: se ve el anuncio, no la campaña que lo contiene">solo atribución</span>}
-                        {c.origen !== "borrador" && <span>· {c.anuncios} {c.anuncios === 1 ? "anuncio" : "anuncios"}</span>}
+                      {/* Una sola línea: si el objetivo es largo y «2 anuncios»
+                          se va abajo, esa fila crece y la tabla deja de leerse
+                          como una grilla. Lo que no cabe se corta. */}
+                      <div
+                        className="mt-1.5 flex items-center gap-2 overflow-hidden whitespace-nowrap"
+                        style={{ fontSize: "11.5px", color: "var(--muted-2)" }}
+                      >
+                        <EstadoDeCampana estado={c.estado} />
+                        {c.objetivo && <span className="truncate">{textoObjetivo(c.objetivo)}</span>}
+                        {!borrador && (
+                          <span className="shrink-0">
+                            · {c.anuncios} {c.anuncios === 1 ? "anuncio" : "anuncios"}
+                          </span>
+                        )}
+                        {c.origen === "atribucion" && (
+                          <span data-tip="Meta no está conectada: se ve el anuncio, no la campaña que lo contiene">solo atribución</span>
+                        )}
                       </div>
                     </td>
-                    <td className="cifra text-right">{plata(c.gasto, c.moneda)}</td>
-                    <td className="whitespace-nowrap text-right">
-                      {c.origen === "borrador" ? (
-                        <span style={{ color: "var(--muted-3)" }}>—</span>
+                    <td className="num cifra">{borrador ? raya : plata(c.gasto, c.moneda)}</td>
+                    <td className="num cifra">
+                      {borrador ? (
+                        raya
                       ) : (
-                        <>
-                          <span className="cifra">{formatearNumero(c.conversaciones)}</span>
-                          <span className="mk-barra ml-2" style={{ width: Math.max(2, (c.conversaciones / maxConv) * 40) }} />
-                        </>
+                        <span className="inline-flex items-center gap-2">
+                          <span className="mk-barra" style={{ width: Math.max(3, (c.conversaciones / maxConv) * 44) }} />
+                          {formatearNumero(c.conversaciones)}
+                        </span>
                       )}
                     </td>
-                    <td className="cifra text-right">{c.origen === "borrador" ? <span style={{ color: "var(--muted-3)" }}>—</span> : formatearNumero(c.calificados)}</td>
-                    <td className="cifra text-right">{c.origen === "borrador" ? <span style={{ color: "var(--muted-3)" }}>—</span> : formatearNumero(c.avanzados)}</td>
-                    <td className="cifra text-right font-semibold">{c.origen === "borrador" ? <span style={{ color: "var(--muted-3)" }}>—</span> : formatearNumero(c.ventas)}</td>
-                    <td className="cifra text-right font-semibold" style={{ color: c.cobrado > 0 ? "var(--indigo)" : "var(--muted-3)" }}>
-                      {c.cobrado > 0 ? formatearMonto({ valor: c.cobrado, moneda: monedaNegocio }) : "—"}
-                    </td>
-                    <td className="cifra text-right">{plata(c.cpc, c.moneda)}</td>
-                    <td className="cifra text-right">{plata(c.cpv, c.moneda)}</td>
-                    <td className="cifra text-right">{c.roas === null ? <span style={{ color: "var(--muted-3)" }}>—</span> : `${c.roas.toFixed(1)}×`}</td>
-                    <td className="text-right">
-                      <Link href={href} className="btn-chico">
-                        {c.origen === "borrador" ? "Editar" : "Abrir"}
-                      </Link>
-                    </td>
+                    <td className="num cifra">{borrador ? raya : formatearNumero(c.calificados)}</td>
+                    <td className="num cifra fuerte">{borrador ? raya : formatearNumero(c.ventas)}</td>
+                    <td className="num cifra plata">{borrador || c.cobrado <= 0 ? raya : formatearMonto({ valor: c.cobrado, moneda: monedaNegocio })}</td>
+                    <td className="num cifra">{borrador ? raya : plata(cpl(c), c.moneda)}</td>
+                    <td className="num cifra fuerte">{c.roas === null ? raya : `${c.roas.toLocaleString("es-CL", { minimumFractionDigits: 1, maximumFractionDigits: 1 })}×`}</td>
+                    <td className="num solo-ancho">{series?.[c.id]?.some((v) => v) ? <MiniSerie datos={series[c.id]} /> : raya}</td>
                   </tr>
                 );
               })}
@@ -183,14 +208,30 @@ export default function TablaCampanas({
           </table>
         </div>
       )}
+
       {!metaConectada && filas.some((c) => c.origen === "atribucion") && (
-        <div className="border-t px-4 py-3" style={{ borderColor: "var(--borde)", fontSize: "var(--t-micro)", color: "var(--muted-2)" }}>
+        <div className="mk-panel-pie">
           Sin la cuenta de Meta conectada cada anuncio aparece como su propia fila y no se ve el gasto.{" "}
-          <Link href="/marketing/integraciones" className="font-semibold" style={{ color: "var(--indigo)" }}>
+          <Link href="/marketing/integraciones" className="mk-enlace">
             Conectar Meta
           </Link>
         </div>
       )}
-    </div>
+    </section>
+  );
+}
+
+/** Chispa de los últimos días, para leer la dirección sin abrir la campaña. */
+function MiniSerie({ datos }: { datos: number[] }) {
+  const max = Math.max(...datos, 1);
+  const w = 60;
+  const h = 20;
+  const paso = w / Math.max(1, datos.length - 1);
+  const d = datos.map((v, i) => `${i === 0 ? "M" : "L"}${(i * paso).toFixed(1)},${(h - (v / max) * (h - 3) - 1.5).toFixed(1)}`).join(" ");
+  const sube = datos.length > 1 && datos[datos.length - 1] >= datos[0];
+  return (
+    <svg width={w} height={h} aria-hidden="true" style={{ display: "inline-block", verticalAlign: "middle" }}>
+      <path d={d} fill="none" stroke={sube ? "var(--ok)" : "var(--peligro)"} strokeWidth="1.6" strokeLinejoin="round" strokeLinecap="round" opacity="0.85" />
+    </svg>
   );
 }

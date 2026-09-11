@@ -5,24 +5,49 @@ import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState, useTransition } from "react";
 import { preguntarAccion } from "@/app/(marketing)/marketing/copiloto/acciones";
 import { guardarBorradorAccion } from "@/app/(marketing)/marketing/campanas/acciones";
-import { PREGUNTAS_SUGERIDAS, type RespuestaCopiloto } from "@/lib/marketing/copilotoCore";
+import type { RespuestaCopiloto } from "@/lib/marketing/copilotoCore";
 import { Ico } from "@/components/marketing/Iconos";
 
 /**
- * EL COPILOTO — una conversación con evidencia.
+ * EL COPILOTO — un espacio de trabajo con IA, no un chat pegado al costado.
  *
- * Cada respuesta muestra tres cosas separadas: lo que el copiloto concluye,
- * las cifras exactas en que se apoya (con enlace a la pantalla donde
- * verificarlas) y qué haría. Cuando la persona pide una campaña, la
- * respuesta trae un borrador que se guarda con un botón y se abre en el
- * asistente para terminarlo.
+ * La división del trabajo es la que da la confianza: las cifras las calcula
+ * Respondo de forma determinista, con las mismas funciones que alimentan las
+ * pantallas; el modelo solo las INTERPRETA. Por eso cada respuesta muestra,
+ * separadas, tres cosas: la conclusión, la evidencia exacta en que se apoya
+ * (con enlace para ir a comprobarla) y qué haría.
  *
- * `preguntaInicial` viene de la URL (?q=) cuando alguien llega desde el
- * inicio o desde una campaña.
+ * Cuando la persona pide una campaña, la respuesta trae un borrador completo
+ * que se guarda con un botón y se abre en el asistente para terminarlo. Es la
+ * única acción que el copiloto puede ejecutar, y aun así queda en borrador.
+ *
+ * La columna derecha no explica cómo funciona el producto: dice qué se está
+ * analizando. La explicación técnica vive en un desplegable al pie.
  */
+const PROMPTS: { texto: string; icono: keyof typeof Ico }[] = [
+  { texto: "Analiza los últimos 30 días", icono: "grafico" },
+  { texto: "¿Dónde estoy perdiendo plata?", icono: "alerta" },
+  { texto: "¿Qué campaña me está trayendo mejores clientes?", icono: "campanas" },
+  { texto: "¿Qué creatividad debería repetir?", icono: "creatividades" },
+  { texto: "Créame una campaña para vender más este mes", icono: "nueva" },
+];
+
 type Turno = { pregunta: string; respuesta: RespuestaCopiloto | null; error?: string; guardadoId?: string };
 
-export default function ChatCopiloto({ periodo, preguntaInicial, demo, herramientas }: { periodo: string; preguntaInicial?: string; demo: boolean; herramientas: { nombre: string; descripcion: string }[] }) {
+export default function ChatCopiloto({
+  periodo,
+  preguntaInicial,
+  demo,
+  herramientas,
+  contexto,
+}: {
+  periodo: string;
+  preguntaInicial?: string;
+  demo: boolean;
+  herramientas: { nombre: string; descripcion: string }[];
+  /** Qué se está analizando: se muestra en vez de la documentación interna. */
+  contexto: { etiqueta: string; valor: string }[];
+}) {
   const router = useRouter();
   const [turnos, setTurnos] = useState<Turno[]>([]);
   const [texto, setTexto] = useState("");
@@ -37,17 +62,18 @@ export default function ChatCopiloto({ periodo, preguntaInicial, demo, herramien
     if (!pregunta || pendiente) return;
     setTexto("");
     setPendiente(true);
+    /**
+     * ⚠️ La respuesta se escribe en SU turno por índice, no en «el último».
+     * Con dos preguntas encadenadas, escribir en el último dejaba la primera
+     * girando para siempre y pisaba la segunda con la respuesta equivocada.
+     */
+    const indice = turnos.length;
     setTurnos((t) => [...t, { pregunta, respuesta: null }]);
     const hilo = turnos.filter((t) => t.respuesta).map((t) => ({ pregunta: t.pregunta, respuesta: t.respuesta!.respuesta }));
     iniciar(async () => {
       const r = await preguntarAccion({ pregunta, periodo, hilo });
       setPendiente(false);
-      setTurnos((t) => {
-        const copia = [...t];
-        const ultimo = copia[copia.length - 1];
-        copia[copia.length - 1] = r.ok ? { ...ultimo, respuesta: r.datos } : { ...ultimo, error: r.motivo };
-        return copia;
-      });
+      setTurnos((t) => t.map((x, i) => (i === indice ? (r.ok ? { ...x, respuesta: r.datos } : { ...x, error: r.motivo }) : x)));
     });
   };
 
@@ -60,7 +86,7 @@ export default function ChatCopiloto({ periodo, preguntaInicial, demo, herramien
   }, [preguntaInicial]);
 
   useEffect(() => {
-    fin.current?.scrollIntoView({ behavior: "smooth", block: "end" });
+    if (turnos.length) fin.current?.scrollIntoView({ behavior: "smooth", block: "end" });
   }, [turnos, pendiente]);
 
   const guardarBorrador = (i: number) => {
@@ -91,163 +117,318 @@ export default function ChatCopiloto({ periodo, preguntaInicial, demo, herramien
     });
   };
 
-  return (
-    <div className="grid gap-5 lg:grid-cols-12">
-      <div className="lg:col-span-8">
-        <div className="tarjeta flex flex-col" style={{ minHeight: 520 }}>
-          <div className="flex-1 space-y-4 p-4">
-            {turnos.length === 0 && (
-              <div className="py-6 text-center">
-                <span className="mx-auto grid h-10 w-10 place-items-center rounded-md" style={{ background: "var(--indigo-suave)", color: "var(--indigo)" }}>
-                  {Ico.copiloto()}
-                </span>
-                <div className="mt-3 font-semibold" style={{ fontSize: "var(--t-fila)" }}>Pregúntame por tus campañas</div>
-                <p className="mx-auto mt-1 max-w-md" style={{ fontSize: "var(--t-menor)", color: "var(--muted)" }}>
-                  Respondo con las cifras del período que estás mirando y te digo en qué me baso. Si el dato no alcanza, lo digo.
-                </p>
-                <div className="mx-auto mt-4 flex max-w-lg flex-wrap justify-center gap-1.5">
-                  {PREGUNTAS_SUGERIDAS.map((q) => (
-                    <button key={q} type="button" className="btn-chico" onClick={() => preguntar(q)}>{q}</button>
-                  ))}
-                </div>
-              </div>
-            )}
-            {turnos.map((t, i) => (
-              <div key={i} className="space-y-2">
-                <div className="flex justify-end">
-                  <div className="mk-burbuja persona">{t.pregunta}</div>
-                </div>
-                {t.respuesta ? (
-                  <Respuesta r={t.respuesta} guardar={() => guardarBorrador(i)} guardando={guardando === i} guardadoId={t.guardadoId} demo={demo} error={t.error} />
-                ) : t.error ? (
-                  <div className="mk-burbuja copiloto" style={{ borderLeft: "3px solid var(--peligro)" }}>{t.error}</div>
-                ) : (
-                  <div className="mk-burbuja copiloto" style={{ color: "var(--muted)" }}>
-                    Leyendo el período, corriendo las herramientas y pensando la respuesta…
-                  </div>
-                )}
-              </div>
-            ))}
-            <div ref={fin} />
-          </div>
-          <form
-            className="flex items-end gap-2 border-t p-3"
-            style={{ borderColor: "var(--borde)" }}
-            onSubmit={(e) => {
-              e.preventDefault();
-              preguntar(texto);
-            }}
-          >
-            <textarea
-              className="campo flex-1"
-              rows={2}
-              placeholder="Ej: ¿qué campaña me conviene apagar?"
-              value={texto}
-              onChange={(e) => setTexto(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" && !e.shiftKey) {
-                  e.preventDefault();
-                  preguntar(texto);
-                }
-              }}
-            />
-            <button type="submit" className="btn-primario" disabled={pendiente || !texto.trim()}>
-              {pendiente ? "Pensando…" : "Preguntar"}
-            </button>
-          </form>
-        </div>
-      </div>
+  const vacio = turnos.length === 0;
 
-      <aside className="lg:col-span-4">
-        <div className="tarjeta p-4">
-          <div className="eyebrow">Cómo trabaja</div>
-          <p className="mt-1 leading-relaxed" style={{ fontSize: "var(--t-menor)", color: "var(--muted)" }}>
-            Las cifras las calcula Respondo, de forma determinista, con las mismas funciones que alimentan las pantallas. El copiloto solo las interpreta: no inventa ni estima números.
-          </p>
-          <div className="eyebrow mt-4">Herramientas</div>
-          <ul className="mt-1.5 space-y-1.5">
-            {herramientas.map((h) => (
-              <li key={h.nombre} style={{ fontSize: "var(--t-micro)" }}>
-                <code className="rounded px-1" style={{ background: "var(--fondo-hundido)", fontSize: 11 }}>{h.nombre}</code>
-                <span style={{ color: "var(--muted-2)" }}> · {h.descripcion}</span>
-              </li>
-            ))}
-          </ul>
-        </div>
-        {turnos.length > 0 && (
-          <div className="mt-3 flex flex-wrap gap-1.5">
-            {PREGUNTAS_SUGERIDAS.slice(0, 4).map((q) => (
-              <button key={q} type="button" className="btn-chico" onClick={() => preguntar(q)} disabled={pendiente}>{q}</button>
-            ))}
+  return (
+    <div className="grid gap-6 xl:grid-cols-12">
+      <div className={vacio ? "xl:col-span-12" : "xl:col-span-8"}>
+        {vacio ? (
+          <div className="mk-panel">
+            <div className="mk-copiloto-hero" style={{ paddingTop: 56 }}>
+              <span className="mx-auto grid h-12 w-12 place-items-center rounded-xl" style={{ background: "var(--indigo)", color: "#fff" }}>
+                {Ico.copiloto({ className: "h-6 w-6" })}
+              </span>
+              <h2 className="mt-4">¿Qué quieres mejorar hoy?</h2>
+              <p className="mx-auto mt-2 max-w-lg" style={{ fontSize: "14px", color: "var(--muted)", lineHeight: 1.55 }}>
+                Leo las cifras del período que estás mirando y te digo en qué me baso. Si el dato no alcanza para concluir, lo digo.
+              </p>
+            </div>
+            <div className="px-6 pb-6">
+              <Entrada texto={texto} setTexto={setTexto} preguntar={preguntar} pendiente={pendiente} grande />
+              <div className="mt-5 flex flex-wrap justify-center gap-2">
+                {PROMPTS.map((p) => (
+                  <button key={p.texto} type="button" className="mk-prompt" onClick={() => preguntar(p.texto)}>
+                    {Ico[p.icono]({ className: "h-4 w-4" })}
+                    {p.texto}
+                  </button>
+                ))}
+              </div>
+            </div>
+            {/* El contexto va TAMBIÉN en el vacío: antes de la primera pregunta,
+                lo que da confianza es ver que el copiloto ya leyó el período. */}
+            <div className="border-t px-6 py-5" style={{ borderColor: "var(--borde)", background: "var(--mk-superficie-2)" }}>
+              <div className="mk-hallazgo-tipo mb-3">Ya leí esto</div>
+              <dl className="grid grid-cols-2 gap-x-6 gap-y-4 sm:grid-cols-4 lg:grid-cols-7">
+                {contexto.map((c) => {
+                  // «Últimos 30 días» no es una cifra: en la tipografía tabular
+                  // y a 17 px se corta. Las palabras van en su propio tamaño.
+                  const esCifra = /^[—$\d]/.test(c.valor);
+                  return (
+                  <div key={c.etiqueta} className="min-w-0">
+                    <dd
+                      className={esCifra ? "cifra truncate" : "truncate"}
+                      style={{ fontSize: esCifra ? "17px" : "13.5px", fontWeight: 600, letterSpacing: esCifra ? "-0.02em" : undefined, lineHeight: esCifra ? undefined : "22px" }}
+                      title={c.valor}
+                    >
+                      {c.valor}
+                    </dd>
+                    <dt className="truncate" style={{ fontSize: "11.5px", color: "var(--muted-2)" }}>
+                      {c.etiqueta}
+                    </dt>
+                  </div>
+                  );
+                })}
+              </dl>
+            </div>
+            <div className="mk-panel-pie">
+              Las cifras las calcula Respondo con las mismas funciones que alimentan las pantallas. El copiloto solo las interpreta: no
+              inventa ni estima números.
+            </div>
+          </div>
+        ) : (
+          <div className="mk-panel">
+            <div className="flex flex-col gap-7 p-6">
+              {turnos.map((t, i) => (
+                <div key={i} className="flex flex-col gap-5">
+                  <div className="mk-turno persona">
+                    <span className="mk-turno-avatar" aria-hidden="true">
+                      Tú
+                    </span>
+                    <div className="mk-turno-cuerpo">{t.pregunta}</div>
+                  </div>
+                  <div className="mk-turno copiloto">
+                    <span className="mk-turno-avatar" aria-hidden="true">
+                      {Ico.copiloto({ className: "h-4 w-4" })}
+                    </span>
+                    <div className="mk-turno-cuerpo">
+                      {t.respuesta ? (
+                        <Respuesta
+                          r={t.respuesta}
+                          guardar={() => guardarBorrador(i)}
+                          guardando={guardando === i}
+                          guardadoId={t.guardadoId}
+                          demo={demo}
+                          error={t.error}
+                        />
+                      ) : t.error ? (
+                        <span style={{ color: "var(--peligro)" }}>{t.error}</span>
+                      ) : (
+                        <span className="mk-pensando">
+                          <i />
+                          <i />
+                          <i />
+                          Corriendo las herramientas sobre el período…
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              ))}
+              <div ref={fin} />
+            </div>
+            <div className="sticky bottom-0 border-t p-4" style={{ borderColor: "var(--borde)", background: "var(--superficie)", borderRadius: "0 0 var(--mk-r) var(--mk-r)" }}>
+              <Entrada texto={texto} setTexto={setTexto} preguntar={preguntar} pendiente={pendiente} />
+            </div>
           </div>
         )}
-      </aside>
+      </div>
+
+      {!vacio && (
+        <aside className="xl:col-span-4">
+          <div className="xl:sticky xl:top-6">
+            <div className="mk-panel">
+              <div className="mk-panel-cabecera">
+                <h2 className="mk-h2">Contexto analizado</h2>
+              </div>
+              <div className="mk-panel-cuerpo">
+                <dl className="grid gap-3.5">
+                  {contexto.map((c) => (
+                    <div key={c.etiqueta} className="flex items-baseline justify-between gap-4">
+                      <dt style={{ fontSize: "12.5px", color: "var(--muted)" }}>{c.etiqueta}</dt>
+                      <dd className="cifra" style={{ fontSize: "14px", fontWeight: 600 }}>
+                        {c.valor}
+                      </dd>
+                    </div>
+                  ))}
+                </dl>
+              </div>
+              <details className="border-t" style={{ borderColor: "var(--borde)" }}>
+                <summary className="cursor-pointer px-5 py-3" style={{ fontSize: "12.5px", fontWeight: 600, color: "var(--muted)" }}>
+                  Cómo obtiene las cifras
+                </summary>
+                <ul className="space-y-2 px-5 pb-5">
+                  {herramientas.map((h) => (
+                    <li key={h.nombre} style={{ fontSize: "11.5px" }}>
+                      <code className="rounded px-1" style={{ background: "var(--fondo-hundido)", fontSize: 11 }}>
+                        {h.nombre}
+                      </code>
+                      <span style={{ color: "var(--muted-2)" }}> · {h.descripcion}</span>
+                    </li>
+                  ))}
+                </ul>
+              </details>
+            </div>
+            {/* Las sugerencias que quedan por preguntar. Sin las ya usadas: un
+                atajo que repite lo que acabas de leer no es un atajo. */}
+            {(() => {
+              const hechas = new Set(turnos.map((t) => t.pregunta));
+              const quedan = PROMPTS.filter((p) => !hechas.has(p.texto)).slice(0, 3);
+              if (!quedan.length) return null;
+              return (
+                <div className="mt-4">
+                  <div className="mk-hallazgo-tipo mb-2.5">Seguir preguntando</div>
+                  <div className="flex flex-col items-start gap-2">
+                    {quedan.map((p) => (
+                      <button key={p.texto} type="button" className="btn-chico text-left" onClick={() => preguntar(p.texto)} disabled={pendiente}>
+                        {p.texto}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              );
+            })()}
+          </div>
+        </aside>
+      )}
     </div>
   );
 }
 
-function Respuesta({ r, guardar, guardando, guardadoId, demo, error }: { r: RespuestaCopiloto; guardar: () => void; guardando: boolean; guardadoId?: string; demo: boolean; error?: string }) {
+function Entrada({
+  texto,
+  setTexto,
+  preguntar,
+  pendiente,
+  grande,
+}: {
+  texto: string;
+  setTexto: (v: string) => void;
+  preguntar: (q: string) => void;
+  pendiente: boolean;
+  grande?: boolean;
+}) {
   return (
-    <div className="mk-burbuja copiloto" style={{ maxWidth: "100%", whiteSpace: "normal" }}>
+    <form
+      className={`mk-copiloto-entrada ${grande ? "mx-auto max-w-2xl" : ""}`}
+      onSubmit={(e) => {
+        e.preventDefault();
+        preguntar(texto);
+      }}
+    >
+      <textarea
+        rows={grande ? 2 : 1}
+        placeholder="Pregunta por tus campañas, tus anuncios o tus leads…"
+        value={texto}
+        onChange={(e) => setTexto(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" && !e.shiftKey) {
+            e.preventDefault();
+            preguntar(texto);
+          }
+        }}
+      />
+      <button type="submit" className="btn-primario" disabled={pendiente || !texto.trim()} style={{ borderRadius: 10, padding: "9px 14px" }}>
+        {pendiente ? "Pensando…" : Ico.enviar({ className: "h-4 w-4" })}
+        <span className="sr-only">Preguntar</span>
+      </button>
+    </form>
+  );
+}
+
+function Respuesta({
+  r,
+  guardar,
+  guardando,
+  guardadoId,
+  demo,
+  error,
+}: {
+  r: RespuestaCopiloto;
+  guardar: () => void;
+  guardando: boolean;
+  guardadoId?: string;
+  demo: boolean;
+  error?: string;
+}) {
+  return (
+    <div>
       <div style={{ whiteSpace: "pre-wrap" }}>{r.respuesta}</div>
-      {r.sinDatos && <span className="pildora-alerta mt-2">Con este volumen no se puede concluir</span>}
+      {r.sinDatos && (
+        <span className="mk-estado alerta mt-3">Con este volumen no se puede concluir</span>
+      )}
+
       {r.evidencia.length > 0 && (
-        <div className="mt-3 border-t pt-2" style={{ borderColor: "var(--borde)" }}>
-          <div className="eyebrow">En qué me baso</div>
-          <ul className="mt-1 space-y-1">
-            {r.evidencia.map((e, i) => (
-              <li key={i} className="flex gap-2" style={{ fontSize: "var(--t-menor)" }}>
-                <span aria-hidden="true" className="mt-[7px] h-1.5 w-1.5 shrink-0 rounded-full" style={{ background: "var(--indigo)" }} />
-                <span>
-                  {e.texto}
-                  {e.href && (
-                    <>
-                      {" "}
-                      <Link href={e.href} className="font-semibold" style={{ color: "var(--indigo)" }}>Ver →</Link>
-                    </>
-                  )}
-                </span>
-              </li>
-            ))}
-          </ul>
-        </div>
-      )}
-      {r.borrador && (
-        <div className="mt-3 rounded-md border p-3" style={{ borderColor: "var(--indigo-borde)", background: "var(--indigo-suave)" }}>
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <div className="font-semibold" style={{ fontSize: "var(--t-fila)" }}>Borrador: {r.borrador.nombre}</div>
-            <span className="pildora-indigo">Propuesta</span>
-          </div>
-          <div className="mt-1 grid gap-x-4 gap-y-0.5 sm:grid-cols-2" style={{ fontSize: "var(--t-micro)", color: "var(--muted)" }}>
-            <div><strong>Oferta:</strong> {r.borrador.oferta}</div>
-            <div><strong>Presupuesto:</strong> {r.borrador.presupuestoDiario ? `$${r.borrador.presupuestoDiario.toLocaleString("es-CL")} diarios` : "a definir"}</div>
-            <div><strong>Audiencia:</strong> {r.borrador.audiencia.ubicacion}{r.borrador.audiencia.edadDesde ? `, ${r.borrador.audiencia.edadDesde}–${r.borrador.audiencia.edadHasta ?? 65}` : ""}</div>
-            <div><strong>Copies:</strong> {r.borrador.copies.length}</div>
-          </div>
-          <div className="mt-2 flex flex-wrap items-center gap-2">
-            {guardadoId ? (
-              <Link href={`/marketing/campanas/nueva?id=${encodeURIComponent(guardadoId)}`} className="btn-primario">Abrir en el asistente</Link>
-            ) : (
-              <button type="button" className="btn-primario" disabled={guardando} onClick={guardar} title={demo ? "En demostración no se guarda" : undefined}>
-                {guardando ? "Guardando…" : "Guardar como borrador"}
-              </button>
-            )}
-            {error && <span style={{ fontSize: "var(--t-micro)", color: "var(--peligro)" }}>{error}</span>}
-          </div>
-        </div>
-      )}
-      {r.acciones.length > 0 && (
-        <div className="mt-3 flex flex-wrap gap-1.5">
-          {r.acciones.map((a, i) => (
-            <Link key={i} href={a.href} className="btn-chico">{a.texto} →</Link>
+        <div className="mk-evidencia">
+          <div className="mk-hallazgo-tipo">En qué me baso</div>
+          {r.evidencia.map((e, i) => (
+            <div key={i} className="mk-evidencia-item">
+              <span className="min-w-0">
+                {e.texto}
+                {e.href && (
+                  <>
+                    {" "}
+                    <Link href={e.href} className="mk-enlace" style={{ fontSize: "12.5px" }}>
+                      Ver
+                    </Link>
+                  </>
+                )}
+              </span>
+            </div>
           ))}
         </div>
       )}
-      {r.herramientasUsadas.length > 0 && (
-        <div className="mt-2" style={{ fontSize: "var(--t-micro)", color: "var(--muted-3)" }}>
-          Herramientas: {r.herramientasUsadas.join(", ")}
+
+      {r.borrador && (
+        <div className="mk-tarjeta-campana mt-4">
+          <div className="min-w-0">
+            <div className="mk-hallazgo-tipo" style={{ color: "var(--indigo)" }}>
+              Borrador propuesto
+            </div>
+            <div className="mt-1 font-semibold" style={{ fontSize: "15px", letterSpacing: "-0.015em" }}>
+              {r.borrador.nombre}
+            </div>
+            <div className="mk-tarjeta-campana-datos">
+              <DatoB etiqueta="Oferta" valor={r.borrador.oferta} />
+              <DatoB
+                etiqueta="Presupuesto"
+                valor={r.borrador.presupuestoDiario ? `$${r.borrador.presupuestoDiario.toLocaleString("es-CL")} diarios` : "a definir"}
+              />
+              <DatoB
+                etiqueta="Audiencia"
+                valor={`${r.borrador.audiencia.ubicacion}${r.borrador.audiencia.edadDesde ? `, ${r.borrador.audiencia.edadDesde}–${r.borrador.audiencia.edadHasta ?? 65}` : ""}`}
+              />
+              <DatoB etiqueta="Copies" valor={`${r.borrador.copies.length} escritos`} />
+            </div>
+            <div className="mt-3.5 flex flex-wrap items-center gap-2">
+              {guardadoId ? (
+                <Link href={`/marketing/campanas/nueva?id=${encodeURIComponent(guardadoId)}`} className="btn-primario">
+                  Abrir en el asistente
+                </Link>
+              ) : (
+                <button type="button" className="btn-primario" disabled={guardando} onClick={guardar} data-tip={demo ? "En demostración no se guarda" : undefined}>
+                  {guardando ? "Guardando…" : "Guardar como borrador"}
+                </button>
+              )}
+              {error && <span style={{ fontSize: "11.5px", color: "var(--peligro)" }}>{error}</span>}
+            </div>
+          </div>
         </div>
       )}
+
+      {r.acciones.length > 0 && (
+        <div className="mt-4 flex flex-wrap gap-2">
+          {r.acciones.map((a, i) => (
+            <Link key={i} href={a.href} className="btn-chico">
+              {a.texto} {Ico.flecha({ className: "h-3 w-3" })}
+            </Link>
+          ))}
+        </div>
+      )}
+
+      {r.herramientasUsadas.length > 0 && (
+        <div className="mt-3" style={{ fontSize: "11px", color: "var(--muted-3)" }}>
+          Calculado con: {r.herramientasUsadas.join(", ")}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function DatoB({ etiqueta, valor }: { etiqueta: string; valor: string }) {
+  return (
+    <div className="min-w-0">
+      <div className="mk-dato-mini-etiqueta">{etiqueta}</div>
+      <div style={{ fontSize: "12.5px", color: "var(--tinta)", lineHeight: 1.4 }}>{valor}</div>
     </div>
   );
 }

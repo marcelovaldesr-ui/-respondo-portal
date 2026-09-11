@@ -32,7 +32,7 @@ export default async function NuevaCampana({ searchParams }: { searchParams: Pro
       <Cabecera
         volver={{ href: "/marketing/campanas", texto: "Campañas" }}
         titulo={borrador ? borrador.nombre : "Nueva campaña"}
-        bajada="Todo lo que Meta te va a pedir, ya pensado. Se guarda como borrador y se lleva a Meta en dos minutos."
+        bajada="Todo lo que Meta te va a pedir, ya pensado."
         demo={demo}
       />
       {!creatividades.disponible && !demo && <AvisoMigracion />}
