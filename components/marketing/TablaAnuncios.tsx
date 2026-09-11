@@ -2,6 +2,7 @@ import Link from "next/link";
 import { formatearMonto, formatearNumero, formatearPorcentaje } from "@/lib/ads/moneda";
 import type { FilaAnuncio } from "@/lib/marketing/tipos";
 import { PieSinPublicidad } from "@/components/marketing/Estado";
+import { urlDeImagen } from "@/lib/marketing/imagenes";
 
 /**
  * LOS ANUNCIOS, con su miniatura y la calidad del lead que traen.
@@ -69,7 +70,7 @@ export default function TablaAnuncios({
                   <div className="mk-miniatura">
                     {a.imagenUrl && (
                       // eslint-disable-next-line @next/next/no-img-element
-                      <img src={a.imagenUrl} alt="" loading="lazy" />
+                      <img src={urlDeImagen(a.imagenUrl) ?? ""} alt="" loading="lazy" />
                     )}
                   </div>
                   <div className="min-w-0">

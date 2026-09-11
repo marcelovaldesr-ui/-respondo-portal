@@ -1,5 +1,6 @@
 import { proporcion, textoVisible } from "@/lib/marketing/creatividadesCore";
 import type { FormatoCreatividad } from "@/lib/marketing/tipos";
+import { urlDeImagen } from "@/lib/marketing/imagenes";
 
 /**
  * CÓMO SE VA A VER EL ANUNCIO — maqueta fiel, no una miniatura.
@@ -46,7 +47,7 @@ export default function VistaPreviaAnuncio({
       <div className="mk-historia" style={{ maxWidth: Math.min(ancho, 300) }}>
         {imagenUrl ? (
           // eslint-disable-next-line @next/next/no-img-element
-          <img src={imagenUrl} alt="" />
+          <img src={urlDeImagen(imagenUrl) ?? ""} alt="" />
         ) : (
           <div className="absolute inset-0 grid place-items-center px-6 text-center" style={{ background: "#1b1f27" }}>
             <span style={{ fontSize: 12.5, color: "rgba(255,255,255,.65)" }}>La imagen aparece acá cuando la generes</span>
@@ -97,7 +98,7 @@ export default function VistaPreviaAnuncio({
       <div className="mk-anuncio-media" style={{ height: alto }}>
         {imagenUrl ? (
           // eslint-disable-next-line @next/next/no-img-element
-          <img src={imagenUrl} alt="" />
+          <img src={urlDeImagen(imagenUrl) ?? ""} alt="" />
         ) : (
           <div className="flex h-full flex-col items-center justify-center gap-1.5 px-6 text-center">
             <span style={{ fontSize: 12.5, fontWeight: 600, color: "var(--muted)" }}>Sin imagen todavía</span>

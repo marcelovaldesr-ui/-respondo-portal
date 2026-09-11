@@ -1,4 +1,5 @@
 import { db } from "@/lib/db";
+import { exigirId } from "@/lib/marketing/tenant";
 import { bordesUTC, periodoAnterior, type Rango } from "@/lib/ads/periodos";
 import type { DatosPropios } from "@/lib/ads/metricas";
 import {
@@ -119,6 +120,35 @@ async function contarContactos(clienteId: string, desdeISO: string, hastaISO: st
   }
 }
 
+/**
+ * CUÁNDO «LLEGÓ» ALGUIEN DESDE UN ANUNCIO.
+ *
+ * Hay dos fechas y no son la misma:
+ *   · `creado_en`  — cuándo apareció el contacto en el portal, por CUALQUIER vía.
+ *   · `datos.campana.visto` — cuándo escribió DESDE EL ANUNCIO. Lo escribe
+ *     `inboundMeta` en el primer mensaje que trae el referral de Meta.
+ *
+ * Para atribución la buena es `visto`: es el momento en que el aviso trajo a
+ * esa persona. La consulta filtraba por `creado_en` y la pantalla mostraba
+ * `visto`, así que un contacto que ya existía y recién ahora hizo clic en un
+ * anuncio quedaba FUERA del período —aunque el anuncio lo hubiera traído
+ * dentro—, y uno con el referral un día después del corte aparecía en la lista
+ * con una fecha posterior al período.
+ *
+ * Cómo se arregla sin pedirle a la base un índice sobre JSON: se trae con el
+ * filtro barato e indexado de `creado_en`, PERO con una ventana hacia atrás
+ * (`visto` siempre es igual o posterior a `creado_en`), y después se recorta en
+ * memoria por `visto`, que es la fecha que además se muestra. Las dos cosas
+ * pasan a contar lo mismo.
+ */
+const DIAS_DE_HOLGURA = 120;
+
+function restarDias(iso: string, dias: number): string {
+  const d = new Date(iso);
+  d.setUTCDate(d.getUTCDate() - dias);
+  return d.toISOString();
+}
+
 async function contactosConAnuncio(
   clienteId: string,
   desdeISO: string,
@@ -142,6 +172,13 @@ async function contactosConAnuncio(
       })
       .filter((x): x is ContactoPauta => x !== null);
 
+  // Se pide con holgura hacia atrás y se recorta por `visto` al final.
+  const desdeConsulta = restarDias(desdeISO, DIAS_DE_HOLGURA);
+  const enPeriodo = (c: ContactoPauta) => {
+    const v = c.campana.visto;
+    return !v || (v >= desdeISO && v <= hastaISO);
+  };
+
   // Camino rápido.
   try {
     const filas: Record<string, unknown>[] = [];
@@ -151,7 +188,7 @@ async function contactosConAnuncio(
         .select(columnas)
         .eq("cliente_id", clienteId)
         .not("datos->campana", "is", null)
-        .gte("creado_en", desdeISO)
+        .gte("creado_en", desdeConsulta)
         .lte("creado_en", hastaISO)
         .order("creado_en", { ascending: false })
         .range(inicio, inicio + PAGINA - 1);
@@ -161,7 +198,8 @@ async function contactosConAnuncio(
       if (data.length < PAGINA) break;
       if (inicio > 20_000) break;
     }
-    return { contactos: arma(filas), total: filas.length };
+    const dentro = arma(filas).filter(enPeriodo);
+    return { contactos: dentro, total: dentro.length };
   } catch {
     // Camino lento, pero que no deja la pantalla en blanco.
     const filas: Record<string, unknown>[] = [];
@@ -170,7 +208,7 @@ async function contactosConAnuncio(
         .from("ed_contactos")
         .select(columnas)
         .eq("cliente_id", clienteId)
-        .gte("creado_en", desdeISO)
+        .gte("creado_en", desdeConsulta)
         .lte("creado_en", hastaISO)
         .order("creado_en", { ascending: false })
         .range(inicio, inicio + PAGINA - 1);
@@ -179,7 +217,8 @@ async function contactosConAnuncio(
       if (data.length < PAGINA) break;
       if (inicio > 20_000) break;
     }
-    return { contactos: arma(filas), total: filas.length };
+    const dentro = arma(filas).filter(enPeriodo);
+    return { contactos: dentro, total: dentro.length };
   }
 }
 
@@ -191,6 +230,9 @@ async function contactosConAnuncio(
  * compraron", que es la pregunta que se hace quien pone plata en anuncios.
  */
 export async function cargarPauta(clienteId: string, rango: Rango): Promise<Pauta> {
+  // Un `clienteId` vacío haría que PostgREST ignorara el filtro y devolviera la
+  // tabla entera. Hoy siempre viene de la sesión, pero la guarda cuesta nada.
+  exigirId(clienteId);
   const supa = db();
   const { desdeISO, hastaISO } = bordesUTC(rango);
 

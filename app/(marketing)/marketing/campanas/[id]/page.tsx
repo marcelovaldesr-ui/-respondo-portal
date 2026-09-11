@@ -112,7 +112,7 @@ export default async function DetalleCampana({
         <Kpi
           etiqueta="Conversaciones"
           valor={formatearNumero(campana.conversaciones)}
-          nota={campana.cpc === null ? "Costo no disponible" : `${plata(campana.cpc)} cada una`}
+          nota={campana.costoPorConversacion === null ? "Costo no disponible" : `${plata(campana.costoPorConversacion)} cada una`}
         />
         <Kpi
           etiqueta="Calificados"
@@ -123,7 +123,7 @@ export default async function DetalleCampana({
         <Kpi
           etiqueta="Ventas"
           valor={formatearNumero(campana.ventas)}
-          nota={campana.cpv === null ? "Costo no disponible" : `${plata(campana.cpv)} cada una`}
+          nota={campana.costoPorVenta === null ? "Costo no disponible" : `${plata(campana.costoPorVenta)} cada una`}
           destacada
         />
         <Kpi

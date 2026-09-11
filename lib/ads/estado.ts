@@ -113,7 +113,7 @@ export async function estadoDePauta(clienteId: string): Promise<EstadoPauta> {
       titulo: "Cuenta publicitaria de Meta",
       estado: "manual",
       detalle:
-        "La lectura de tu cuenta publicitaria no está habilitada en tu plan. Sin ella igual ves de dónde viene cada venta; lo que falta es cuánto costó.",
+        "La lectura de tu cuenta publicitaria todavía no está activada. La activamos nosotros; escríbenos. Sin ella igual ves de dónde viene cada venta; lo que falta es cuánto costó.",
     });
   } else if (conexion && conexion.estado === "conectada") {
     items.push({

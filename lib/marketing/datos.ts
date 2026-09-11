@@ -193,8 +193,8 @@ export async function cargarMarketing(
       avanzados: 0,
       ventas: 0,
       cobrado: 0,
-      cpc: null,
-      cpv: null,
+      costoPorConversacion: null,
+      costoPorVenta: null,
       roas: null,
       anuncios: 0,
       desde: null,
@@ -231,8 +231,8 @@ export async function cargarMarketing(
       avanzados: 0,
       ventas: 0,
       cobrado: 0,
-      cpc: null,
-      cpv: null,
+      costoPorConversacion: null,
+      costoPorVenta: null,
       roas: null,
       anuncios: 0,
       desde: null,
@@ -253,8 +253,8 @@ export async function cargarMarketing(
   const mismaMoneda = moneda === "CLP";
   const campanas = [...porCampana.values()].map((c) => ({
     ...c,
-    cpc: c.gasto !== null && c.conversaciones ? c.gasto / c.conversaciones : null,
-    cpv: c.gasto !== null && c.ventas ? c.gasto / c.ventas : null,
+    costoPorConversacion: c.gasto !== null && c.conversaciones ? c.gasto / c.conversaciones : null,
+    costoPorVenta: c.gasto !== null && c.ventas ? c.gasto / c.ventas : null,
     roas: c.gasto && mismaMoneda ? c.cobrado / c.gasto : null,
   }));
   for (const b of borradores.items) {
@@ -273,8 +273,8 @@ export async function cargarMarketing(
       avanzados: 0,
       ventas: 0,
       cobrado: 0,
-      cpc: null,
-      cpv: null,
+      costoPorConversacion: null,
+      costoPorVenta: null,
       roas: null,
       anuncios: b.creatividadIds.length,
       desde: null,

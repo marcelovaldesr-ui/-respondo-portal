@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { obtenerUsuarioConPermiso } from "@/lib/auth";
 import { modoDemo } from "@/lib/marketing/modo";
+import { cupoDisponible } from "@/lib/marketing/cupo";
 import {
   cambiarEstadoCreatividad,
   eliminarCreatividad,
@@ -43,6 +44,8 @@ export async function generarTextoCreativo(
   const usuario = await obtenerUsuarioConPermiso("generar_insights");
   if (!usuario) return { ok: false, motivo: "Sesión no válida." };
   const demo = await modoDemo();
+  const topado = await cupoDisponible(usuario.clienteId, "texto");
+  if (topado) return { ok: false, motivo: topado };
   const r = await generarPaquete(usuario.clienteId, pedido, demo);
   return r.ok ? { ok: true, paquete: r.paquete, demo } : r;
 }
@@ -54,6 +57,8 @@ export async function generarImagenCreativa(
   const usuario = await obtenerUsuarioConPermiso("generar_insights");
   if (!usuario) return { ok: false, motivo: "Sesión no válida." };
   if (await modoDemo()) return { ok: true, url: IMAGENES_DEMO[formato] ?? IMAGENES_DEMO["1:1"], demo: true };
+  const topado = await cupoDisponible(usuario.clienteId, "imagen");
+  if (topado) return { ok: false, motivo: topado };
   const r = await generarImagen(usuario.clienteId, prompt.slice(0, 1200), formato);
   return r.ok ? { ok: true, url: r.url, demo: false } : r;
 }

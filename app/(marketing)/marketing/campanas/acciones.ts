@@ -5,6 +5,7 @@ import { obtenerUsuarioConPermiso } from "@/lib/auth";
 import { eliminarBorrador, guardarBorrador, type EntradaBorrador } from "@/lib/marketing/campanas";
 import { generarPaquete } from "@/lib/marketing/creatividades";
 import { modoDemo } from "@/lib/marketing/modo";
+import { cupoDisponible } from "@/lib/marketing/cupo";
 import type { EstadoCampana } from "@/lib/marketing/tipos";
 import { capacidadesDe } from "@/lib/marketing/capacidades";
 
@@ -57,6 +58,8 @@ export async function sugerirCopiesAccion(entrada: {
 }): Promise<{ ok: true; copies: { titular: string; texto: string; cta: string }[] } | { ok: false; motivo: string }> {
   const usuario = await obtenerUsuarioConPermiso("generar_insights");
   if (!usuario) return { ok: false, motivo: "Sesión no válida." };
+  const topado = await cupoDisponible(usuario.clienteId, "texto");
+  if (topado) return { ok: false, motivo: topado };
   const demo = await modoDemo();
   const r = await generarPaquete(
     usuario.clienteId,

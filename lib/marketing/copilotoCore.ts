@@ -77,7 +77,7 @@ export const HERRAMIENTAS: Herramienta[] = [
       return activas
         .map(
           (c) =>
-            `  «${c.nombre}» [${c.estado}${c.origen === "atribucion" ? ", solo atribución" : ""}]: gasto ${pesos(c.gasto)} · ${c.conversaciones} conv · ${c.calificados} calif · ${c.avanzados} cotiz/reservas · ${c.ventas} ventas · cobrado ${pesos(c.cobrado)} · CPC ${pesos(c.cpc)} · CPV ${pesos(c.cpv)} · ROAS ${veces(c.roas)} · ${c.anuncios} anuncios`,
+            `  «${c.nombre}» [${c.estado}${c.origen === "atribucion" ? ", solo atribución" : ""}]: gasto ${pesos(c.gasto)} · ${c.conversaciones} conv · ${c.calificados} calif · ${c.avanzados} cotiz/reservas · ${c.ventas} ventas · cobrado ${pesos(c.cobrado)} · costo por conversación ${pesos(c.costoPorConversacion)} · costo por venta ${pesos(c.costoPorVenta)} · ROAS ${veces(c.roas)} · ${c.anuncios} anuncios`,
         )
         .join("\n");
     },

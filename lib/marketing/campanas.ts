@@ -1,8 +1,8 @@
-import { db } from "@/lib/db";
 import { panoramaDemo } from "@/lib/marketing/demo";
 import { resolverRango } from "@/lib/ads/periodos";
 import type { AudienciaCampana, BorradorCampana, EstadoCampana } from "@/lib/marketing/tipos";
 import { traducirFalla } from "@/lib/marketing/fallas";
+import { borrarEn, insertarEn, leerDe, modificarEn, soloDe, unaDe } from "@/lib/marketing/tenant";
 
 /**
  * BORRADORES DE CAMPAÑA — lo que el asistente arma y lo que el dueño edita.
@@ -54,14 +54,10 @@ export async function listarBorradores(
   demo = false,
 ): Promise<{ disponible: boolean; items: BorradorCampana[] }> {
   if (demo) return { disponible: true, items: panoramaDemo(resolverRango("30d")).borradores };
-  const { data, error } = await db()
-    .from("ed_mk_campanas")
-    .select("*")
-    .eq("cliente_id", clienteId)
-    .order("actualizado_en", { ascending: false })
-    .limit(100);
+  const { data, error } = await leerDe(clienteId, TABLA).order("actualizado_en", { ascending: false }).limit(100);
   if (error) return { disponible: false, items: [] };
-  return { disponible: true, items: (data ?? []).map((f) => desdeFila(f as Record<string, unknown>)) };
+  const filas = soloDe(clienteId, TABLA, data as Record<string, unknown>[] | null);
+  return { disponible: true, items: filas.map((f) => desdeFila(f)) };
 }
 
 export async function obtenerBorrador(
@@ -70,14 +66,10 @@ export async function obtenerBorrador(
   demo = false,
 ): Promise<BorradorCampana | null> {
   if (demo) return panoramaDemo(resolverRango("30d")).borradores.find((b) => b.id === id) ?? null;
-  const { data, error } = await db()
-    .from("ed_mk_campanas")
-    .select("*")
-    .eq("cliente_id", clienteId)
-    .eq("id", id)
-    .maybeSingle();
+  const { data, error } = await leerDe(clienteId, TABLA).eq("id", id).maybeSingle();
   if (error || !data) return null;
-  return desdeFila(data as Record<string, unknown>);
+  const fila = unaDe(clienteId, TABLA, data as Record<string, unknown>);
+  return fila ? desdeFila(fila) : null;
 }
 
 export type EntradaBorrador = Omit<BorradorCampana, "id" | "creadoEn" | "actualizadoEn" | "estado"> & {
@@ -118,7 +110,6 @@ export async function guardarBorrador(
   // `publicada` no se guarda desde acá bajo ninguna circunstancia.
   const estado = estadoDeBorrador(entrada, capacidades);
   const fila = {
-    cliente_id: clienteId,
     nombre: entrada.nombre.slice(0, 100) || "Campaña sin nombre",
     objetivo: entrada.objetivo,
     oferta: entrada.oferta.slice(0, 500),
@@ -133,23 +124,14 @@ export async function guardarBorrador(
     notas: entrada.notas.slice(0, 1000),
     actualizado_en: new Date().toISOString(),
   };
-  const supa = db();
   if (id) {
-    // `.select("id")`: sin esto, actualizar un borrador que ya no existe
-    // respondía «Guardado» y no escribía nada. Ver `creatividades.ts`.
-    const { data, error } = await supa
-      .from("ed_mk_campanas")
-      .update(fila)
-      .eq("id", id)
-      .eq("cliente_id", clienteId)
-      .select("id")
-      .maybeSingle();
+    const { data, error } = await modificarEn(clienteId, TABLA, id, fila);
     if (error)
       return { ok: false, motivo: traducirFalla({ proveedor: "almacen", operacion: "guardarBorrador", clienteId, crudo: error.message }) };
     if (!data) return { ok: false, motivo: "Ese borrador ya no existe. Puede que se haya eliminado desde otra pestaña." };
     return { ok: true, id, estado };
   }
-  const { data, error } = await supa.from("ed_mk_campanas").insert(fila).select("id").maybeSingle();
+  const { data, error } = await insertarEn(clienteId, TABLA, fila);
   if (error || !data) {
     return {
       ok: false,
@@ -160,14 +142,10 @@ export async function guardarBorrador(
 }
 
 export async function eliminarBorrador(clienteId: string, id: string): Promise<boolean> {
-  const { data, error } = await db()
-    .from("ed_mk_campanas")
-    .delete()
-    .eq("id", id)
-    .eq("cliente_id", clienteId)
-    .select("id")
-    .maybeSingle();
+  const { data, error } = await borrarEn(clienteId, TABLA, id);
   return !error && Boolean(data);
 }
+
+const TABLA = "ed_mk_campanas" as const;
 
 export { borradorEnTexto } from "@/lib/marketing/campanasCore";

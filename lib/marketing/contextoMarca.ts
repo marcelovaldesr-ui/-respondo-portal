@@ -3,6 +3,7 @@ import { listarFichas } from "@/lib/conocimiento";
 import { saberDelNegocio } from "@/lib/isabel";
 import { saberEnTexto, type HechoSabido } from "@/lib/isabelCore";
 import { NEGOCIO_DEMO } from "@/lib/marketing/demo";
+import { exigirId } from "@/lib/marketing/tenant";
 
 /**
  * LO QUE RESPONDO YA SABE DEL NEGOCIO, PUESTO AL SERVICIO DEL MARKETING.
@@ -68,6 +69,7 @@ function zonaDesde(fichas: { categoria: string; titulo: string; contenido: strin
 }
 
 export async function contextoDeMarca(clienteId: string, demo = false): Promise<ContextoMarca> {
+  exigirId(clienteId);
   if (demo) {
     return {
       nombre: NEGOCIO_DEMO.nombre,

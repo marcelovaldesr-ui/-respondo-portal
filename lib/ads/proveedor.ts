@@ -90,7 +90,7 @@ export const ERRORES: Record<CodigoErrorAds, ErrorAds> = {
   },
   no_configurado: {
     codigo: "no_configurado",
-    mensaje: "La lectura de tu cuenta publicitaria no está habilitada en tu plan.",
+    mensaje: "La lectura de tu cuenta publicitaria todavía no está activada. La activamos nosotros; escríbenos.",
   },
 };
 

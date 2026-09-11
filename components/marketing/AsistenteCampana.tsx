@@ -10,6 +10,7 @@ import { OBJETIVOS, type BorradorCampana, type Creatividad, type EstadoCampana }
 import VistaPreviaAnuncio from "@/components/marketing/VistaPreviaAnuncio";
 import { EstadoDeCampana } from "@/components/marketing/Estado";
 import { Ico } from "@/components/marketing/Iconos";
+import { urlDeImagen } from "@/lib/marketing/imagenes";
 
 /**
  * EL ASISTENTE DE CAMPAÑAS — hacer simple lo que Meta hace complejo.
@@ -430,7 +431,7 @@ export default function AsistenteCampana({
                             <span className="mk-miniatura">
                               {c.imagenUrl && (
                                 // eslint-disable-next-line @next/next/no-img-element
-                                <img src={c.imagenUrl} alt="" />
+                                <img src={urlDeImagen(c.imagenUrl) ?? ""} alt="" />
                               )}
                             </span>
                             <span className="min-w-0 flex-1 text-left">

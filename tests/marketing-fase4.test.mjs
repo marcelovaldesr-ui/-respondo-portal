@@ -101,8 +101,11 @@ test("nadie aparece a la vez en «Compraron» y en «Perdidos»", () => {
 
 test("sin la conexión habilitada, el motivo no invita a conectar nada", () => {
   const texto = motivoSinPublicidad({ puedeConectarMeta: false, metaConectada: false, metaFaltaElegirCuenta: false });
-  assert.match(texto, /no está habilitada en tu plan/i);
+  assert.match(texto, /todavía no está activada/i);
+  // Ni invita a conectar (no se puede), ni le echa la culpa al plan contratado:
+  // la causa es de la instalación, no comercial.
   assert.doesNotMatch(texto, /conecta|conectes/i);
+  assert.doesNotMatch(texto, /tu plan/i);
 });
 
 test("con la cuenta conectada, un límite de consultas no dice «conecta tu cuenta»", () => {

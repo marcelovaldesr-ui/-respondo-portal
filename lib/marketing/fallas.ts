@@ -20,7 +20,7 @@ export type Proveedor = "ia" | "almacen" | "imagen";
 type Clase = "sin_motor" | "lento" | "ocupado" | "rechazado" | "incompleto" | "sin_espacio" | "desconocido";
 
 const TEXTO: Record<Clase, string> = {
-  sin_motor: "La redacción y las imágenes con IA no están habilitadas en tu plan.",
+  sin_motor: "La redacción y las imágenes con IA todavía no están activadas.",
   lento: "El generador se demoró más de la cuenta. Vuelve a intentar: tu texto no se perdió.",
   ocupado: "El generador está saturado en este momento. Espera unos segundos y reintenta.",
   rechazado: "El generador no quiso escribir eso. Prueba describiendo el producto de otra forma.",

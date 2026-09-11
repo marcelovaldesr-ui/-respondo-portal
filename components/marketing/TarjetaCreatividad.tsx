@@ -2,6 +2,7 @@ import Link from "next/link";
 import { formatearMonto, formatearNumero } from "@/lib/ads/moneda";
 import type { Creatividad } from "@/lib/marketing/tipos";
 import { EstadoDeCreatividad } from "@/components/marketing/Estado";
+import { urlDeImagen } from "@/lib/marketing/imagenes";
 
 const MESES = ["ene", "feb", "mar", "abr", "may", "jun", "jul", "ago", "sept", "oct", "nov", "dic"];
 
@@ -41,7 +42,7 @@ export default function TarjetaCreatividad({
       <div className="mk-creatividad-visual">
         {c.imagenUrl ? (
           // eslint-disable-next-line @next/next/no-img-element
-          <img src={c.imagenUrl} alt={c.titular} loading="lazy" />
+          <img src={urlDeImagen(c.imagenUrl) ?? ""} alt={c.titular} loading="lazy" />
         ) : (
           <div className="mk-creatividad-sinimagen">
             <span style={{ fontSize: "13px", fontWeight: 600, color: "var(--indigo)", lineHeight: 1.35 }}>

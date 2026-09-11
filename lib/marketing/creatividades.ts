@@ -11,6 +11,8 @@ import { panoramaDemo } from "@/lib/marketing/demo";
 import { resolverRango } from "@/lib/ads/periodos";
 import type { Creatividad, FormatoCreatividad } from "@/lib/marketing/tipos";
 import { textoDeFalla, traducirFalla } from "@/lib/marketing/fallas";
+import { borrarEn, insertarEn, leerColumnas, leerDe, modificarEn, perteneceA, soloDe, unaDe } from "@/lib/marketing/tenant";
+import { PREFIJO, rutaDeImagen, rutaEsDelCliente } from "@/lib/marketing/imagenes";
 
 /**
  * EL ESTUDIO CREATIVO — generar, guardar, variar.
@@ -30,6 +32,15 @@ import { textoDeFalla, traducirFalla } from "@/lib/marketing/fallas";
 
 const MODELO_IMAGEN = "gemini-2.5-flash-image";
 const BUCKET = "creatividades";
+const TABLA = "ed_mk_creatividades" as const;
+
+/** Topes de la imagen generada. El bucket además corta en 4 MB (migración 303). */
+const MAX_BYTES = 4 * 1024 * 1024;
+const MAX_LADO = 4096;
+const MAX_PIXELES = 40_000_000;
+
+export { PREFIJO, rutaDeImagen, rutaEsDelCliente, urlDeImagen } from "@/lib/marketing/imagenes";
+
 
 /* ── Lectura ─────────────────────────────────────────────────────────────── */
 
@@ -69,14 +80,10 @@ export async function listarCreatividades(
   demo = false,
 ): Promise<{ disponible: boolean; items: Creatividad[] }> {
   if (demo) return { disponible: true, items: panoramaDemo(resolverRango("30d")).creatividades };
-  const { data, error } = await db()
-    .from("ed_mk_creatividades")
-    .select("*")
-    .eq("cliente_id", clienteId)
-    .order("actualizado_en", { ascending: false })
-    .limit(200);
+  const { data, error } = await leerDe(clienteId, TABLA).order("actualizado_en", { ascending: false }).limit(200);
   if (error) return { disponible: false, items: [] };
-  return { disponible: true, items: (data ?? []).map((f) => desdeFila(f as Record<string, unknown>)) };
+  const filas = soloDe(clienteId, TABLA, data as Record<string, unknown>[] | null);
+  return { disponible: true, items: filas.map((f) => desdeFila(f)) };
 }
 
 export async function obtenerCreatividad(
@@ -87,14 +94,10 @@ export async function obtenerCreatividad(
   if (demo) {
     return panoramaDemo(resolverRango("30d")).creatividades.find((c) => c.id === id) ?? null;
   }
-  const { data, error } = await db()
-    .from("ed_mk_creatividades")
-    .select("*")
-    .eq("cliente_id", clienteId)
-    .eq("id", id)
-    .maybeSingle();
+  const { data, error } = await leerDe(clienteId, TABLA).eq("id", id).maybeSingle();
   if (error || !data) return null;
-  return desdeFila(data as Record<string, unknown>);
+  const fila = unaDe(clienteId, TABLA, data as Record<string, unknown>);
+  return fila ? desdeFila(fila) : null;
 }
 
 /* ── Generación ──────────────────────────────────────────────────────────── */
@@ -172,16 +175,37 @@ export async function generarImagen(
     clearTimeout(timer);
   }
 
-  // A JPEG: 1,4 MB → ~90 KB. Supabase Free tiene 1 GB de storage y se llena.
+  /**
+   * A JPEG, y de paso la validación del contenido.
+   *
+   * Recodificar con sharp NO es solo para ahorrar espacio (1,4 MB → ~90 KB, y
+   * Supabase Free tiene 1 GB): es lo que garantiza que lo que se sube sea una
+   * imagen de verdad. Lo que llega es base64 de un tercero; si no decodifica
+   * como imagen, sharp falla y no se sube nada. Antes el `catch` subía los
+   * bytes crudos etiquetados como `image/jpeg`, así que una respuesta rara del
+   * modelo terminaba en el bucket con un tipo que no le correspondía.
+   */
   let jpeg: Buffer;
   try {
     const sharp = (await import("sharp")).default;
-    jpeg = await sharp(png).jpeg({ quality: 84, mozjpeg: true }).toBuffer();
+    const img = sharp(png, { limitInputPixels: MAX_PIXELES });
+    const meta = await img.metadata();
+    if (!meta.width || !meta.height) return { ok: false, motivo: "Lo que llegó no es una imagen. Vuelve a intentar." };
+    if (meta.width > MAX_LADO || meta.height > MAX_LADO) {
+      return { ok: false, motivo: "La imagen salió más grande de lo esperado. Vuelve a intentar." };
+    }
+    jpeg = await img.jpeg({ quality: 84, mozjpeg: true }).toBuffer();
   } catch {
-    jpeg = png;
+    return { ok: false, motivo: "Lo que llegó no es una imagen. Vuelve a intentar." };
   }
+  if (jpeg.byteLength > MAX_BYTES) return { ok: false, motivo: "La imagen pesa demasiado. Vuelve a intentar." };
 
   const supa = db();
+  /**
+   * La ruta la arma el servidor con el `clienteId` DE LA SESIÓN. No hay ningún
+   * camino por el que el navegador proponga un path: sin eso, un `../` o un
+   * uuid ajeno escribiría en el prefijo de otro negocio.
+   */
   const ruta = `${clienteId}/${Date.now()}.jpg`;
   const subida = await supa.storage.from(BUCKET).upload(ruta, jpeg, {
     contentType: "image/jpeg",
@@ -193,9 +217,9 @@ export async function generarImagen(
       motivo: traducirFalla({ proveedor: "almacen", operacion: "subirImagen", clienteId, crudo: subida.error.message }),
     };
   }
-  const { data } = supa.storage.from(BUCKET).getPublicUrl(ruta);
-  if (!data?.publicUrl) return { ok: false, motivo: textoDeFalla("sin_espacio") };
-  return { ok: true, url: data.publicUrl };
+  // Se devuelve el PUNTERO, no una URL pública. Quien lo pinta lo pasa por
+  // `urlDeImagen()`; quien lo guarda, por la validación de `guardarCreatividad`.
+  return { ok: true, url: `${PREFIJO}${ruta}` };
 }
 
 /* ── Escritura ───────────────────────────────────────────────────────────── */
@@ -232,13 +256,22 @@ export async function guardarCreatividad(
    * quedaría un puntero cruzado guardado, y eso es una fuga esperando a que
    * alguien lo resuelva sin filtrar por cliente.
    */
+  /**
+   * `imagenUrl` llega del navegador como todo lo demás, y hasta ahora se
+   * escribía cruda. Una petición fabricada podía persistir
+   * `https://atacante.example/pixel.jpg` y el portal lo pediría cada vez que
+   * pinta esa creatividad. Solo se aceptan punteros nuestros, y solo del
+   * prefijo de ESTE negocio: nadie apunta al archivo de otra empresa.
+   */
+  const rutaImagen = rutaDeImagen(entrada.imagenUrl);
+  const imagenUrl = rutaImagen && rutaEsDelCliente(rutaImagen, clienteId) ? `${PREFIJO}${rutaImagen}` : null;
+
   const [campanaId, varianteDe] = await Promise.all([
-    perteneceAlCliente(clienteId, "ed_mk_campanas", entrada.campanaId),
-    perteneceAlCliente(clienteId, "ed_mk_creatividades", entrada.varianteDe),
+    perteneceA(clienteId, "ed_mk_campanas", entrada.campanaId),
+    perteneceA(clienteId, TABLA, entrada.varianteDe),
   ]);
 
   const fila = {
-    cliente_id: clienteId,
     nombre: entrada.nombre.slice(0, 80),
     objetivo: entrada.objetivo,
     producto: entrada.producto.slice(0, 120),
@@ -250,7 +283,7 @@ export async function guardarCreatividad(
     titular: entrada.titular.slice(0, 120),
     texto: entrada.texto.slice(0, 1000),
     cta: entrada.cta.slice(0, 40),
-    imagen_url: entrada.imagenUrl,
+    imagen_url: imagenUrl,
     imagen_prompt: entrada.imagenPrompt,
     estado: entrada.estado ?? "borrador",
     campana_id: campanaId,
@@ -258,29 +291,13 @@ export async function guardarCreatividad(
     actualizado_en: new Date().toISOString(),
   };
 
-  const supa = db();
   if (id) {
-    /**
-     * `.select("id")` no es cosmética: PostgREST no da error cuando ningún
-     * registro coincide, así que sin esto un id ajeno o borrado devolvía
-     * «Guardado» sin haber escrito nada. Un falso «listo» es peor que un error.
-     */
-    const { data, error } = await supa
-      .from("ed_mk_creatividades")
-      .update(fila)
-      .eq("id", id)
-      .eq("cliente_id", clienteId)
-      .select("id")
-      .maybeSingle();
+    const { data, error } = await modificarEn(clienteId, TABLA, id, fila);
     if (error) return { ok: false, motivo: traducirFalla({ proveedor: "almacen", operacion: "guardarCreatividad", clienteId, crudo: error.message }) };
     if (!data) return { ok: false, motivo: "Esa creatividad ya no existe. Puede que se haya eliminado desde otra pestaña." };
     return { ok: true, id };
   }
-  const { data, error } = await supa
-    .from("ed_mk_creatividades")
-    .insert(fila)
-    .select("id")
-    .maybeSingle();
+  const { data, error } = await insertarEn(clienteId, TABLA, fila);
   if (error || !data) {
     return {
       ok: false,
@@ -295,37 +312,39 @@ export async function cambiarEstadoCreatividad(
   id: string,
   estado: Creatividad["estado"],
 ): Promise<boolean> {
-  const { data, error } = await db()
-    .from("ed_mk_creatividades")
-    .update({ estado, actualizado_en: new Date().toISOString() })
-    .eq("id", id)
-    .eq("cliente_id", clienteId)
-    .select("id")
-    .maybeSingle();
-  return !error && Boolean(data);
-}
-
-export async function eliminarCreatividad(clienteId: string, id: string): Promise<boolean> {
-  const { data, error } = await db()
-    .from("ed_mk_creatividades")
-    .delete()
-    .eq("id", id)
-    .eq("cliente_id", clienteId)
-    .select("id")
-    .maybeSingle();
+  const { data, error } = await modificarEn(clienteId, TABLA, id, { estado, actualizado_en: new Date().toISOString() });
   return !error && Boolean(data);
 }
 
 /**
- * ¿Este id es de este negocio? Devuelve el id si sí, null si no o si viene
- * vacío. Nunca lanza: un puntero inválido no puede tumbar un guardado.
+ * Elimina la creatividad Y su imagen, en ese orden y nunca al revés.
+ *
+ * PRIMERO la fila: si el borrado en Storage falla, queda un archivo huérfano
+ * —molesto, invisible, barato—. Al revés quedaría una creatividad viva con la
+ * imagen rota, que sí se ve y sí duele.
+ *
+ * Y antes de borrar el archivo se comprueba que NADIE MÁS lo apunte: duplicar
+ * una creatividad copia la misma ruta, así que borrar la copia se llevaría la
+ * imagen del original. Es idempotente: si el objeto ya no está, no pasa nada.
  */
-async function perteneceAlCliente(clienteId: string, tabla: string, id?: string | null): Promise<string | null> {
-  if (!id) return null;
+export async function eliminarCreatividad(clienteId: string, id: string): Promise<boolean> {
+  const { data, error } = await borrarEn(clienteId, TABLA, id, "id, imagen_url");
+  if (error || !data) return false;
+
+  const ruta = rutaDeImagen((data as { imagen_url?: string | null }).imagen_url);
+  if (ruta) await borrarImagenSiNadieLaUsa(clienteId, ruta);
+  return true;
+}
+
+/** Solo se borra el archivo si ninguna otra creatividad del negocio lo referencia. */
+async function borrarImagenSiNadieLaUsa(clienteId: string, ruta: string): Promise<void> {
   try {
-    const { data } = await db().from(tabla).select("id").eq("id", id).eq("cliente_id", clienteId).maybeSingle();
-    return data ? id : null;
+    const { data } = await leerColumnas(clienteId, TABLA, "id").eq("imagen_url", `${PREFIJO}${ruta}`).limit(1);
+    if (data?.length) return;
+    await db().storage.from(BUCKET).remove([ruta]);
   } catch {
-    return null;
+    // Un huérfano en el bucket no puede hacer fallar el borrado que el dueño pidió.
   }
 }
+
+

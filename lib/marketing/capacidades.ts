@@ -15,7 +15,7 @@ import { db } from "@/lib/db";
  * LA REGLA: la UI nunca ofrece una acción que el producto no puede ejecutar.
  * Si `puedeConectarMeta` es false, no existe ningún botón «Conectar Meta» en
  * ninguna parte, y el motivo de cada cifra ausente cambia —«no está habilitada
- * en tu plan» y no «conéctala», que sería mandar al dueño a una puerta cerrada.
+ * todavía no está activada» y no «conéctala», que sería mandarlo a una puerta cerrada.
  *
  * DOS EJES, Y NO HAY QUE CONFUNDIRLOS:
  *   · PUEDE  — la instalación lo soporta (variables de entorno, migraciones).
@@ -148,7 +148,13 @@ export function motivoSinPublicidad(
   c: Pick<Capacidades, "puedeConectarMeta" | "metaConectada" | "metaFaltaElegirCuenta">,
   codigo?: CodigoErrorAds | null,
 ): string {
-  if (!c.puedeConectarMeta) return "La lectura de tu cuenta publicitaria no está habilitada en tu plan.";
+  /**
+   * ⚠️ NO decir «tu plan». `puedeConectarMeta` depende de tres variables de
+   * entorno de la instalación, no de lo que el negocio haya contratado. Culpar
+   * al plan sería inventarle al dueño una causa comercial —y hacerle creer que
+   * pagando más se arregla— cuando en realidad es un paso nuestro.
+   */
+  if (!c.puedeConectarMeta) return "La lectura de tu cuenta publicitaria todavía no está activada. La activamos nosotros; escríbenos.";
   if (c.metaFaltaElegirCuenta) return "Falta elegir cuál de tus cuentas publicitarias mirar, en Integraciones.";
   if (!c.metaConectada) return "Se ve cuando conectes tu cuenta publicitaria en Integraciones.";
   /**

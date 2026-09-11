@@ -21,7 +21,7 @@ const AVISOS: Record<string, { texto: string; tono: "ok" | "error" }> = {
   elegir: { texto: "Meta autorizó el acceso. Elige cuál de tus cuentas publicitarias es la de este negocio.", tono: "ok" },
   cancelado: { texto: "Se canceló la autorización en Meta. No se guardó nada.", tono: "error" },
   sin_cuentas: { texto: "La cuenta de Meta con la que entraste no administra ninguna cuenta publicitaria. Entra con la cuenta que sí las administra.", tono: "error" },
-  no_configurado: { texto: "La lectura de tu cuenta publicitaria no está habilitada en tu plan.", tono: "error" },
+  no_configurado: { texto: "La lectura de tu cuenta publicitaria todavía no está activada. La activamos nosotros; escríbenos.", tono: "error" },
   estado_invalido: { texto: "El enlace de vuelta venció o no era válido. Vuelve a intentarlo desde acá.", tono: "error" },
   respuesta_incompleta: { texto: "Meta devolvió una respuesta incompleta.", tono: "error" },
   no_se_guardo: { texto: "No pudimos guardar la conexión. Vuelve a intentarlo.", tono: "error" },
@@ -188,7 +188,7 @@ export default async function Integraciones({ searchParams }: { searchParams: Pr
           }
           pie={
             !metaAdsConfigurado() ? (
-              <span style={{ fontSize: "12.5px", color: "var(--alerta)" }}>No está habilitada en tu plan.</span>
+              <span style={{ fontSize: "12.5px", color: "var(--alerta)" }}>Todavía no está activada.</span>
             ) : !conexion ? (
               <a href="/api/ads/conectar" className="btn-primario">
                 Conectar Meta

@@ -75,10 +75,14 @@ export type FilaCampana = {
   avanzados: number;
   ventas: number;
   cobrado: number;
-  /** Costo por conversación. null sin gasto. */
-  cpc: number | null;
+  /**
+   * Costo por CONVERSACIÓN. Se llamaba `cpc`, y en publicidad CPC significa
+   * universalmente cost-per-click: cualquiera con oficio leía mal la columna.
+   * Respondo no mide costo por clic en ninguna parte.
+   */
+  costoPorConversacion: number | null;
   /** Costo por venta. null sin gasto o sin ventas. */
-  cpv: number | null;
+  costoPorVenta: number | null;
   /** Retorno sobre lo cobrado por enlace. null sin gasto. */
   roas: number | null;
   /** Cuántos anuncios distintos trajeron gente. */
