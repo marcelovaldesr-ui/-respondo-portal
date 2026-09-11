@@ -76,8 +76,12 @@ export function crearBaseMemoria(tablas = {}, esquema = {}) {
     llamadas.push(q);
     const b = {
       select(_cols, opts) {
-        if (q.op === "select") q.head = Boolean(opts?.head), (q.count = opts?.count);
-        else q.retorno = true;
+        if (q.op === "select") {
+          q.head = Boolean(opts?.head);
+          q.count = opts?.count;
+        } else {
+          q.retorno = true;
+        }
         return b;
       },
       insert(p) { q.op = "insert"; q.payload = p; return b; },

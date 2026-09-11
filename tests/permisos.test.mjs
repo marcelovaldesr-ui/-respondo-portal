@@ -14,6 +14,7 @@ test("el dueño conserva todas las capacidades", () => {
     "generar_insights",
     "gestionar_integraciones",
     "preguntar_isabel",
+    "aprobar_mensajes_pagados",
   ]) {
     assert.equal(tienePermiso({ rol: "dueno" }, permiso), true);
   }
@@ -28,4 +29,6 @@ test("staff opera clientes y agenda sin administrar configuración", () => {
   assert.equal(tienePermiso({ rol: "staff" }, "gestionar_integraciones"), false);
   // Isabel lee TODO el historial del negocio: es del dueño, no del mesón.
   assert.equal(tienePermiso({ rol: "staff" }, "preguntar_isabel"), false);
+  // Aprobar un mensaje de Beto es gastar plata (Fase 0): solo dueño.
+  assert.equal(tienePermiso({ rol: "staff" }, "aprobar_mensajes_pagados"), false);
 });

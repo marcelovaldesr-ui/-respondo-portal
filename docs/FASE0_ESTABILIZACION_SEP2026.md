@@ -13,7 +13,7 @@
 - **A** es el resumen: qué quedó resuelto y qué no.
 - **B a G** son la evidencia: bugs, cambios por archivo, pruebas, métricas, jobs y seguridad.
 - **H a K** son para decidir y desplegar: qué no se tocó, qué archivos cambian, qué correr antes y qué sigue.
-- Las preguntas que necesitan una decisión tuya están **al final**.
+- Las decisiones abiertas se cerraron **al final**. Lo que tienes que correr está en `docs/FASE0_PENDIENTES_MARCELO.md`.
 - **[V]** = verificado con código y prueba automática. **[S]** = sospecha que hay que confirmar con la base (hay SQL de solo lectura en J).
 
 ---
@@ -102,7 +102,7 @@
 
 **B7. El cierre por silencio del embudo dejaba a Beto sin cotizaciones que retomar [V].**
 - **Problema.** El embudo pasa a `perdido · sin_respuesta` toda cotización con 7 días sin respuesta y le quita la etiqueta. Beto busca cotizaciones con 3 a 30 días de silencio y descartaba los perdidos. Desde el día 7 ninguna calificaba, y una propuesta hecha el día 6 vencía al aprobarla.
-- **Arreglo.** Un perdido *por silencio* sigue siendo retomable (el juez decide si hubo cotización). Un perdido por otro motivo, no. **Ver pregunta 2.**
+- **Arreglo.** Un perdido *por silencio* sigue siendo retomable (el juez decide si hubo cotización). Un perdido por otro motivo, no. **Ver decisión 2.**
 - **Prueba.** Test dedicado en el ciclo de Beto.
 
 **B8. Cruce de negocios en la disponibilidad pública [V].**
@@ -315,7 +315,7 @@
 | **Tarjeta Beto** | Cotizaciones retomadas / Clientes reactivados / Ventas recuperadas (**nadie escribe esos tipos**) | — | — | Seguimientos enviados · Respondieron · Por aprobar (si hay). |
 | **Tarjeta Vera** | Encuestas respondidas / **Reseñas conseguidas** (nadie lo escribe) / Clientes molestos | — | — | Encuestas enviadas · Encuestas respondidas · Clientes molestos. |
 | **Cobros pendientes (total en $)** | — | — | Suma sobre los **10** más antiguos | Total real (hasta 1.000 cobros). La lista sigue mostrando los 10 más antiguos, y se dice. |
-| **Bloque del mes** | Último `ed_metricas` no basal, aunque fuera de otro mes | — | — | Solo si es del mes en curso. Hoy esa tabla solo la llenan las semillas de demo (pregunta 3). |
+| **Bloque del mes** | Último `ed_metricas` no basal, aunque fuera de otro mes | — | — | Solo si es del mes en curso. Hoy esa tabla solo la llenan las semillas de demo (decisión 3). |
 
 ### Por qué "101 vs 380" y "52 vs 53"
 
@@ -380,7 +380,7 @@
 
 **Límites conocidos**
 - G7 no impide que alguien registre un calendario ajeno **antes** que su dueño (Fase 1: verificar propiedad).
-- G4 requiere que el portal se use en el mismo dominio que `NEXT_PUBLIC_SITE_URL`, que es también donde vuelven los proveedores (pregunta 4).
+- G4 requiere que el portal se use en el mismo dominio que `NEXT_PUBLIC_SITE_URL`, que es también donde vuelven los proveedores (decisión 4).
 
 ---
 
@@ -389,7 +389,7 @@
 - **Rediseño, Inicio nuevo, Equipo IA, visión/audio.** Nada. Solo copy donde un texto mentía.
 - **`reingreso_activo`.** Sigue configurable y apagado.
 - **Beto en Impresora.** `cotizacion_seguimiento` sigue en `false` y el modo por defecto es aprobación. No se tocó ningún dato de producción.
-- **Usuarios y permisos.** No se reconstruyó nada. El staff sigue pudiendo aprobar propuestas pagadas (pregunta 1).
+- **Usuarios y permisos.** No se reconstruyó nada. Solo se agregó un permiso de dueño para aprobar mensajes pagados de Beto (ver decisiones al final).
 - **freeBusy.** Ante un fallo de Google se siguen ofreciendo horas (fail-open), como antes. Lo nuevo es que el fallo queda visible.
 - **Webhook de Flow.** No hizo falta para corregir fallas actuales. Ver K.
 - **Motivo `pago_detectado` hacia Gestión.** Se mantiene: es un contrato con un sistema externo.
@@ -624,10 +624,10 @@ from ed_latidos where clave like 'proceso:%' order by clave;
 
 ---
 
-## Preguntas que necesitan tu decisión
+## Decisiones tomadas después de la entrega
 
-1. **¿Quién puede aprobar mensajes pagados de Beto?** Hoy lo puede hacer cualquier staff (`gestionar_embudo`). Cada aprobación cuesta ~$85. Recomiendo solo dueño, o un permiso aparte. No lo cambié porque dijiste no tocar permisos todavía.
-2. **Perdido por silencio = retomable por Beto.** Lo implementé así porque sin eso Beto no sirve desde el día 7 (B7). ¿Confirmas? La alternativa es que el embudo no cierre por silencio las cotizaciones mientras Beto esté encendido.
-3. **`ed_metricas`: ¿la escribe algo fuera del portal (el motor 2.0)?** En este repo solo la llenan semillas de demo. Si nadie la escribe, en Fase 1 quitaría el bloque mensual de Inicio.
-4. **¿Usan el portal siempre en el dominio de `NEXT_PUBLIC_SITE_URL`?** Si hay un dominio propio distinto, conectar Google/Instagram/Ads fallaría con la protección nueva (la cookie no viaja entre dominios). En ese caso hay que alinear la variable con el dominio real.
-5. **Dispositivos compartidos.** ¿Cerrar sesión debe apagar los avisos push de ese navegador? Hoy siguen llegando al último usuario que abrió Inicio ahí.
+1. **Aprobar mensajes pagados de Beto: solo el dueño.** Permiso nuevo `aprobar_mensajes_pagados` (fuera de staff). El staff ve la lista y puede descartar, pero no aprobar. Es una decisión de gasto, no de operación. Archivos: `lib/permisos.ts`, `app/(portal)/seguimientos/acciones.ts`, `app/(portal)/seguimientos/page.tsx`, `tests/permisos.test.mjs`.
+2. **Perdido por silencio sigue siendo retomable por Beto.** Se queda como está (B7). El juez lee el hilo antes de proponer, y en modo aprobación una persona lo ve antes de que salga algo.
+3. **`ed_metricas`.** No se toca en Fase 0: Inicio ya la ignora si no es del mes en curso. En Fase 1 se revisa si el motor 2.0 la escribe; si no, se quita el bloque.
+4. **Dominio del portal.** Se verifica en el despliegue: `NEXT_PUBLIC_SITE_URL` tiene que ser exactamente la dirección con la que se entra al portal (paso de verificación en `docs/FASE0_PENDIENTES_MARCELO.md`).
+5. **Avisos push al cerrar sesión.** Sí deben apagarse. Queda para Fase 1 (requiere que el botón de salir corra en el navegador).

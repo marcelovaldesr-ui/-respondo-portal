@@ -16,8 +16,9 @@ import { aprobarPropuesta, rechazarPropuesta } from "@/lib/propuestasSeguimiento
 export async function aprobar(
   formData: FormData,
 ): Promise<{ ok: boolean; error?: string; aviso?: string; retirar?: boolean }> {
-  const usuario = await obtenerUsuarioConPermiso("gestionar_embudo");
-  if (!usuario) return { ok: false, error: "Sesión no válida" };
+  // Cada aprobación es un mensaje pagado: solo el dueño (lib/permisos.ts).
+  const usuario = await obtenerUsuarioConPermiso("aprobar_mensajes_pagados");
+  if (!usuario) return { ok: false, error: "Solo el dueño del negocio puede aprobar mensajes pagados." };
 
   const propuestaId = String(formData.get("propuestaId") ?? "");
   if (!propuestaId) return { ok: false, error: "Faltan datos" };
