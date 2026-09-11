@@ -1,4 +1,5 @@
 import { redirect } from "next/navigation";
+import { correoVerificadoDeSesion } from "@/lib/authCore";
 import { db } from "@/lib/db";
 import { supabaseServidor } from "@/lib/supabaseAuth";
 import { esRolValido, tienePermiso, type PermisoPortal, type RolPortal } from "@/lib/permisos";
@@ -27,7 +28,8 @@ export async function obtenerUsuarioPortal(): Promise<UsuarioPortal | null> {
     data: { user },
   } = await auth.auth.getUser();
 
-  const email = user?.email?.toLowerCase().trim();
+  // Solo correos verificados (Fase 0): ver lib/authCore.ts.
+  const email = correoVerificadoDeSesion(user);
   if (!email) return null;
 
   const { data, error } = await db()

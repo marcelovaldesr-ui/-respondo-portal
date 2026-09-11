@@ -94,6 +94,35 @@ test("cada rol válido resuelve a un conjunto de permisos, y staff ⊂ dueño", 
   }
 });
 
+/**
+ * EL DUEÑO NO PUEDE PERDER UN PERMISO EN SILENCIO.
+ *
+ * Con la matriz cerrada, un permiso que se agrega al tipo pero se olvida en la
+ * lista del dueño deja de concederse a NADIE. Eso es fail-closed —bien— pero
+ * rompe una pantalla sin avisar. Peor todavía: al reescribir este archivo
+ * desde una copia vieja del repo se puede BORRAR un permiso que otra fase ya
+ * había agregado. Las dos cosas pasaron el 11-sep y las dos se ven acá.
+ */
+test("todo permiso declarado en el tipo lo tiene el dueño", () => {
+  const src = leer("../lib/permisos.ts");
+  const union = src.slice(
+    src.indexOf("export type PermisoPortal"),
+    src.indexOf("export const ROLES"),
+  );
+  const declarados = [...union.matchAll(/\|\s*"([a-z_]+)"/g)].map((m) => m[1]);
+  assert.ok(declarados.length >= 9, `se leyeron pocos permisos: ${declarados.length}`);
+  for (const permiso of declarados) {
+    assert.equal(tienePermiso({ rol: "dueno" }, permiso), true, `el dueño perdió ${permiso}`);
+  }
+});
+
+test("aprobar mensajes pagados es del dueño: es gasto, no operación", () => {
+  // Fase 0, 11-sep: ~$85 por plantilla de marketing. El staff ve y descarta
+  // propuestas, pero no aprueba. Fijado acá porque ya se borró una vez.
+  assert.equal(tienePermiso({ rol: "dueno" }, "aprobar_mensajes_pagados"), true);
+  assert.equal(tienePermiso({ rol: "staff" }, "aprobar_mensajes_pagados"), false);
+});
+
 test("agregar un permiso nuevo no se lo regala a staff por omisión", () => {
   assert.equal(tienePermiso({ rol: "staff" }, "permiso_que_no_existe_todavia"), false);
   assert.equal(tienePermiso({ rol: "dueno" }, "permiso_que_no_existe_todavia"), false);
