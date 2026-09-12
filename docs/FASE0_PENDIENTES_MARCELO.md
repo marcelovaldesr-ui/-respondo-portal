@@ -88,8 +88,8 @@ Espera a que Vercel marque el deploy como **Ready**.
 
 **No encienden nada.** Dejan listo el modo aprobación para cuando decidas activarlo.
 
-- **Si en el paso 2 `tabla_297` salió vacío (null):** abre `sql/297_propuestas_seguimiento.sql`, copia todo, pégalo en el SQL Editor y córrelo. Después haz lo mismo con `sql/304_propuestas_memoria.sql`.
-- **Si `tabla_297` ya decía `ed_propuestas_seguimiento`:** corre solo `sql/304_propuestas_memoria.sql`.
+- **Si en el paso 2 `tabla_297` salió vacío (null):** abre `sql/297_propuestas_seguimiento.sql`, copia todo, pégalo en el SQL Editor y córrelo. Después haz lo mismo con `sql/306_propuestas_memoria.sql`.
+- **Si `tabla_297` ya decía `ed_propuestas_seguimiento`:** corre solo `sql/306_propuestas_memoria.sql`.
 
 La 304 termina mostrando una línea que debe incluir `'frenado'`.
 

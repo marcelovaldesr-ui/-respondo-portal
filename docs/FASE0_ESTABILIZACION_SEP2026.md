@@ -194,7 +194,7 @@
 | `lib/generadorCotizacionCore.ts` | Perdido por silencio sigue siendo retomable. |
 | `lib/juezCotizacion.ts` | Un error leyendo el hilo ya no se interpreta como "hilo vacío = no hay cotización". |
 | `components/PropuestasLista.tsx`, `app/(portal)/seguimientos/acciones.ts` | Muestran el aviso "sale mañana a las 10:00" y retiran de la lista las propuestas vencidas. Solo copy. |
-| `sql/304_propuestas_memoria.sql` (nuevo) | Agrega el estado `frenado` y un índice. **No envía ni enciende nada.** |
+| `sql/306_propuestas_memoria.sql` (nuevo) | Agrega el estado `frenado` y un índice. **No envía ni enciende nada.** |
 
 ### Métricas y tarjetas
 | Archivo | Qué cambia |
@@ -428,7 +428,7 @@
 - `lib/seguimientosCore.ts`
 - `lib/tenant.ts`
 
-**Nuevos (SQL):** `sql/304_propuestas_memoria.sql`
+**Nuevos (SQL):** `sql/306_propuestas_memoria.sql`
 
 **Nuevos (pruebas):**
 - `tests/_supaFalso.mjs`
@@ -583,7 +583,7 @@ from ed_latidos where clave like 'proceso:%' order by clave;
 
 ### 3. Migraciones y variables
 
-- **`sql/304_propuestas_memoria.sql`.** Aplicar solo si la 297 ya está aplicada (consulta d). No envía ni enciende nada. Si la 297 no está, déjalas las dos para cuando se decida encender Beto.
+- **`sql/306_propuestas_memoria.sql`.** Aplicar solo si la 297 ya está aplicada (consulta d). No envía ni enciende nada. Si la 297 no está, déjalas las dos para cuando se decida encender Beto.
 - **`RESPONDO_ADMIN_EMAILS`** en Vercel (opcional): correos del equipo Respondo, separados por coma, que ven `/estado` completo.
 - **Monitor externo.** Confirmar que llama a `/api/salud?k=…`. Los chequeos nuevos solo corren con el secreto.
 

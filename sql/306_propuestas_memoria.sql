@@ -1,8 +1,12 @@
 -- ============================================================================
--- 304 · PROPUESTAS DE BETO: MEMORIA DEL JUEZ (Fase 0, 11-sep-2026)
+-- 306 · PROPUESTAS DE BETO: MEMORIA DEL JUEZ (Fase 0, 11-sep-2026)
 -- ============================================================================
 --
 -- Requiere la 297. Idempotente: se puede correr dos veces.
+--
+-- (Renumerada de 304 a 306 el 12-sep-2026: el número 304 ya lo tenía
+-- `304_marketing_endurecimiento.sql` —aplicada— y el 305 la autorización
+-- fail-closed. El contenido no cambió.)
 --
 -- POR QUÉ
 -- -------

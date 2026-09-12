@@ -346,8 +346,10 @@ Cuando puedas, levanta `npm run dev` en tu PC y avísame: recorro Inicio,
 Conversaciones (varios clientes), Embudo y la vista de staff en tu Chrome con
 datos reales, y arreglo lo que aparezca.
 
-### 7. Migraciones duplicadas
+### 7. Migraciones duplicadas — resuelto
 
-Hay dos archivos con el número 304 (`304_marketing_endurecimiento.sql` y
-`304_propuestas_memoria.sql`). Fase 1 no necesita migración, así que no urge,
-pero conviene renumerar uno antes de la próxima para no aplicar la equivocada.
+Había dos archivos con el número 304. El de Beto pasó a ser
+`sql/306_propuestas_memoria.sql` (304 lo ocupa `304_marketing_endurecimiento.sql`,
+ya aplicada, y 305 la autorización fail-closed). El contenido no cambió y sigue
+sin aplicar: se corre solo cuando decidas encender el seguimiento de Beto, y
+requiere la 297.

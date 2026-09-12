@@ -70,7 +70,7 @@ lib/seguimientos.ts
 lib/seguimientosCore.ts
 lib/tenant.ts
 lib/waha.ts
-sql/304_propuestas_memoria.sql
+sql/306_propuestas_memoria.sql
 tests/_baseMemoria.mjs
 tests/_supaFalso.mjs
 tests/admin-respondo.test.mjs
