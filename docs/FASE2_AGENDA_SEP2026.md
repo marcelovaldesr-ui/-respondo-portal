@@ -691,64 +691,108 @@ recorrido local aportaría y esto no: probar una reserva de punta a punta con
 datos sembrados y ver los mensajes de WhatsApp sin enviarlos. Sigue valiendo la
 pena algún día, pero como prueba de humo, no como requisito.
 
-### Commit, push y deploy
+### Commit, push y deploy ✅
 
-**El commit se creó. El push NO se pudo hacer, y no por un error del código.**
+- **Commit:** `87daaca` en `main`.
+- **Push:** hecho por Marcelo el 12-sep (el proxy de mi sesión no tiene
+  credencial de escritura para este repo; se lo dejé en tres comandos).
+- **Deploy:** Vercel, **Ready en 32 s**, Production. Sin errores de build.
+- **El árbol desplegado es exactamente el que validé**: `git diff` entre mi
+  commit local y `origin/main` no muestra ni una línea de código distinta (solo
+  las instrucciones de push de este documento —ya obsoletas— y las PNG
+  recodificadas por el puente).
 
-El entorno donde trabajo sale a internet por un proxy que aplica la política de
-la organización, y ese proxy **solo inyecta credenciales de escritura para los
-repositorios que estén en la lista de fuentes autorizadas de la sesión**. Este no
-lo está:
+### Smoke test de producción (12-sep)
 
-```
-remote: access denied by the git proxy: marcelovaldesr-ui/-respondo-portal is not
-in this session's authorized repository set, so the proxy will not inject a
-credential for it.
-fatal: ... The requested URL returned error: 403
-```
+Solo lectura. No se creó, movió ni anuló ninguna cita, no se envió ningún
+WhatsApp y no se tocó la configuración de ningún profesional.
 
-Lectura sí funciona (`git fetch` y `git ls-remote` responden, y `origin/main`
-sigue en 20c40bb, o sea que nadie avanzó el remoto). Escritura no. Es un límite
-de acceso, no un problema que se pueda resolver desde acá: rodearlo sería
-exactamente lo que no hay que hacer con una denegación de política.
+| Qué | Resultado |
+|---|---|
+| `/agenda` | ✅ carga. Vista **Lista** por defecto, con Día y Semana |
+| `/agenda/configuracion?s=servicios` | ✅ las seis secciones, una a la vez |
+| `?s=profesionales` | ✅ grilla semanal, blancos táctiles nuevos |
+| `?s=reservas` | ✅ **«Se puede reservar hasta: 14 / 30 / 60 / 90 días»** |
+| `?s=google` | ✅ el estado va primero («Marcelo · conectado») y el botón dice «Reconectar con Google» por estar ya configurado |
+| `/inicio` | ✅ carga con datos reales; los grupos de Fase 1 intactos tras el cambio de token |
+| `/conversaciones` | ✅ carga, 48 conversaciones |
+| Errores de JS | ✅ ninguno en ninguna pantalla |
 
-El otro camino —hacer el commit directamente en el PC de Marcelo— tampoco está
-disponible: desde una actualización de Windows del 8 de septiembre, la carpeta
-conectada no se monta en el shell remoto (`no Plan9 drive shares mounted`). Los
-archivos sí se pueden leer y escribir uno a uno, que es como llegaron a su disco,
-pero no hay forma de ejecutar `git` ahí.
-
-**Sin push no hay deploy de Vercel y sin deploy no hay smoke test.** Los tres
-quedan pendientes de un solo comando suyo; está en la sección X.
-
-**Lo que sí está garantizado:** los 30 archivos de código de este commit fueron
-verificados uno a uno contra los que están en su disco y **coinciden byte a
-byte**. El commit que él haga desde su PC contendrá exactamente el árbol que se
-validó acá.
+**Lo que NO se pudo validar en producción, y por qué:** los dos comportamientos
+que más importan —dos profesionales libres a la misma hora ofreciendo **una sola**
+hora, y un Google no verificable **escondiendo** las horas de esa persona— necesitan
+al menos dos profesionales y un servicio activo. El negocio tiene un profesional y
+un servicio apagado. Sembrar datos habría sido alterar la configuración real, que
+estaba prohibido. Ambos quedan cubiertos por pruebas automáticas y por el arnés
+visual; lo que falta es verlos con datos de verdad.
 
 ---
 
-## X. Lo único que queda por hacer (un comando)
+## Y. Dos cosas que apareció el smoke test (ninguna es de Fase 2)
 
-Todo lo demás está hecho. En `C:\Users\marce\Claude\Projects\ChatBot Ventas\respondo-portal`:
+### Y.1 — La página pública de reservas responde «Esta página no existe»
 
-```powershell
-git add -A
-git commit -F "..\FASE2_COMMIT_MSG.txt"
-git push origin main
+`https://respondo-portal.vercel.app/reservar/marcelo-coach` muestra «Esta página
+no existe», mientras el portal dice que la página pública está **activa** y ofrece
+el enlace para compartir.
+
+La causa está en `app/reservar/[slug]/page.tsx`:
+
+```ts
+if (!servicios || servicios.length === 0) notFound();
 ```
 
-El mensaje de commit ya está escrito en `FASE2_COMMIT_MSG.txt`, en la carpeta de
-arriba (fuera del repo, para que `git add -A` no lo recoja).
+El negocio tiene un solo servicio y está **apagado**, así que la lista de servicios
+activos viene vacía y la página se declara inexistente. Viene de la migración
+original del módulo de agenda (`14b20d5`), no de esta fase: el diff de Fase 2 sobre
+ese archivo es puramente visual.
 
-Si `git add -A` no hace nada, es el problema de los candados fantasma de git que
-ya apareció dos veces en fases anteriores:
+**Por qué importa:** el dueño ve «activa» y un enlace para poner en Instagram; quien
+lo abre ve un 404. Es de las peores formas de fallar, porque nadie se entera.
 
-```powershell
-Remove-Item .git\index.lock, .git\HEAD.lock, .git\objects\maintenance.lock -ErrorAction SilentlyContinue
-git add -A
-git status --short | Measure-Object -Line   # deben ser 50
+**Arreglo propuesto (chico):** en vez de `notFound()`, una pantalla que diga la
+verdad —«Este negocio no está tomando reservas online por ahora»— y, en el portal,
+que la insignia diga «activa, pero sin servicios encendidos» cuando no hay ninguno.
+
+### Y.2 — Un error transitorio de base de datos expulsa al dueño con un mensaje falso
+
+Durante el recorrido, una navegación cayó en `/sin-acceso`: «Tu correo aún no está
+habilitado… ese correo todavía no está asociado a ningún negocio». La navegación
+siguiente funcionó sin tocar nada, así que fue un fallo momentáneo de la consulta.
+
+`lib/auth.ts`:
+
+```ts
+const { data, error } = await db().from("portal_usuarios")...
+if (error || !data) return null;
 ```
 
-Después del push, Vercel despliega solo. **La migración 307 ya está aplicada**, no
-hay nada que correr en Supabase.
+Un **error** de la consulta y un **usuario que no existe** terminan en el mismo
+lugar. Fallar cerrado está bien; el problema es el mensaje: al dueño se le dice que
+su cuenta no está habilitada y se le invita a «entrar con otro correo». Viene del
+primer commit del portal (`eae0cfb`).
+
+**Arreglo propuesto (chico):** separar las dos ramas. `error` → «no pudimos
+verificar tu acceso, reintenta» y un log. `!data` → el mensaje actual. Sin cambiar
+nada de la autorización.
+
+---
+
+## Z. Qué queda
+
+**Nada que bloquee Fase 2.** Está commiteada, desplegada y con smoke hecho.
+
+De esta fase, para cuando haya tiempo, por orden de valor:
+
+1. **Y.1 — la página pública que dice «no existe».** Es el más urgente de los dos,
+   porque hoy hay un enlace roto que el portal presenta como activo.
+2. **Y.2 — el `/sin-acceso` por error transitorio.** Mensaje, no seguridad.
+3. **Quick win #1 — el calendario dentro de «Nueva hora»** (sección T): híbrido,
+   horas sugeridas + campo libre + aviso, nunca bloqueo.
+4. **Ver los dos casos clave con datos reales.** Dos profesionales a la misma hora
+   → una sola hora ofrecida; Google no verificable → horas escondidas. Necesita un
+   negocio de prueba con dos profesionales y un servicio encendido.
+
+Fuera de Fase 2, lo que sigue esperando (según los informes de sus fases):
+migraciones **297**, **305** y **306**, escritas y sin aplicar. La **305** es la de
+autorización fail-closed y tiene fecha: la firma vieja muere el **30 de septiembre**.

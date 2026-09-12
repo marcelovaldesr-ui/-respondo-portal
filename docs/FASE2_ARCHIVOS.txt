@@ -16,7 +16,7 @@ sql/307_agenda_fase2.sql
     Índice único parcial: una sola inscripción viva por persona y clase. YA APLICADA por Marcelo en Supabase (12-sep). El archivo va en el repo para que codigo e historial de base cuenten lo mismo.
 
 docs/FASE2_AGENDA_SEP2026.md
-    El informe (A-W). V = como se valido; W = cierre, revision adversarial final y smoke.
+    El informe (A-Z). V = como se valido; W = cierre y smoke; Y = dos bugs previos que aparecieron; Z = que queda.
 
 docs/FASE2_ARCHIVOS.txt
     Este archivo.
@@ -115,8 +115,7 @@ ESTADO
 
   725 pruebas en verde (eran 704 antes de la Fase 2).
   typecheck: sin errores nuevos (17 antes -> 16 ahora).
-  Commit preparado y validado; el PUSH lo tiene que hacer Marcelo (el proxy de
-  esta sesion no tiene credencial de escritura para este repo). Ver seccion X del
-  informe: son tres comandos. Beto sigue apagado.
+  Commit 87daaca en main, push hecho por Marcelo, deploy Ready en Vercel (32 s).
+  Smoke de produccion hecho (secciones W e Y del informe). Beto sigue apagado.
   Migracion 307: APLICADA por Marcelo en Supabase.
   Recorrido local: no se hizo (localhost nunca estuvo arriba); reemplazado por smoke del deploy.
