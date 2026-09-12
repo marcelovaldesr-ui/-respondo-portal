@@ -256,11 +256,22 @@ export function parsearWebhook(payload: unknown): EntranteNormalizado[] {
           if (!tocado.trim()) continue; // interactivo sin texto: nada que registrar
           texto = tocado.trim();
         } else {
-          // Pie de foto (imagen/video/documento) o marcador del adjunto.
-          const caption =
-            m.image?.caption ?? m.video?.caption ?? m.document?.caption ?? "";
-          texto =
-            caption.trim() || placeholderAdjuntoMeta(tipo, m.document?.filename);
+          /**
+           * Pie de foto + marcador del adjunto.
+           *
+           * (Fase 3) Antes el pie de foto REEMPLAZABA al marcador: una foto con
+           * el texto "¿pueden hacer esto?" se guardaba como si fuera un mensaje
+           * de texto normal, sin ninguna huella de que hubiera una imagen. El
+           * modelo entonces leía "¿pueden hacer esto?" sin saber que había un
+           * "esto" que mirar, y la regla del prompt que manda reconocer el
+           * adjunto era imposible de cumplir. Ahora van los dos, en el orden en
+           * que los lee una persona: primero qué llegó, después qué dijo.
+           */
+          const caption = (
+            m.image?.caption ?? m.video?.caption ?? m.document?.caption ?? ""
+          ).trim();
+          const marca = placeholderAdjuntoMeta(tipo, m.document?.filename);
+          texto = caption ? `${marca} ${caption}` : marca;
         }
 
         /**

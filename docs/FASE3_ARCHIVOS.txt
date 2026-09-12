@@ -1,0 +1,103 @@
+FASE 3 · TINO MAS CONFIABLE — archivos tocados
+Base: origin/main 87daaca (Fase 2 desplegada).
+
+La fase empezo como "Tino multimodal". Se construyo el prototipo completo de
+vision y transcripcion, se midio, y se decidio NO-GO para las dos: el codigo
+multimedia NO esta en el arbol. Lo que quedo son las mejoras del nucleo
+conversacional que valen igual sin Gemini multimedia.
+
+La historia completa y el porque, en docs/FASE3_TINO_2_MULTIMODAL_SEP2026.md.
+La decision, en su seccion AI.
+
+==========================================================================
+NUEVOS
+==========================================================================
+
+lib/turnoTino.ts
+    La regla del turno, una sola vez. Modo humano gana siempre; un mensaje mas nuevo invalida la respuesta en curso. Estaba escrita TRES veces (una por transporte) y las copias se habian separado: la de Instagram nunca miraba el modo. Esa divergencia fue la causa del bug, no un sintoma.
+
+tests/turno-tino.test.mjs
+    7 pruebas de la regla del turno, incluida una que falla si algun transporte vuelve a duplicarla en vez de compartirla.
+
+tests/audio-derivacion.test.mjs
+    4 pruebas del fallback de audio. Cubren el bug encontrado en esta fase: la deteccion dependia de que el texto fuera EXACTAMENTE el marcador, y el arreglo del pie de foto hizo que el marcador pueda venir acompanado.
+
+tests/tino-adjuntos-casos.test.mjs
+    9 casos de conversacion real con adjuntos: foto + pie de foto, dos imagenes seguidas, orden marcador/texto, nota de voz, la rafaga de cinco mensajes, y que el prompt deje UNA sola regla absoluta sobre adjuntos.
+
+docs/FASE3_TINO_2_MULTIMODAL_SEP2026.md
+    El informe. A-AA = el prototipo (registro de la investigacion, codigo ya retirado). AB-AI = la evaluacion de valor y la decision. AI = decision final.
+
+docs/FASE3_ARCHIVOS.txt
+    Este archivo.
+
+scripts/_eval_multimodal.ts
+    La bateria de evaluacion, FUERA del producto. Mide si audio/vision se ganan el derecho a existir: no por exactitud de palabras, sino por supervivencia de los datos criticos (cantidad, medida, fecha, negacion). Autocontenido: no se importa desde ningun lado del portal y no afecta al build.
+
+scripts/eval-multimodal/casos.json
+    12 casos de audio + 13 de vision, con sus datos criticos y sus valores confundibles.
+
+scripts/eval-multimodal/README.md
+    Como grabar las muestras, como correr la bateria y que devolver. Incluye por que un audio de laboratorio daria un GO falso.
+
+sql/consultas/valor_multimodal.sql
+    SOLO LECTURA, no es una migracion. Cinco bloques para saber si multimedia vale la pena algun dia. El bloque 2 es el que decide: cuanto tarda HOY una persona en contestar un audio.
+
+==========================================================================
+MODIFICADOS
+==========================================================================
+
+lib/marcadorAudio.ts
+    Nuevo esAudioDelCliente(): detecta la nota de voz por media_tipo (dato estructural) y deja el marcador como respaldo para los mensajes viejos de Instagram. Sin esto, un canal que entregue texto junto a un audio haria que Tino contestara un audio que no escucho, EN SILENCIO.
+
+lib/responderBot.ts
+    El historial pasa a ser filas (rol, texto, media_tipo) en vez de strings, que es lo que sostiene la deteccion de arriba, y baja una capa si esa columna no existiera para no quedarse sin historial. El atajo de audio usa la regla compartida.
+
+lib/parserMeta.ts, lib/waha.ts, lib/instagram.ts
+    El pie de foto ya NO borra el marcador del adjunto. Antes "¿pueden hacer esto?" + foto llegaba al modelo como un mensaje de texto suelto, sin huella de que hubiera un "esto". Ahora van los dos, en el orden en que los lee una persona. instagram.ts ademas expone tipoMediaIg().
+
+lib/inboundInstagram.ts
+    Tres arreglos: guarda la media (era el unico transporte que la tiraba), re-lee el modo antes de enviar (podia hablar encima de una persona) y agrupa rafagas con ventanaDeEspera (era el unico canal sin debounce).
+
+lib/inboundMeta.ts, lib/inboundWaha.ts
+    Usan la regla de turno compartida en vez de su propia copia.
+
+lib/promptEmpleado.ts
+    La regla de adjuntos vuelve a ser ABSOLUTA (sin condicionales) y gana dos precisiones: el pie de foto SI se lee aunque la imagen no, y si hiciera falta ver el contenido hay exactamente dos salidas honestas, preguntar o derivar. Una prohibicion sin alternativa es lo que empuja al modelo a inventar.
+
+tests/parser-meta.test.mjs
+    El test que fijaba el pie de foto pisando el marcador, actualizado con el porque escrito adentro.
+
+docs/FASE2_AGENDA_SEP2026.md, docs/FASE2_ARCHIVOS.txt
+    Cierre tardio de la Fase 2 (secciones W/Y/Z): deploy, smoke de produccion y los dos bugs previos que aparecieron. Van en su propio commit.
+
+==========================================================================
+RETIRADO (estaba construido y probado; se decidio NO-GO)
+==========================================================================
+
+Borrados:   lib/mediaInterpretacion.ts, lib/mediaInterpretacionCore.ts,
+            lib/banderas.ts, components/inbox/Interpretacion.tsx,
+            tests/media-interpretacion.test.mjs,
+            sql/308_interpretacion_media.sql
+Revertidos: lib/gemini.ts (vuelve a ser solo texto), lib/inboxConsulta.ts,
+            components/inbox/Burbuja.tsx, components/inbox/tipos.ts, y las
+            partes multimedia de lib/responderBot.ts y lib/promptEmpleado.ts
+
+Recuperable, verificado antes de borrar, FUERA del repo:
+  ChatBot Ventas\FASE3_COMPLETA.patch    toda la Fase 3 con multimedia vs 87daaca
+  ChatBot Ventas\FASE3_MULTIMEDIA.patch  solo el subconjunto multimedia
+
+La verificacion no fue por inspeccion: se copio el arbol limpio, se aplico el
+patch y los 14 archivos quedaron byte a byte identicos, con sus 767 pruebas en
+verde.
+
+==========================================================================
+ESTADO
+==========================================================================
+
+  745 pruebas en verde (eran 725 antes de la Fase 3; 767 con multimedia).
+  typecheck: identico a 87daaca, sin errores nuevos.
+  SQL 308: NO aplicada y retirada del arbol.
+  Politica de privacidad: sin cambios. Ningun archivo de cliente sale hacia Google.
+  Banderas multimodales en produccion: ninguna.
+  Beto sigue apagado.

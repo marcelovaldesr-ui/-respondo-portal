@@ -482,7 +482,13 @@ export function parsearWaha(payload: unknown): EntranteWaha | null {
   const escrito = (p.body ?? p._data?.caption ?? "").trim();
   // Si vino con pie de foto, se conserva el texto Y se anota el adjunto: el
   // asistente necesita ambos para entender ("mira esta medida" + la foto).
-  const texto = escrito || (adjunto ? textoDeAdjunto(adjunto) : "");
+  /**
+   * (Fase 3) El marcador del adjunto ya NO se pierde cuando viene con texto:
+   * mismo cambio que en parserMeta.ts. Sin el marcador, "¿pueden hacer esto?"
+   * junto a una foto llegaba al modelo como un mensaje de texto suelto.
+   */
+  const marcaAdjunto = adjunto ? textoDeAdjunto(adjunto) : "";
+  const texto = escrito && marcaAdjunto ? `${marcaAdjunto} ${escrito}` : escrito || marcaAdjunto;
 
   // Sin texto y sin adjunto no hay nada que registrar (eventos de sistema).
   if (!texto) return null;

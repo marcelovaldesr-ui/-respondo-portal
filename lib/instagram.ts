@@ -113,7 +113,11 @@ export function parsearInstagram(payload: unknown): EntranteInstagram[] {
       // NO se descarta — se registra qué llegó. Perderlo dejaría al asistente
       // preguntando por algo que la persona ya mandó, que es exactamente el
       // error que se descubrió con la foto de una lead en WhatsApp.
-      const texto = (m.text ?? "").trim() || (adjunto ? textoDeAdjuntoIg(adjunto.tipo) : "");
+      // (Fase 3) El marcador ya no lo borra el texto: si vienen los dos, van
+      // los dos. Mismo cambio que en parserMeta.ts y waha.ts.
+      const escrito = (m.text ?? "").trim();
+      const marca = adjunto ? textoDeAdjuntoIg(adjunto.tipo) : "";
+      const texto = escrito && marca ? `${marca} ${escrito}` : escrito || marca;
       if (!texto) continue;
 
       out.push({ paginaId, igsid, texto, mid: m.mid ?? null, esPropio, adjunto });
@@ -132,6 +136,20 @@ export function textoDeAdjuntoIg(tipo: string): string {
   if (t.includes("story")) return "[el cliente respondió a una historia]";
   if (t.includes("file")) return "[el cliente envió un archivo]";
   return "[el cliente envió un archivo]";
+}
+
+/**
+ * Traduce el tipo de adjunto de Instagram al vocabulario del portal
+ * (`media_tipo` de ed_mensajes, migración 270), el mismo que usan WhatsApp y
+ * WAHA. Sin esto, el inbox no sabría si dibujar una imagen o un enlace.
+ */
+export function tipoMediaIg(tipo: string): string {
+  const t = (tipo || "").toLowerCase();
+  if (t.includes("image")) return "imagen";
+  if (t.includes("video")) return "video";
+  if (t.includes("audio")) return "audio";
+  if (t.includes("file")) return "documento";
+  return "otro";
 }
 
 export type CuentaIg = {

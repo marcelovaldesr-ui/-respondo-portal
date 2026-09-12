@@ -4,11 +4,14 @@ import {
   cuentaPorIdIg,
   enviarTextoInstagram,
   nombreDelRemitente,
+  tipoMediaIg,
   type CuentaIg,
 } from "@/lib/instagram";
 import { tinoDe } from "@/lib/whatsapp";
 import { guardarMensaje, yaProcesado, esEcoReciente } from "@/lib/mensajes";
-import { setModo, tocarVentanaEntrante } from "@/lib/estadoChat";
+import { modoDe, setModo, tocarVentanaEntrante } from "@/lib/estadoChat";
+import { conservaElTurno } from "@/lib/turnoTino";
+import { ventanaDeEspera } from "@/lib/ritmoHumano";
 import { cerrarEscalacionesPendientes } from "@/lib/escalaciones";
 import { idsEmpleadosDeCliente } from "@/lib/empleadosCache";
 import { responderSiBot } from "@/lib/responderBot";
@@ -141,6 +144,25 @@ export async function manejarEntranteInstagram(
       texto: ev.texto,
       waId: ev.mid,
       canal: "instagram",
+      /**
+       * (Fase 3) LA MEDIA SE GUARDA. Hasta ahora este camino era el único de
+       * los tres que no pasaba `media`: `parsearInstagram` extraía la URL del
+       * adjunto y acá se tiraba. Una foto por DM quedaba como el texto "[el
+       * cliente envió una imagen]" con media_tipo nulo, y el inbox no dibujaba
+       * nada. Es la misma brecha que ya se había corregido dos veces en los
+       * otros dos transportes.
+       *
+       * La URL de Instagram es temporal, igual que la de Meta: el archivador
+       * (lib/archivarMedia.ts) la baja al bucket privado dentro de su ventana.
+       */
+      media: ev.adjunto
+        ? {
+            url: ev.adjunto.url ?? null,
+            tipo: tipoMediaIg(ev.adjunto.tipo),
+            mime: null,
+            nombre: null,
+          }
+        : null,
     });
     // El índice único rechazó el insert → esta es una entrega duplicada y la
     // otra ya está respondiendo. Retirarse evita la doble respuesta.
@@ -216,9 +238,48 @@ export async function manejarEntranteInstagram(
       supa,
     });
 
-    /** Igual que en WhatsApp: si llegó algo más nuevo, esta respuesta sobra. */
+    /**
+     * ── RÁFAGA (Fase 3) ──────────────────────────────────────────────────────
+     *
+     * Instagram era el único transporte sin ventana de agrupación: cada
+     * mensaje disparaba su propio ciclo, así que quien escribe "hola" /
+     * "quiero" / "500" en tres burbujas seguidas recibía tres respuestas, cada
+     * una sin el contexto de la siguiente. Por DM eso es todavía más común que
+     * por WhatsApp.
+     *
+     * Misma mecánica que los otros dos: se espera la ventana que corresponde
+     * al texto y, al despertar, esta ejecución se pregunta si sigue siendo el
+     * último mensaje del cliente. Las que no lo son se retiran; la que queda
+     * arma el historial completo, que ya incluye todos los pedazos.
+     */
+    const DEBOUNCE_MS = ventanaDeEspera(ev.texto ?? "");
+    if (ev.mid) {
+      await new Promise((r) => setTimeout(r, DEBOUNCE_MS));
+      const { data: ultimoIg } = await supa
+        .from("ed_mensajes")
+        .select("wa_message_id")
+        .eq("empleado_id", empleadoId)
+        .eq("chat_id", chatId)
+        .eq("rol", "cliente")
+        .order("creado_en", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      if (ultimoIg?.wa_message_id && ultimoIg.wa_message_id !== ev.mid) {
+        resultados.push({ accion: "debounce_superseded" });
+        continue;
+      }
+    }
+
+    /**
+     * Igual que en WhatsApp: si llegó algo más nuevo, esta respuesta sobra.
+     *
+     * (Fase 3) Ahora también re-lee el MODO, que era la diferencia con los
+     * otros dos transportes. Sin eso, si una persona tomaba el control durante
+     * los segundos del "escribiendo…", Tino igual hablaba encima: exactamente
+     * el incidente que lib/inboundWaha.ts documenta como ya ocurrido. La capa
+     * de responderBot.ts lo cubría antes de enviar, pero no durante el envío.
+     */
     const sigueVigente = async (): Promise<boolean> => {
-      if (!ev.mid) return true;
       const { data } = await supa
         .from("ed_mensajes")
         .select("wa_message_id")
@@ -228,7 +289,11 @@ export async function manejarEntranteInstagram(
         .order("creado_en", { ascending: false })
         .limit(1)
         .maybeSingle();
-      return !data?.wa_message_id || data.wa_message_id === ev.mid;
+      return conservaElTurno({
+        modo: await modoDe(empleadoId, chatId, supa),
+        idUltimoDelCliente: (data?.wa_message_id as string | null) ?? null,
+        idQueRespondo: ev.mid,
+      });
     };
 
     const enviar =

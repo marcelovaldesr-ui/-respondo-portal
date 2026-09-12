@@ -15,6 +15,7 @@ import {
   actualizarEstadoEnvio,
 } from "@/lib/mensajes";
 import { modoDe, setModo, tocarVentanaEntrante } from "@/lib/estadoChat";
+import { conservaElTurno } from "@/lib/turnoTino";
 import { cerrarEscalacionesPendientes } from "@/lib/escalaciones";
 import { idsEmpleadosDeCliente } from "@/lib/empleadosCache";
 import { responderSiBot } from "@/lib/responderBot";
@@ -408,8 +409,6 @@ export async function manejarEntranteMeta(
      *     responde y el envío, se re-lee el modo y la respuesta obsoleta no sale.
      */
     const sigueVigente = async (): Promise<boolean> => {
-      if ((await modoDe(empleadoId, chatId, supa)) !== "bot") return false;
-      if (!m.waId) return true;
       const { data } = await supa
         .from("ed_mensajes")
         .select("wa_message_id")
@@ -419,7 +418,11 @@ export async function manejarEntranteMeta(
         .order("creado_en", { ascending: false })
         .limit(1)
         .maybeSingle();
-      return !data?.wa_message_id || data.wa_message_id === m.waId;
+      return conservaElTurno({
+        modo: await modoDe(empleadoId, chatId, supa),
+        idUltimoDelCliente: (data?.wa_message_id as string | null) ?? null,
+        idQueRespondo: m.waId,
+      });
     };
 
     /**

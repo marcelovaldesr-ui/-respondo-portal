@@ -125,9 +125,17 @@ test("una imagen del cliente trae el id para poder descargarla", () => {
   assert.equal(m.adjunto?.id, "1122334455");
   assert.equal(m.adjunto?.tipo, "imagen");
   assert.equal(m.adjunto?.mime, "image/jpeg");
-  // El pie de foto ES el texto del mensaje: sin esto el cliente pregunta algo
-  // y el asistente nunca se entera de lo que preguntó.
-  assert.equal(m.texto, "¿Sirve este modelo?");
+  /**
+   * (Fase 3) Van LOS DOS: el marcador y el pie de foto.
+   *
+   * Antes acá se afirmaba `m.texto === "¿Sirve este modelo?"` — solo el pie de
+   * foto. Eso significaba que una foto con texto se guardaba idéntica a un
+   * mensaje de texto suelto, y el modelo leía "¿Sirve este modelo?" sin saber
+   * que existía un modelo que mirar. Con visión encendida además era peor: no
+   * había ninguna señal de que hubiera algo que interpretar.
+   */
+  assert.match(m.texto, /imagen/i, "queda la huella de que llegó una imagen");
+  assert.match(m.texto, /¿Sirve este modelo\?/, "y el pie de foto, que es la pregunta real");
 });
 
 test("una imagen SIN pie de foto igual se registra, con marcador", () => {

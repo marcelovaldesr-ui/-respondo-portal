@@ -16,6 +16,7 @@ import {
   enviosUltimoMinuto,
 } from "@/lib/mensajes";
 import { modoDe, setModo, tocarVentanaEntrante } from "@/lib/estadoChat";
+import { conservaElTurno } from "@/lib/turnoTino";
 import { cerrarEscalacionesPendientes } from "@/lib/escalaciones";
 import { idsEmpleadosDeCliente } from "@/lib/empleadosCache";
 import { asegurarContacto } from "@/lib/contactoEntrante";
@@ -292,11 +293,6 @@ export async function manejarEntranteWaha(
    *     que el chequeo (1) no lo detectaba.
    */
   const sigueVigente = async (): Promise<boolean> => {
-    // (2) ¿El chat sigue en manos del bot? Si una persona tomó el control (o se
-    // pausó) mientras Tino "escribía", la respuesta ya no debe salir.
-    if ((await modoDe(empleadoId, chatId, supa)) !== "bot") return false;
-    // (1) ¿Sigue siendo el último mensaje del cliente?
-    if (!m.waId) return true;
     const { data } = await supa
       .from("ed_mensajes")
       .select("wa_message_id")
@@ -306,7 +302,11 @@ export async function manejarEntranteWaha(
       .order("creado_en", { ascending: false })
       .limit(1)
       .maybeSingle();
-    return !data?.wa_message_id || data.wa_message_id === m.waId;
+    return conservaElTurno({
+      modo: await modoDe(empleadoId, chatId, supa),
+      idUltimoDelCliente: (data?.wa_message_id as string | null) ?? null,
+      idQueRespondo: m.waId,
+    });
   };
 
   const enviar =

@@ -8,7 +8,7 @@ import { guardarMensaje } from "@/lib/mensajes";
 import { avisarACliente, resumirParaAviso } from "@/lib/push";
 import { modoDe, setModo } from "@/lib/estadoChat";
 import { notificarHQ } from "@/lib/hqBridge";
-import { esAudioSinTexto } from "@/lib/marcadorAudio";
+import { esAudioDelCliente } from "@/lib/marcadorAudio";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { RESUMEN_AUDIO, RESUMEN_FALLO_CANAL, RESUMEN_FALLO_MODELO } from "@/lib/derivacionesCore";
 import {
@@ -195,23 +195,50 @@ async function autoEtiquetar(
   }
 }
 
-/** Trae el historial reciente del chat como lo espera armarPrompt. */
-async function historial(
-  empleadoId: string,
-  chatId: string,
-): Promise<MensajePrueba[]> {
-  const { data } = await db()
-    .from("ed_mensajes")
-    .select("rol, texto, creado_en")
-    .eq("empleado_id", empleadoId)
-    .eq("chat_id", chatId)
-    .order("creado_en", { ascending: false })
-    .limit(20);
+/**
+ * Una fila del historial.
+ *
+ * Es una fila y no un string porque el cerebro necesita saber QUÉ llegó, no
+ * solo qué decía: `mediaTipo` es lo que permite reconocer una nota de voz sin
+ * depender de cómo quedó armado el texto (ver lib/marcadorAudio.ts).
+ */
+type FilaHistorial = {
+  rol: MensajePrueba["rol"];
+  texto: string;
+  /** 'imagen' | 'audio' | 'documento' | … | null si el mensaje no traía archivo. */
+  mediaTipo: string | null;
+};
+
+const COLS_HISTORIAL = "rol, texto, creado_en, media_tipo";
+/** Respaldo si la migración 270 (columnas de adjunto) no estuviera aplicada. */
+const COLS_HISTORIAL_MINIMO = "rol, texto, creado_en";
+
+/** Trae el historial reciente del chat. */
+async function historial(empleadoId: string, chatId: string): Promise<FilaHistorial[]> {
+  const pedir = (cols: string) =>
+    db()
+      .from("ed_mensajes")
+      .select(cols)
+      .eq("empleado_id", empleadoId)
+      .eq("chat_id", chatId)
+      .order("creado_en", { ascending: false })
+      .limit(20);
+
+  let { data, error } = await pedir(COLS_HISTORIAL);
+  /**
+   * Si `media_tipo` no existiera en este entorno, el select falla ENTERO y el
+   * historial queda vacío: Tino contestaría sin contexto, que es peor que
+   * contestar sin saber el tipo de adjunto. Por eso baja una capa, igual que
+   * hace guardarMensaje al insertar.
+   */
+  if (error && (error.code === "42703" || error.code === "PGRST204")) {
+    ({ data } = await pedir(COLS_HISTORIAL_MINIMO));
+  }
 
   // Vienen del más nuevo al más viejo: invertir. Se conserva el rol 'humano'
   // (mensajes que escribió una persona del equipo) para que el prompt los marque
   // como decisiones tomadas y Tino no las contradiga ni repregunte lo ya resuelto.
-  return (data ?? [])
+  return ((data ?? []) as unknown as Record<string, unknown>[])
     .reverse()
     .map((m) => ({
       rol: (m.rol === "cliente"
@@ -219,8 +246,14 @@ async function historial(
         : m.rol === "humano"
           ? "humano"
           : "empleado") as MensajePrueba["rol"],
-      texto: m.texto as string,
+      texto: (m.texto as string) ?? "",
+      mediaTipo: (m.media_tipo as string | null) ?? null,
     }));
+}
+
+/** Lo que ve el modelo: el texto tal cual quedó guardado, marcador incluido. */
+function aPrompt(filas: FilaHistorial[]): MensajePrueba[] {
+  return filas.map((f) => ({ rol: f.rol, texto: f.texto }));
 }
 
 /**
@@ -289,10 +322,14 @@ export async function responderSiBot(params: {
   const ultimo = hist[hist.length - 1];
 
   /**
-   * AUDIO SIN TRANSCRIBIR (auditoría de Conversaciones, 3-sep-2026).
+   * ⭐ AUDIO: TINO NO ESCUCHA, ASÍ QUE SIEMPRE DERIVA.
    *
-   * Tino no escucha audios — no hay transcripción en NINGÚN canal, se
-   * investigó a fondo antes de este cambio. Antes se le pedía al modelo que
+   * Tino no escucha audios — no hay transcripción en NINGÚN canal. En la Fase 3
+   * se construyó una y se evaluó: NO-GO, y se retiró (ver el informe de la fase,
+   * sección AF). El motivo, en una línea: el riesgo está concentrado justo en el
+   * dato que decide una venta —un «cinco mil» que se transcribe «quinientas»— y
+   * este camino, en cambio, termina con una persona escuchando el audio de
+   * verdad. No es un parche a la espera de algo mejor: es la respuesta. Antes se le pedía al modelo que
    * pidiera el mensaje por texto (CASOS BORDE en promptEmpleado.ts), pero esa
    * instrucción competía con otras dos reglas del mismo prompt ("no
    * repreguntes", "si el adjunto respondía tu pregunta, dalo por resuelto") y
@@ -310,8 +347,22 @@ export async function responderSiBot(params: {
    * Va ANTES que confirmación/encuesta rápida y agenda a propósito: un audio
    * como respuesta a "¿confirmas tu hora?" tampoco se puede leer por código,
    * así que tiene que ganarle a esos atajos también.
+   *
+   * ⚠️ POR QUÉ SE MIRAN DOS SEÑALES Y NO SOLO EL MARCADOR (Fase 3). Hasta acá
+   * el atajo dependía de que `texto` fuera EXACTAMENTE «[el cliente envió un
+   * audio]». Eso era cierto mientras el marcador viajara solo — pero en esta
+   * misma fase se corrigió que el pie de foto ya no borre el marcador, así que
+   * cualquier canal que algún día entregue texto junto a un audio (WAHA mete a
+   * veces cosas en `body`) produciría «[el cliente envió un audio] …» y la
+   * comparación exacta fallaría EN SILENCIO: Tino contestaría un audio que no
+   * escuchó, que es el peor resultado posible de toda la fase.
+   *
+   * `media_tipo` es el dato estructural y no depende de cómo quedó armado el
+   * texto. Se conserva igual la comparación por marcador porque los mensajes
+   * viejos de Instagram se guardaron sin `media_tipo` (se agregó en Fase 3):
+   * cualquiera de las dos señales alcanza para callarse.
    */
-  if (ultimo?.rol === "cliente" && esAudioSinTexto(ultimo.texto)) {
+  if (ultimo?.rol === "cliente" && esAudioDelCliente(ultimo)) {
     const supaAudio = db();
     await setModo(empleadoId, chatId, "humano", supaAudio);
     const resumenAudio = RESUMEN_AUDIO;
@@ -417,7 +468,7 @@ export async function responderSiBot(params: {
     }
   }
 
-  const prompt = await armarPrompt(clienteId, empleadoId, hist, agenda?.texto);
+  const prompt = await armarPrompt(clienteId, empleadoId, aPrompt(hist), agenda?.texto);
   if (!prompt) return { accion: "sin_prompt" };
 
   let datos: RespuestaMotor;

@@ -1,0 +1,262 @@
+{
+  "_lea_esto": "Definición de la batería de evaluación de valor de audio y visión (Fase 3). El criterio NO es exactitud de palabras: es si se conservan los datos que pueden cambiar una venta. Ver README.md al lado.",
+
+  "audio": [
+    {
+      "id": "A1-control-claro",
+      "archivo": "a01.ogg",
+      "condiciones": ["habla normal", "sin ruido"],
+      "guion": "Hola, buenas. Necesito quinientas tarjetas de presentación, por favor.",
+      "criticos": [
+        { "dato": "cantidad", "valor": "500", "acepta": ["500", "quinientas", "quinientos"], "confundible": ["5000", "5.000", "50", "1500", "1.500", "15000"] }
+      ],
+      "nota": "Control. Si este falla, no hay nada más que evaluar."
+    },
+    {
+      "id": "A2-mil-vs-cien",
+      "archivo": "a02.ogg",
+      "condiciones": ["habla rápida"],
+      "guion": "Oye, quiero cinco mil etiquetas adhesivas, redondas, chiquititas.",
+      "criticos": [
+        { "dato": "cantidad", "valor": "5000", "acepta": ["5000", "5.000", "5 000", "cinco mil"], "confundible": ["500", "quinientas", "50000", "50.000", "5"] },
+        { "dato": "producto", "valor": "etiquetas", "acepta": ["etiquetas", "etiqueta", "adhesivas", "stickers"], "confundible": [] }
+      ],
+      "nota": "EL caso del brief: «quiero cinco mil etiquetas» → «quinientas» es un fracaso aunque el resto esté perfecto."
+    },
+    {
+      "id": "A3-quince-vs-cincuenta",
+      "archivo": "a03.ogg",
+      "condiciones": ["habla rápida", "números seguidos"],
+      "guion": "Necesito quince mil volantes, tamaño quince por veinte.",
+      "criticos": [
+        { "dato": "cantidad", "valor": "15000", "acepta": ["15000", "15.000", "15 000", "quince mil"], "confundible": ["50000", "50.000", "cincuenta mil", "1500", "5000"] },
+        { "dato": "medida", "valor": "15x20", "acepta": ["15x20", "15 x 20", "15 por 20", "15X20"], "confundible": ["50x20", "50 x 20", "15x25", "15 por 25"] }
+      ],
+      "nota": "quince/cincuenta es la confusión más caras del rubro: 15.000 y 50.000 volantes no se parecen en precio ni en plazo."
+    },
+    {
+      "id": "A4-medidas",
+      "archivo": "a04.ogg",
+      "condiciones": ["habla normal"],
+      "guion": "Son de quince por veinte centímetros, y otros de cincuenta por setenta.",
+      "criticos": [
+        { "dato": "medida_1", "valor": "15x20", "acepta": ["15x20", "15 x 20", "15 por 20"], "confundible": ["50x20", "50 x 20"] },
+        { "dato": "medida_2", "valor": "50x70", "acepta": ["50x70", "50 x 70", "50 por 70"], "confundible": ["15x70", "15 x 70", "50x17"] }
+      ],
+      "nota": "Las dos medidas en la misma frase. Si se mezclan, el corte sale mal y la impresión se pierde entera."
+    },
+    {
+      "id": "A5-autocorreccion",
+      "archivo": "a05.ogg",
+      "condiciones": ["autocorrección", "muletillas"],
+      "guion": "Mira, quiero doscientas... eh... no, perdón, quinientas. Quinientas tarjetas.",
+      "criticos": [
+        { "dato": "cantidad_final", "valor": "500", "acepta": ["500", "quinientas"], "confundible": [] },
+        { "dato": "correccion_visible", "valor": "200", "acepta": ["200", "doscientas"], "confundible": [], "solo_debe_aparecer": true }
+      ],
+      "nota": "Se pide transcripción LITERAL a propósito: la corrección tiene que quedar visible para que el prompt grande entienda que 200 quedó descartado. Si la transcripción 'limpia' y deja solo 500, está bien; si deja solo 200, es un fracaso."
+    },
+    {
+      "id": "A6-en-contexto",
+      "archivo": "a06.ogg",
+      "condiciones": ["responde a una pregunta previa de Tino"],
+      "contexto_previo": [
+        { "rol": "cliente", "texto": "hola, necesito tarjetas de presentación" },
+        { "rol": "empleado", "texto": "¡Hola! Con gusto. ¿Las quieres con terminación mate o brillante? ¿Y qué cantidad necesitas?" }
+      ],
+      "guion": "Mate. Y mejor déjalas en cinco mil.",
+      "criticos": [
+        { "dato": "terminacion", "valor": "mate", "acepta": ["mate"], "confundible": ["brillante", "brillantes", "brillo"] },
+        { "dato": "cantidad", "valor": "5000", "acepta": ["5000", "5.000", "cinco mil"], "confundible": ["500", "50000"] }
+      ],
+      "nota": "⭐ El caso del brief: el audio solo tiene sentido junto a lo que Tino preguntó antes. La etapa 2 verifica que Tino cierre con acabado=mate y cantidad=5.000."
+    },
+    {
+      "id": "A7-negacion",
+      "archivo": "a07.ogg",
+      "condiciones": ["negación", "habla rápida"],
+      "guion": "No, no quiero laminado. Solo el papel, así nomás.",
+      "criticos": [
+        { "dato": "negacion", "valor": "no quiero laminado", "acepta": ["no quiero laminado", "no laminado", "sin laminado", "no, no quiero laminado"], "confundible": ["quiero laminado", "sí quiero laminado", "con laminado"] }
+      ],
+      "nota": "Perder un «no» invierte el pedido. Es el fracaso más silencioso de todos: la frase suena bien y el producto sale distinto."
+    },
+    {
+      "id": "A8-fecha-y-hora",
+      "archivo": "a08.ogg",
+      "condiciones": ["habla rápida"],
+      "guion": "Lo necesito para el viernes, antes de las seis de la tarde.",
+      "criticos": [
+        { "dato": "dia", "valor": "viernes", "acepta": ["viernes"], "confundible": ["miércoles", "miercoles", "lunes", "martes", "jueves", "sábado"] },
+        { "dato": "hora", "valor": "18:00", "acepta": ["seis de la tarde", "18:00", "6 de la tarde", "las 6", "las seis"], "confundible": ["seis de la mañana", "ocho", "las 8"] }
+      ],
+      "nota": "viernes/miércoles suenan parecido dicho rápido, y un plazo mal entendido es un trabajo que llega tarde."
+    },
+    {
+      "id": "A9-ruido-calle",
+      "archivo": "a09.ogg",
+      "condiciones": ["ruido de calle o de auto", "volumen del ambiente alto"],
+      "guion": "Hola, necesito cotizar dos mil flyers media carta, couché de ciento cincuenta.",
+      "criticos": [
+        { "dato": "cantidad", "valor": "2000", "acepta": ["2000", "2.000", "dos mil"], "confundible": ["200", "20000", "12000"] },
+        { "dato": "gramaje", "valor": "150", "acepta": ["150", "ciento cincuenta"], "confundible": ["130", "115", "250", "50"] }
+      ],
+      "nota": "Grabar de verdad en la calle o dentro del auto en movimiento. No vale ruido agregado después."
+    },
+    {
+      "id": "A10-volumen-bajo",
+      "archivo": "a10.ogg",
+      "condiciones": ["lejos del micrófono", "volumen bajo"],
+      "guion": "Buenas, quería saber si hacen timbres de goma. Necesito tres.",
+      "criticos": [
+        { "dato": "producto", "valor": "timbre de goma", "acepta": ["timbre", "timbres", "goma"], "confundible": [] },
+        { "dato": "cantidad", "valor": "3", "acepta": ["3", "tres"], "confundible": ["13", "30", "2", "dos"] }
+      ],
+      "nota": "El caso honesto de 'no se entiende'. Un `legible:false` acá es un ACIERTO, no un fallo: deriva y lo escucha una persona."
+    },
+    {
+      "id": "A11-audio-largo",
+      "archivo": "a11.ogg",
+      "condiciones": ["60 a 90 segundos", "muletillas", "frases incompletas", "se va por las ramas"],
+      "guion": "Hola, mira, te cuento: tengo una cafetería, ¿ah?, y estoy... o sea, quiero renovar todo el tema de la impresión. Necesito, a ver... unas mil bolsas de papel con el logo, las medianas, y también... eh... unos posavasos, no sé cuántos, como quinientos. Ah, y las cartas del menú, esas las quiero plastificadas, unas veinte. ¿Me puedes cotizar eso? Ah, y el logo lo tengo en... creo que en Illustrator, me lo pasó el diseñador.",
+      "criticos": [
+        { "dato": "cantidad_bolsas", "valor": "1000", "acepta": ["1000", "1.000", "mil"], "confundible": ["100", "10000"] },
+        { "dato": "cantidad_posavasos", "valor": "500", "acepta": ["500", "quinientos"], "confundible": ["5000", "50"] },
+        { "dato": "cantidad_cartas", "valor": "20", "acepta": ["20", "veinte"], "confundible": ["2", "200"] },
+        { "dato": "terminacion_cartas", "valor": "plastificadas", "acepta": ["plastificada", "plastificadas", "laminada", "laminadas"], "confundible": [] }
+      ],
+      "nota": "Tres cantidades distintas en un audio largo. Es el caso donde la transcripción, si funciona, ahorra más trabajo — y donde más fácil se cruza un número."
+    },
+    {
+      "id": "A12-audio-mas-texto",
+      "archivo": "a12.ogg",
+      "condiciones": ["audio seguido de un texto que lo corrige"],
+      "guion": "Necesito mil tarjetas para el jueves.",
+      "texto_posterior": "perdón, son 2.000 no 1.000",
+      "criticos": [
+        { "dato": "cantidad_audio", "valor": "1000", "acepta": ["1000", "1.000", "mil"], "confundible": ["100", "10000"] }
+      ],
+      "nota": "La etapa 2 es la que importa acá: Tino tiene que quedarse con 2.000 (el texto, que es lo último y lo más confiable), no con el 1.000 del audio."
+    }
+  ],
+
+  "vision": [
+    {
+      "id": "V1-producto-claro",
+      "archivo": "v01.jpg",
+      "que_fotografiar": "Un pendón o lienzo impreso colgado en una pared o reja, de frente, con luz.",
+      "caption": null,
+      "preguntas_sin_vision": ["qué producto es", "medida", "material", "cantidad", "terminación"],
+      "evitables_con_vision": ["qué producto es"],
+      "nota": "El mejor caso posible para visión: el producto se reconoce solo."
+    },
+    {
+      "id": "V2-impresion-real",
+      "archivo": "v02.jpg",
+      "que_fotografiar": "Una impresión ya hecha, de cerca: un taco de tarjetas, un flyer sobre la mesa.",
+      "caption": "algo así quiero",
+      "preguntas_sin_vision": ["qué producto es", "medida", "material", "cantidad", "terminación"],
+      "evitables_con_vision": ["qué producto es"],
+      "nota": "«Algo así quiero» sin visión es ininteligible; con visión al menos se sabe de qué producto se habla."
+    },
+    {
+      "id": "V3-tarjeta",
+      "archivo": "v03.jpg",
+      "que_fotografiar": "Una tarjeta de presentación de otra empresa, apoyada en una mesa.",
+      "caption": "¿cuánto me sale esto?",
+      "preguntas_sin_vision": ["qué producto es", "cantidad", "material", "terminación", "si quiere el mismo diseño"],
+      "evitables_con_vision": ["qué producto es"],
+      "nota": "⭐ EL caso que decide visión. Si después de verla Tino igual tiene que preguntar cantidad, material y terminación, la foto ahorró UNA pregunta de cinco."
+    },
+    {
+      "id": "V4-folleto",
+      "archivo": "v04.jpg",
+      "que_fotografiar": "Un folleto o díptico abierto.",
+      "caption": null,
+      "preguntas_sin_vision": ["qué producto es", "medida", "cantidad", "material", "si es a un lado o dos"],
+      "evitables_con_vision": ["qué producto es", "si es a un lado o dos"],
+      "nota": "Acá la foto sí puede resolver dos cosas: el tipo de producto y si es doble cara."
+    },
+    {
+      "id": "V5-packaging",
+      "archivo": "v05.jpg",
+      "que_fotografiar": "Una caja o bolsa impresa, armada.",
+      "caption": "necesito algo así para mi producto",
+      "preguntas_sin_vision": ["qué producto es", "medida", "cantidad", "material", "si necesita troquel"],
+      "evitables_con_vision": ["qué producto es"],
+      "nota": "Packaging es el rubro donde inventar el material es más tentador para el modelo, y más caro si se equivoca."
+    },
+    {
+      "id": "V6-screenshot-conversacion",
+      "archivo": "v06.png",
+      "que_fotografiar": "Captura de pantalla de una conversación (de WhatsApp, con un proveedor o un diseñador) donde se lean especificaciones escritas.",
+      "caption": null,
+      "preguntas_sin_vision": ["qué producto es", "medida", "cantidad", "material"],
+      "evitables_con_vision": ["qué producto es", "medida", "cantidad", "material"],
+      "nota": "⭐ El único caso donde visión entrega DATOS y no impresiones: el texto está escrito, leerlo no es adivinar. Si visión gana en algún lado, es acá."
+    },
+    {
+      "id": "V7-lista-de-precios",
+      "archivo": "v07.png",
+      "que_fotografiar": "Captura o foto de una lista de precios o de una cotización de la competencia.",
+      "caption": "me cotizaron esto, ¿me lo puedes mejorar?",
+      "preguntas_sin_vision": ["qué producto es", "cantidad", "qué precio le dieron", "medida"],
+      "evitables_con_vision": ["qué producto es", "cantidad", "qué precio le dieron", "medida"],
+      "nota": "Mismo caso que V6. OJO: que Tino LEA el precio de la competencia no significa que deba competir con él; eso lo decide el prompt grande."
+    },
+    {
+      "id": "V8-referencia-estetica",
+      "archivo": "v08.jpg",
+      "que_fotografiar": "Una imagen de referencia de estilo (tipo Pinterest): bonita, sin ningún dato comercial.",
+      "caption": "me gusta este estilo",
+      "preguntas_sin_vision": ["qué producto es", "medida", "cantidad", "material", "terminación"],
+      "evitables_con_vision": [],
+      "nota": "Caso que mide el costo sin beneficio: la imagen se procesa, se paga, sale hacia Google, y Tino tiene que preguntar exactamente lo mismo que sin verla."
+    },
+    {
+      "id": "V9-borrosa",
+      "archivo": "v09.jpg",
+      "que_fotografiar": "Una foto movida, sacada a propósito sin enfocar.",
+      "caption": null,
+      "preguntas_sin_vision": ["qué producto es", "medida", "cantidad", "material"],
+      "evitables_con_vision": [],
+      "nota": "El resultado correcto es `legible:false`. Si el modelo describe algo con confianza, es un FRACASO grave: Tino cotizaría sobre una suposición."
+    },
+    {
+      "id": "V10-oscura",
+      "archivo": "v10.jpg",
+      "que_fotografiar": "Una foto muy oscura, con el producto apenas insinuado.",
+      "caption": "¿lo hacen?",
+      "preguntas_sin_vision": ["qué producto es", "medida", "cantidad", "material"],
+      "evitables_con_vision": [],
+      "nota": "Igual que V9: acá se mide la honestidad del modelo, no su vista."
+    },
+    {
+      "id": "V11-varias-imagenes",
+      "archivo": ["v11a.jpg", "v11b.jpg"],
+      "que_fotografiar": "Dos fotos distintas del mismo pedido, mandadas seguidas.",
+      "caption": null,
+      "preguntas_sin_vision": ["qué producto es", "si son dos pedidos o uno", "medida", "cantidad"],
+      "evitables_con_vision": ["qué producto es"],
+      "nota": "Mide también el tope de dos adjuntos por turno y que no se dupliquen las llamadas."
+    },
+    {
+      "id": "V12-foto-mas-caption",
+      "archivo": "v12.jpg",
+      "que_fotografiar": "Cualquier producto impreso, con el pie de foto puesto en WhatsApp.",
+      "caption": "¿pueden hacer esto? necesito 300 para el lunes",
+      "preguntas_sin_vision": ["qué producto es", "medida", "material", "terminación"],
+      "evitables_con_vision": ["qué producto es"],
+      "nota": "La cantidad y el plazo ya venían en el texto. Sirve para ver cuánto de lo que 'aporta' visión ya estaba escrito."
+    },
+    {
+      "id": "V13-sin-informacion",
+      "archivo": "v13.jpg",
+      "que_fotografiar": "Una imagen sin nada comercial: un meme, un paisaje, una mascota.",
+      "caption": null,
+      "preguntas_sin_vision": ["qué necesita"],
+      "evitables_con_vision": [],
+      "nota": "Tiene que terminar en 'no hay información comercial'. Si el modelo se pone a buscarle un pedido a un meme, la capacidad agrega ruido."
+    }
+  ]
+}
