@@ -2,9 +2,10 @@ import Link from "next/link";
 import { exigirUsuarioPortal } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { formatearSlot, ZONA_AGENDA, fechaChileDe, horaChileAUtc } from "@/lib/agendaCore";
+import { estadoConexionGoogle } from "@/lib/estadoGoogleCore";
 import CalendarioAgenda, { type CitaCal, type FranjaSemanal, type ProfCal } from "@/components/CalendarioAgenda";
 import NuevaCita from "@/components/NuevaCita";
-import { crearCitaManual, cambiarEstadoCita, reabrirCita } from "./acciones";
+import { crearCitaManual, cambiarEstadoCita, reabrirCita, reagendarCitaPortal } from "./acciones";
 
 export const dynamic = "force-dynamic";
 
@@ -69,7 +70,14 @@ function etiquetaProxima(iso: string, claveHoy: string): string {
   return `${dia}, ${hora}`;
 }
 
-export default async function Agenda() {
+export default async function Agenda({
+  searchParams,
+}: {
+  /** `?cita=<id>` abre esa hora al entrar: es cómo llegan Inicio y el chat. */
+  searchParams?: Promise<{ cita?: string }>;
+}) {
+  const params = searchParams ? await searchParams : undefined;
+  const citaInicial = typeof params?.cita === "string" ? params.cita : null;
   const usuario = await exigirUsuarioPortal();
   const supa = db();
 
@@ -102,11 +110,23 @@ export default async function Agenda() {
         .eq("cliente_id", usuario.clienteId)
         .order("orden", { ascending: true })
         .order("creado_en", { ascending: true }),
-      supa
-        .from("ed_profesionales")
-        .select("id, nombre, activo")
-        .eq("cliente_id", usuario.clienteId)
-        .order("creado_en", { ascending: true }),
+      // (Fase 2) También el estado de Google: si un calendario no se puede
+      // comprobar, sus horas dejan de ofrecerse y el dueño tiene que saberlo
+      // ACÁ, que es la pantalla que mira todos los días, no escondido en
+      // configuración. Reintento sin las columnas por si falta la 221/222.
+      (async () => {
+        const conGoogle = await supa
+          .from("ed_profesionales")
+          .select("id, nombre, activo, gcal_sync, gcal_ultimo_error, gcal_ultima_sync")
+          .eq("cliente_id", usuario.clienteId)
+          .order("creado_en", { ascending: true });
+        if (!conGoogle.error) return conGoogle;
+        return supa
+          .from("ed_profesionales")
+          .select("id, nombre, activo")
+          .eq("cliente_id", usuario.clienteId)
+          .order("creado_en", { ascending: true });
+      })(),
       // `datos_extra` llega con la migración 277. Si todavía no está aplicada,
       // PostgREST devuelve error por columna desconocida y la agenda quedaría
       // VACÍA — la pantalla que el negocio mira todos los días. Por eso se
@@ -141,7 +161,20 @@ export default async function Agenda() {
     ]);
 
   const listaServicios = (servicios ?? []) as { id: string; nombre: string; duracion_min: number; activo: boolean }[];
-  const listaProfesionales = (profesionales ?? []) as { id: string; nombre: string; activo: boolean }[];
+  const listaProfesionales = (profesionales ?? []) as {
+    id: string;
+    nombre: string;
+    activo: boolean;
+    gcal_sync?: boolean | null;
+    gcal_ultimo_error?: string | null;
+    gcal_ultima_sync?: string | null;
+  }[];
+
+  /** Calendarios que hoy no se pueden comprobar: sus horas no se ofrecen. */
+  const calendariosEnProblemas = listaProfesionales
+    .filter((p) => p.activo && p.gcal_sync)
+    .map((p) => ({ nombre: p.nombre, estado: estadoConexionGoogle(p) }))
+    .filter((p) => p.estado.estado !== "conectado");
   const listaCitas = (citas ?? []) as unknown as CitaFila[];
 
   const profIds = listaProfesionales.map((p) => p.id);
@@ -308,7 +341,7 @@ export default async function Agenda() {
 
       {porRevisar > 0 && (
         <p className="mt-3 text-[13.5px] font-semibold" style={{ color: "var(--muted)" }}>
-          <span className="pildora-indigo mr-1.5">{porRevisar}</span>
+          <span className="pildora pildora-azul mr-1.5">{porRevisar}</span>
           {porRevisar === 1 ? "hora sin confirmar" : "horas sin confirmar"} — ábrelas en el calendario y confírmalas.
         </p>
       )}
@@ -316,8 +349,8 @@ export default async function Agenda() {
       {/* Un bloqueo de "todo el negocio" que cubre AHORA deja la agenda sin
           cupos. Sin este aviso, el dueño ve "no hay horas" y no entiende por qué. */}
       {bloqueoTapando && (
-        <div className="tarjeta mt-5 p-5" style={{ background: "#FDE9EA", borderColor: "#F5C9CB" }}>
-          <p className="text-[14.5px] font-bold" style={{ color: "#B33A3A" }}>
+        <div className="tarjeta mt-5 p-5" style={{ background: "var(--coral-medio)", borderColor: "var(--coral-borde)" }}>
+          <p className="text-[14.5px] font-bold" style={{ color: "var(--peligro)" }}>
             Atención: hay un bloqueo activo sobre todo el negocio.
           </p>
           <p className="mt-1.5 text-[14px]" style={{ color: "var(--muted)" }}>
@@ -325,7 +358,7 @@ export default async function Agenda() {
             reservas ni por WhatsApp. Va desde {formatearSlot(bloqueoTapando.desde)} hasta{" "}
             {formatearSlot(bloqueoTapando.hasta)}
             {bloqueoTapando.motivo ? ` (${bloqueoTapando.motivo})` : ""}.{" "}
-            <Link href="/agenda/configuracion" className="font-bold underline" style={{ color: "#B33A3A" }}>
+            <Link href="/agenda/configuracion" className="font-bold underline" style={{ color: "var(--peligro)" }}>
               Quitarlo
             </Link>
             .
@@ -334,7 +367,7 @@ export default async function Agenda() {
       )}
 
       {!configurada && (
-        <div className="tarjeta mt-5 p-5" style={{ borderColor: "#F5C9CB" }}>
+        <div className="tarjeta mt-5 p-5" style={{ borderColor: "var(--coral-borde)" }}>
           <p className="text-[14.5px] font-bold">Para que tus empleados agenden, faltan algunas cosas:</p>
           <ol className="mt-2 list-inside list-decimal text-[14px]" style={{ color: "var(--muted)" }}>
             {serviciosActivos.length === 0 && <li>Crear al menos un servicio.</li>}
@@ -347,12 +380,41 @@ export default async function Agenda() {
         </div>
       )}
 
+      {/* ── Calendario que no se puede comprobar (Fase 2) ────────────── */}
+      {calendariosEnProblemas.length > 0 && (
+        <div className="tarjeta mt-5 p-5" style={{ borderColor: "var(--alerta-borde)", background: "var(--alerta-suave)" }}>
+          <p className="font-bold" style={{ fontSize: "var(--t-titulo)", color: "var(--alerta)" }}>
+            {calendariosEnProblemas.length === 1
+              ? `No podemos comprobar el calendario de ${calendariosEnProblemas[0].nombre}`
+              : `No podemos comprobar ${calendariosEnProblemas.length} calendarios`}
+          </p>
+          <p className="mt-1.5" style={{ fontSize: "var(--t-cuerpo)", color: "var(--muted)" }}>
+            Mientras no podamos verlo, <b>sus horas no se ofrecen</b> en la página de reservas ni por
+            WhatsApp. Es a propósito: sin poder mirar el calendario no sabemos si está libre, y
+            ofrecerlo igual es cómo se reserva encima de un compromiso.
+          </p>
+          <ul className="mt-2" style={{ fontSize: "var(--t-menor)", color: "var(--muted)" }}>
+            {calendariosEnProblemas.map((c) => (
+              <li key={c.nombre}>
+                <b>{c.nombre}</b> · {c.estado.texto}
+              </li>
+            ))}
+          </ul>
+          <Link
+            href="/agenda/configuracion?s=google"
+            className="btn-azul mt-3 inline-flex px-3.5 py-2"
+          >
+            Reconectar
+          </Link>
+        </div>
+      )}
+
       {/* ── Por cerrar ───────────────────────────────────────────────── */}
       {porCerrar.length > 0 && (
         <div className="tarjeta mt-5 p-5">
           <div className="flex items-baseline justify-between gap-2">
             <p className="text-[14.5px] font-bold">
-              <span className="pildora-indigo mr-1.5">{porCerrar.length}</span>
+              <span className="pildora pildora-azul mr-1.5">{porCerrar.length}</span>
               {porCerrar.length === 1 ? "hora por cerrar" : "horas por cerrar"}
             </p>
           </div>
@@ -380,7 +442,7 @@ export default async function Agenda() {
                     <button
                       type="submit"
                       className="rounded px-2.5 py-1 text-[12px] font-semibold"
-                      style={{ background: "#DCFCE7", color: "#166534" }}
+                      style={{ background: "var(--ok-suave)", color: "var(--ok)" }}
                     >
                       Sí, se atendió
                     </button>
@@ -391,7 +453,7 @@ export default async function Agenda() {
                     <button
                       type="submit"
                       className="rounded px-2.5 py-1 text-[12px]"
-                      style={{ background: "#FDE9EA", color: "#B33A3A" }}
+                      style={{ background: "var(--coral-medio)", color: "var(--peligro)" }}
                     >
                       No llegó
                     </button>
@@ -416,6 +478,8 @@ export default async function Agenda() {
           franjas={franjas}
           accionEstado={cambiarEstadoCita}
           accionReabrir={reabrirCita}
+          accionReagendar={reagendarCitaPortal}
+          citaInicial={citaInicial}
         />
       </div>
     </main>
@@ -440,7 +504,7 @@ function Cifra({
       </div>
       <div
         className="mt-1 truncate h-pagina"
-        style={{ color: acento ? "var(--indigo)" : "var(--tinta)" }}
+        style={{ color: acento ? "var(--azul)" : "var(--tinta)" }}
         title={valor}
       >
         {valor}

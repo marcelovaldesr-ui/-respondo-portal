@@ -35,10 +35,30 @@ type CitaInterna = {
   id: string;
   clienteId: string;
   servicioId: string;
+  /** Quién la atiende: la hora se mueve DENTRO de su agenda (Fase 2). */
+  profesionalId: string | null;
+  /** Si la cita es la inscripción a una clase, no se mueve de hora. */
+  claseId: string | null;
   estado: string;
   inicioIso: string;
   politica: PoliticaAutogestion;
 };
+
+/**
+ * Horas DESPUÉS del término de la cita en que el enlace deja de abrir.
+ *
+ * Un día justo: alcanza para que alguien lo abra la mañana siguiente —«¿a qué
+ * hora era?», «¿cuánto salió?»— y no tanto como para que un enlace reenviado
+ * por WhatsApp siga mostrando el nombre, el servicio y el precio de esa persona
+ * meses después. Se cuenta desde el FIN y no desde el inicio: una sesión de dos
+ * horas y media terminaría con el enlace muerto antes de que la persona salga.
+ *
+ * Nota: la encuesta de Vera sale a T+2h del término y NO lleva este enlace
+ * (sus parámetros son nombre y negocio), así que acortar la vigencia no la toca.
+ * Los dos mensajes que sí lo llevan —confirmación T−24h y recordatorio T−3h—
+ * son anteriores a la cita.
+ */
+const HORAS_VIGENCIA_TRAS_FIN = 24;
 
 function politicaDe(cliente: Record<string, unknown>): PoliticaAutogestion {
   return {
@@ -73,8 +93,11 @@ async function buscar(
     id: string;
     cliente_id: string;
     servicio_id: string;
+    profesional_id: string | null;
+    clase_id: string | null;
     nombre_contacto: string;
     inicio: string;
+    fin: string | null;
     estado: string;
     ed_servicios: { nombre: string; duracion_min: number; precio_clp: number | null } | null;
     ed_profesionales: { nombre: string } | null;
@@ -83,7 +106,7 @@ async function buscar(
   const { data: filaCruda, error } = await supa
     .from("ed_citas")
     .select(
-      "id, cliente_id, servicio_id, nombre_contacto, inicio, fin, estado, " +
+      "id, cliente_id, servicio_id, profesional_id, clase_id, nombre_contacto, inicio, fin, estado, " +
         "ed_servicios!servicio_id(nombre, duracion_min, precio_clp), ed_profesionales!profesional_id(nombre)",
     )
     .eq("gestion_token", token)
@@ -102,6 +125,21 @@ async function buscar(
   if (!clienteCrudo) return null;
   const cliente = clienteCrudo as unknown as Record<string, unknown>;
   if (cliente.activo === false) return null;
+
+  /**
+   * EL ENLACE CADUCA (Fase 2). El token no expiraba nunca: un enlace reenviado
+   * por WhatsApp seguía mostrando nombre, servicio, profesional y precio de esa
+   * hora años después. Vive hasta 24 h después del TÉRMINO de la cita.
+   *
+   * Si `fin` viniera nulo (datos viejos), se estima con la duración del
+   * servicio en vez de dar el enlace por muerto: un dato faltante no debe
+   * cerrarle la puerta a quien sí tiene una hora vigente.
+   */
+  const finCita = cita.fin
+    ? Date.parse(cita.fin)
+    : Date.parse(cita.inicio) + (cita.ed_servicios?.duracion_min ?? 60) * 60_000;
+  const finVigencia = finCita + HORAS_VIGENCIA_TRAS_FIN * 3600_000;
+  if (Number.isFinite(finVigencia) && Date.now() > finVigencia) return null;
 
   const svc = cita.ed_servicios;
   const prof = cita.ed_profesionales;
@@ -127,6 +165,8 @@ async function buscar(
       id: cita.id,
       clienteId: cita.cliente_id,
       servicioId: cita.servicio_id,
+      profesionalId: cita.profesional_id ?? null,
+      claseId: cita.clase_id ?? null,
       estado: cita.estado,
       inicioIso: cita.inicio,
       politica,
@@ -191,16 +231,34 @@ export async function cuposParaReagendar(
   if (!permisos.reagendar.permitido) {
     return { ok: false, error: permisos.reagendar.motivo ?? "No se puede mover por internet." };
   }
+  if (r.interna.claseId) {
+    return { ok: false, error: "Las clases no se cambian de hora: anula tu cupo e inscríbete en otra." };
+  }
 
+  /**
+   * (Fase 2) Se mueve DENTRO del profesional que ya la atiende.
+   *
+   * Antes se ofrecían los cupos de todos y la cita se movía conservando al
+   * profesional original: el cliente elegía un hueco de otra persona y la hora
+   * terminaba en un horario en el que su profesional podía no trabajar. Si el
+   * negocio quiere cambiar de persona, se hace desde el portal.
+   */
+  /**
+   * SIN PLAZO PROPIO (decisión de Marcelo, 12-sep). Acá había una constante de
+   * 21 días inventada por mí: el cliente podía mover su hora dentro de tres
+   * semanas aunque el negocio tuviera abiertos dos meses, o al revés. Ahora no
+   * se pasa `dias`: el motor aplica el `horizonte_dias` del negocio, el mismo
+   * que ve la página pública. Una sola regla de disponibilidad, un solo lugar
+   * donde cambiarla.
+   */
   const disp = await disponibilidad(r.interna.clienteId, r.interna.servicioId, {
-    maxSlots: 120,
     supa,
+    profesionalId: r.interna.profesionalId,
+    maxPorDia: 12,
   });
   if (!disp.ok) return { ok: false, error: "No pudimos cargar los horarios." };
 
-  // Se devuelve SOLO el instante. El profesional lo elige el servidor al
-  // confirmar: exponer profesionalId acá permitiría que alguien eligiera con
-  // quién atenderse saltándose las reglas del negocio.
+  // Se devuelve SOLO el instante: con quién se atiende no se negocia por acá.
   return { ok: true, slots: disp.slots.map((s) => ({ inicio: s.inicio })) };
 }
 
@@ -220,10 +278,16 @@ export async function reagendarPorToken(
   if (!permisos.reagendar.permitido) {
     return { ok: false, error: permisos.reagendar.motivo ?? "No se puede mover por internet." };
   }
+  if (r.interna.claseId) {
+    return { ok: false, error: "Las clases no se cambian de hora: anula tu cupo e inscríbete en otra." };
+  }
 
   const disp = await disponibilidad(r.interna.clienteId, r.interna.servicioId, {
-    maxSlots: 200,
     supa,
+    desdeDia: new Date(nuevoInicioIso),
+    dias: 1,
+    profesionalId: r.interna.profesionalId,
+    maxPorDia: 60,
   });
   if (!disp.ok) return { ok: false, error: "No pudimos cargar los horarios." };
 
@@ -235,10 +299,15 @@ export async function reagendarPorToken(
     return { ok: false, error: "Ese horario ya no está disponible. Elige otro, por favor." };
   }
 
-  const res = await reagendar(r.interna.clienteId, r.interna.id, nuevoInicioIso, supa);
+  const res = await reagendar(r.interna.clienteId, r.interna.id, nuevoInicioIso, supa, {
+    profesionalId: r.interna.profesionalId,
+  });
   if (!res.ok) {
     if (res.motivo === "cupo_tomado") {
-      return { ok: false, error: "Ese horario se acaba de ocupar. Elige otro, por favor." };
+      return { ok: false, error: "Ese horario acaba de ocuparse. Elige otro, por favor." };
+    }
+    if (res.motivo === "inscripcion_de_clase") {
+      return { ok: false, error: "Las clases no se cambian de hora: anula tu cupo e inscríbete en otra." };
     }
     return { ok: false, error: "No pudimos mover la hora. Intenta de nuevo." };
   }

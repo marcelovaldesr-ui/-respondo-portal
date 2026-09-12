@@ -144,8 +144,10 @@ function AccionPrincipal({
       );
       break;
     case "ver_cita":
+      // (Fase 2) Se abre ESA hora en la agenda, no el calendario entero: el id
+      // ya lo teníamos y se estaba tirando.
       boton = (
-        <Link href="/agenda" className={principal}>
+        <Link href={accion.citaId ? `/agenda?cita=${encodeURIComponent(accion.citaId)}` : "/agenda"} className={principal}>
           {accion.label}
         </Link>
       );
@@ -389,6 +391,16 @@ export default function FichaLateral({
               <span className="cifra" suppressHydrationWarning>
                 {fechaHora(e.proximaCita.inicio)}
               </span>
+              {/* (Fase 2) La ficha responde qué pasa AHORA: una sola cita, la
+                  próxima, con la forma de abrirla. El historial completo vive
+                  en la agenda y en la ficha del cliente. */}
+              <Link
+                href={`/agenda?cita=${encodeURIComponent(e.proximaCita.id)}`}
+                className="mt-0.5 block"
+                style={{ fontSize: "var(--t-meta)", color: "var(--azul)" }}
+              >
+                Ver o mover la cita →
+              </Link>
             </Fila>
           )}
         </dl>

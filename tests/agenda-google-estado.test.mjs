@@ -1,7 +1,11 @@
 /**
  * GOOGLE CALENDAR (OAuth): un fallo real queda anotado, un token ilegible
- * también, y el siguiente éxito limpia el error. La disponibilidad sigue
- * calculándose igual (fail-open). Sin red: fetch falso.
+ * también, y el siguiente éxito limpia el error. Sin red: fetch falso.
+ *
+ * (Fase 2) Además de anotar el error, ahora se DEVUELVE a quién no se pudo
+ * comprobar: sus horas no se ofrecen en público. Antes esta prueba fijaba el
+ * fail-open —«la agenda sigue ofreciendo horas»— que es justo lo que producía
+ * dobles reservas encima del calendario personal del dueño.
  */
 import assert from "node:assert/strict";
 import test from "node:test";
@@ -48,7 +52,12 @@ test("freeBusy sin permiso → error anotado y estado 'Error de acceso'; token i
         : { status: 403, json: { error: { message: "Request had insufficient authentication scopes." } } },
     () => ocupadosDesdeGoogle(["p1", "p2"], "2026-09-11T00:00:00Z", "2026-09-12T00:00:00Z", supa),
   );
-  assert.deepEqual(ocupados, [], "la agenda sigue ofreciendo horas (fail-open, igual que antes)");
+  assert.deepEqual(ocupados.ocupados, [], "sin datos de Google no hay ocupaciones que reportar");
+  assert.deepEqual(
+    ocupados.noVerificables.slice().sort(),
+    ["p1", "p2"],
+    "los dos quedan sin verificar: uno por permiso, otro por token ilegible",
+  );
   const [p1, p2] = supa.tablas.ed_profesionales;
   assert.match(p1.gcal_ultimo_error, /insufficient/);
   assert.equal(estadoConexionGoogle(p1).estado, "error_acceso");
@@ -66,7 +75,8 @@ test("cuando Google vuelve a responder bien, el error viejo de LECTURA se limpia
         : { status: 200, json: { calendars: { primary: { busy: [{ start: "2026-09-11T13:00:00Z", end: "2026-09-11T14:00:00Z" }] } } } },
     () => ocupadosDesdeGoogle(["p1"], "2026-09-11T00:00:00Z", "2026-09-12T00:00:00Z", supa),
   );
-  assert.equal(ocupados.length, 1);
+  assert.equal(ocupados.ocupados.length, 1);
+  assert.deepEqual(ocupados.noVerificables, [], "verificado: sus horas sí se pueden ofrecer");
   assert.equal(supa.tablas.ed_profesionales[0].gcal_ultimo_error, null);
   assert.equal(estadoConexionGoogle(supa.tablas.ed_profesionales[0]).estado, "conectado");
 

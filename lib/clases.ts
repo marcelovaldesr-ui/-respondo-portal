@@ -166,7 +166,7 @@ export async function clasesEntre(
 
 /** Por qué no se pudo inscribir. Se distinguen para poder decirle algo útil a
     la persona: "esa clase ya se llenó" no es lo mismo que "esa clase se canceló". */
-export type MotivoRechazo = "no_existe" | "cancelada" | "ya_paso" | "cupo_tomado" | "error";
+export type MotivoRechazo = "no_existe" | "cancelada" | "ya_paso" | "cupo_tomado" | "ya_inscrito" | "error";
 
 export type ResultadoInscripcion =
   | { ok: true; citaId: string; clase: { cupoOcupado: number; cupoMaximo: number } }
@@ -192,6 +192,26 @@ export async function inscribirEnClase(params: {
   supa?: SupabaseClient;
 }): Promise<ResultadoInscripcion> {
   try {
+    /**
+     * DOBLE CLIC = DOS CUPOS (Fase 2). El anti-solape de ed_citas no cubre las
+     * inscripciones (son `clase_id is not null`), así que dos POST seguidos del
+     * mismo teléfono consumían dos lugares de una clase donde a veces quedan
+     * tres. Acá se mira antes de llamar al RPC: no es una transacción, pero
+     * cierra el caso real —el dedo nervioso— sin tocar la base.
+     */
+    const identidad = params.chatId ?? params.telefono ?? null;
+    if (identidad) {
+      const { data: yaEsta } = await (params.supa ?? db())
+        .from("ed_citas")
+        .select("id")
+        .eq("cliente_id", params.clienteId)
+        .eq("clase_id", params.claseId)
+        .eq("chat_id", identidad)
+        .in("estado", ["agendada", "confirmada", "reagendada"])
+        .limit(1);
+      if ((yaEsta ?? []).length) return { ok: false, motivo: "ya_inscrito" };
+    }
+
     const { data, error } = await (params.supa ?? db()).rpc("ed_inscribir_en_clase", {
       p_clase_id: params.claseId,
       p_cliente_id: params.clienteId,
@@ -203,6 +223,17 @@ export async function inscribirEnClase(params: {
     });
 
     if (error) {
+      /**
+       * 23505 = índice único violado. Con la migración 307 aplicada, el par
+       * (clase, teléfono) es único entre las inscripciones vivas: si dos POST
+       * del mismo dedo nervioso pasan a la vez la comprobación de arriba, la
+       * base rechaza el segundo y acá se traduce a "ya estás inscrito", que es
+       * exactamente lo que pasó. Sin la migración este caso no ocurre y el
+       * código sigue funcionando igual.
+       */
+      if ((error as { code?: string }).code === "23505") {
+        return { ok: false, motivo: "ya_inscrito" };
+      }
       console.error("[clases] inscripción falló:", error.message);
       return { ok: false, motivo: "error" };
     }

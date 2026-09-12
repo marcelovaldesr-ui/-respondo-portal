@@ -47,6 +47,32 @@ export function coincideConSlotOfrecido(
   );
 }
 
+/**
+ * Rango de días chilenos de un mes "2026-09", acotado a hoy si el mes ya
+ * empezó. Devuelve null si el texto no es un mes válido o queda en el pasado.
+ */
+export function rangoDelMes(mes: string | null, ahora = new Date()): { desde: Date; dias: number } | null {
+  if (!mes || !/^\d{4}-\d{2}$/.test(mes)) return null;
+  const [anio, m] = mes.split("-").map(Number);
+  if (m < 1 || m > 12 || anio < 2020 || anio > 2100) return null;
+  const primero = new Date(Date.UTC(anio, m - 1, 1, 15, 0)); // mediodía chileno aprox.
+  const diasDelMes = new Date(Date.UTC(anio, m, 0)).getUTCDate();
+  const hoy = new Date(ahora);
+  const esMesDeHoy = hoy.getUTCFullYear() === anio && hoy.getUTCMonth() === m - 1;
+  if (primero.getTime() + diasDelMes * 86_400_000 < ahora.getTime()) return null; // mes pasado
+  const desde = esMesDeHoy ? ahora : primero;
+  const diaInicial = esMesDeHoy ? hoy.getUTCDate() : 1;
+  return { desde, dias: diasDelMes - diaInicial + 1 };
+}
+
+/** Un solo día chileno "2026-09-18". */
+export function rangoDelDia(fecha: string | null): { desde: Date; dias: number } | null {
+  if (!fecha || !/^\d{4}-\d{2}-\d{2}$/.test(fecha)) return null;
+  const [anio, mes, dia] = fecha.split("-").map(Number);
+  if (mes < 1 || mes > 12 || dia < 1 || dia > 31) return null;
+  return { desde: new Date(Date.UTC(anio, mes - 1, dia, 15, 0)), dias: 1 };
+}
+
 export function ipDeRequest(headers: Headers): string {
   return (
     headers.get("x-forwarded-for")?.split(",")[0]?.trim() ||

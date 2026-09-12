@@ -1,13 +1,13 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { db } from "@/lib/db";
-import { crearCita, disponibilidad } from "@/lib/agenda";
+import { reservarCupo } from "@/lib/agenda";
 import { programarSeguimientosCita } from "@/lib/agendaSeguimientos";
 import { formatearSlot } from "@/lib/agendaCore";
 import { limitarDistribuido } from "@/lib/seguridad";
 import { validarFicha, type CampoFicha } from "@/lib/fichaServicio";
 import { origenCanonico } from "@/lib/origenes";
 import {
-  coincideConSlotOfrecido,
+  esUuid,
   ipDeRequest,
   normalizarNombre,
   normalizarTelefono,
@@ -43,13 +43,22 @@ export async function POST(request: NextRequest) {
 
   const slug = String(body.slug ?? "").trim();
   const servicioId = String(body.servicioId ?? "").trim();
+  /**
+   * Profesional PEDIDO por el cliente. Vacío = «cualquiera», que es el caso
+   * normal: el servidor elige entre los que de verdad están libres a esa hora
+   * (ver `reservarCupo`). Antes este campo era obligatorio y la página mandaba
+   * el profesional del cupo duplicado que el cliente hubiera tocado.
+   */
   const profesionalId = String(body.profesionalId ?? "").trim();
   const inicio = String(body.inicio ?? "").trim();
   const nombre = normalizarNombre(String(body.nombre ?? ""));
   const telefono = normalizarTelefono(String(body.telefono ?? ""));
 
-  if (!slug || !servicioId || !profesionalId || !inicio || nombre.length < 2 || !telefono) {
+  if (!slug || !esUuid(servicioId) || !inicio || nombre.length < 2 || !telefono) {
     return NextResponse.json({ ok: false, error: "Revisa tu nombre y teléfono." }, { status: 400 });
+  }
+  if (profesionalId && !esUuid(profesionalId)) {
+    return NextResponse.json({ ok: false, error: "Solicitud inválida." }, { status: 400 });
   }
   if (Number.isNaN(Date.parse(inicio)) || Date.parse(inicio) < Date.now()) {
     return NextResponse.json({ ok: false, error: "Ese horario ya no es válido." }, { status: 400 });
@@ -64,24 +73,6 @@ export async function POST(request: NextRequest) {
     .eq("activo", true)
     .maybeSingle();
   if (!cliente) return NextResponse.json({ ok: false, error: "Página no disponible." }, { status: 404 });
-
-  // No basta con que servicio y profesional pertenezcan al negocio: el horario
-  // solicitado tiene que ser uno de los slots que el servidor ofreció. Sin
-  // esta comprobación una petición manual podía reservar de madrugada o fuera
-  // del horizonte configurado.
-  const disp = await disponibilidad(cliente.id as string, servicioId, {
-    maxSlots: 120,
-    supa,
-  });
-  if (
-    !disp.ok ||
-    !coincideConSlotOfrecido(disp.slots, profesionalId, inicio)
-  ) {
-    return NextResponse.json(
-      { ok: false, error: "horario_no_disponible", mensaje: "Ese horario ya no está disponible." },
-      { status: 409 },
-    );
-  }
 
   /**
    * FICHA DEL SERVICIO (migración 277) — se valida ACÁ, en el servidor.
@@ -124,11 +115,17 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  const r = await crearCita(
+  /**
+   * El horario se REVALIDA dentro de `reservarCupo`: lo que el cliente vio
+   * hace dos minutos no prueba nada. Ahí también se elige al profesional
+   * cuando el cliente dijo «cualquiera» y se reintenta con el siguiente si le
+   * ganaron la carrera por milisegundos.
+   */
+  const r = await reservarCupo(
     {
       clienteId: cliente.id as string,
       servicioId,
-      profesionalId,
+      profesionalId: profesionalId || null,
       inicioIso: inicio,
       nombreContacto: nombre,
       telefono,
@@ -142,7 +139,19 @@ export async function POST(request: NextRequest) {
   if (!r.ok) {
     if (r.motivo === "cupo_tomado") {
       return NextResponse.json(
-        { ok: false, error: "cupo_tomado", mensaje: "Ese horario se acaba de ocupar. Elige otro, por favor." },
+        {
+          ok: false,
+          error: "cupo_tomado",
+          mensaje: "Ese horario acaba de ocuparse.",
+          // Horas cercanas reales, para no dejar al cliente en un callejón.
+          alternativas: (r.alternativas ?? []).map((s) => ({ inicio: s.inicio, texto: formatearSlot(s.inicio) })),
+        },
+        { status: 409 },
+      );
+    }
+    if (r.motivo === "profesional_invalido" || r.motivo === "sin_profesionales") {
+      return NextResponse.json(
+        { ok: false, error: "horario_no_disponible", mensaje: "Ese horario ya no está disponible." },
         { status: 409 },
       );
     }
@@ -175,9 +184,20 @@ export async function POST(request: NextRequest) {
   // moverse solo. Se muestra en la pantalla de éxito para que lo guarde.
   const gestion = r.cita.gestion_token ? `${origenCanonico()}/cita/${r.cita.gestion_token}` : null;
 
+  const { data: profAsignado } = await supa
+    .from("ed_profesionales")
+    .select("nombre")
+    .eq("id", r.cita.profesional_id)
+    .maybeSingle();
+
   return NextResponse.json({
     ok: true,
     cuando: formatearSlot(r.cita.inicio),
+    inicio: r.cita.inicio,
+    servicio: (svc?.nombre as string) ?? null,
+    // A quién le tocó: cuando el cliente eligió «cualquiera», esto es lo único
+    // que le dice con quién va.
+    profesional: (profAsignado?.nombre as string) ?? null,
     requiereConfirmacion: cliente.confirmacion_automatica === false,
     whatsapp: telNegocio ? `https://wa.me/${telNegocio}?text=${textoWa}` : null,
     gestion,

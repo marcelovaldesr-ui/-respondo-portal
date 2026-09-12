@@ -26,11 +26,20 @@
 
 :root {
   /* ── Marca ─────────────────────────────────────────────────────────────── */
-  --indigo: #4f46e5;
-  --indigo-suave: #eef0fe; /* fondo de píldora / estado seleccionado */
-  --indigo-borde: #dde0f7; /* borde del mismo estado, un paso más oscuro */
-  --indigo-borde-2: #c7cbe8; /* borde marcado (tarjeta destacada) */
-  --indigo-tenue: #8b8fe6; /* íconos sobre fondo indigo suave */
+  /* ── El índigo histórico, ya apuntando al azul de la marca (Fase 2) ──────
+     Los NOMBRES se conservan a propósito. El portal tenía ~90 usos de
+     `var(--indigo*)` repartidos en pantallas que esta fase no tocó: cambiar
+     cada archivo a mano habría sido una campaña de buscar/reemplazar sobre
+     código sin revisar, que es justo lo que no queremos. Cambiando el VALOR
+     del token, la convergencia visual es inmediata, reversible en una línea y
+     verificable de un vistazo; los nombres se irán renombrando a `--azul*`
+     cuando cada pantalla se toque por su propio motivo.
+     Contraste sobre blanco: 9,7:1 (antes 5,9:1). */
+  --indigo: #1d3f8f;
+  --indigo-suave: #eef3fb; /* fondo de píldora / estado seleccionado */
+  --indigo-borde: #d3dff2; /* borde del mismo estado, un paso más oscuro */
+  --indigo-borde-2: #b9cbe9; /* borde marcado (tarjeta destacada) */
+  --indigo-tenue: #7b97cc; /* íconos sobre fondo suave */
   --coral: #f97362;
   --coral-suave: #fff9f7;
   --coral-medio: #fef1ef;
@@ -63,6 +72,7 @@
      que en este producto casi nunca es una emergencia. */
   --peligro: #c2452f;
   --peligro-fuerte: #b91c1c;
+  --peligro-suave: #fbecec; /* fondo de aviso destructivo (Fase 2) */
 
   --cobalto: #2563eb;
   --malva: #b84a86;
@@ -70,10 +80,9 @@
 
   /* ── Identidad Fase 1: azul profundo + cian (sep-2026) ──────────────────
      Decisión de marca: azul profundo como principal, cian como acento, coral
-     fuera de lo estructural. Por ahora SOLO lo usan las piezas nuevas (Inicio,
-     ficha de la conversación, estado comercial compartido). El resto del
-     portal sigue en indigo hasta decidir el cambio global: cambiar --indigo de
-     golpe re-pinta 30 pantallas que nadie revisó. */
+     fuera de lo estructural. Desde Fase 2 el índigo histórico apunta a este
+     mismo azul (ver el bloque de arriba), así que todo el portal comparte la
+     identidad aunque los nombres viejos sigan existiendo. */
   --azul: #1d3f8f;
   --azul-hover: #17336f;
   --azul-suave: #eef3fb;
@@ -259,6 +268,9 @@ h3,
   /* Botones — planos, con un leve hundido al presionar como única señal táctil. */
   .btn {
     @apply inline-flex items-center justify-center gap-2 px-3.5 py-2 font-semibold;
+    /* (Fase 2) Piso táctil. Con la raíz en 13 px, `py-2` daba 31 px de alto:
+       justo por debajo de lo que el pulgar acierta con comodidad. */
+    min-height: 36px;
     border-radius: var(--r-input);
     font-size: var(--t-cuerpo);
     transition:
@@ -276,7 +288,10 @@ h3,
     box-shadow: 0 1px 2px rgba(15, 23, 42, 0.12);
   }
   .btn-primario:hover {
-    background: #443cd1;
+    /* (Fase 2) Antes era #443cd1, el hover del índigo viejo: con el token ya
+       apuntando al azul de la marca, el botón saltaba de azul a morado al
+       pasar el mouse. Ahora usa el mismo hover que .btn-azul. */
+    background: var(--azul-hover);
   }
   .btn-primario:disabled {
     opacity: 0.5;
@@ -316,6 +331,7 @@ h3,
   /* Botón chico de barra de herramientas (filtros, cambio de vista). */
   .btn-chico {
     @apply inline-flex items-center justify-center gap-1.5 border bg-white px-2.5 py-1.5 font-medium;
+    min-height: 32px; /* (Fase 2) mismo motivo que .btn, un punto más compacto */
     border-radius: var(--r-input);
     font-size: var(--t-menor);
     border-color: var(--borde-fuerte);
@@ -426,6 +442,10 @@ h3,
     background: var(--ok-suave);
     color: var(--ok);
   }
+  .pildora-azul {
+    background: var(--azul-suave);
+    color: var(--azul);
+  }
   .pildora-indigo {
     @apply pildora;
     background: var(--indigo-suave);
@@ -485,6 +505,113 @@ h3,
   }
 
   /* Estado (etapa, pago, atención): 12 px, radio chico, punto opcional. */
+  /* ── Agenda (Fase 2) ────────────────────────────────────────────────
+     Controles pensados para el dedo y para el teclado: 44 px de alto real,
+     estado visible sin depender del color (borde + fondo + aria-pressed) y
+     cifras en la tipografía tabular para que las horas no bailen. */
+  .chip-opcion {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    min-height: 38px;
+    padding: 0 14px;
+    border: 1px solid var(--borde-fuerte);
+    border-radius: var(--r-pill);
+    background: #fff;
+    color: var(--tinta);
+    font-size: var(--t-menor);
+    font-weight: 600;
+    transition: background 0.12s, border-color 0.12s, color 0.12s;
+  }
+  .chip-opcion:hover {
+    background: var(--fondo-hundido);
+  }
+  .chip-opcion[aria-pressed="true"] {
+    background: var(--azul);
+    border-color: var(--azul);
+    color: #fff;
+  }
+  .btn-hora {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 44px;
+    width: 100%;
+    padding: 0 6px;
+    border: 1px solid var(--borde-fuerte);
+    border-radius: var(--r-input);
+    background: #fff;
+    color: var(--tinta);
+    font-size: 14px;
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+    transition: background 0.12s, border-color 0.12s, color 0.12s;
+  }
+  .btn-hora:hover {
+    border-color: var(--azul-borde);
+    background: var(--azul-suave);
+  }
+  .btn-hora[aria-pressed="true"] {
+    background: var(--azul);
+    border-color: var(--azul);
+    color: #fff;
+  }
+  /* Flechas de mes del calendario. Van aparte de .btn-chico porque el blanco
+     táctil manda: con el pulgar, un botón de 29 px se falla una de cada tres
+     veces y el usuario termina cambiando de mes sin querer. 40×40 es el mínimo
+     cómodo y no desequilibra la cabecera porque el ícono sigue siendo chico. */
+  .nav-mes {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 40px;
+    height: 40px;
+    border: 1px solid var(--borde-fuerte);
+    border-radius: var(--r-input);
+    background: #fff;
+    color: var(--azul);
+    font-size: 15px;
+    line-height: 1;
+  }
+  .nav-mes:hover:not(:disabled) {
+    background: var(--azul-suave);
+    border-color: var(--azul-borde);
+  }
+  .nav-mes:disabled {
+    color: var(--muted-3);
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+  .dia-cal {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 44px;
+    border-radius: var(--r-input);
+    border: 1px solid transparent;
+    background: transparent;
+    color: var(--muted-3);
+    font-size: 14px;
+    font-variant-numeric: tabular-nums;
+  }
+  .dia-cal[data-cupo="si"] {
+    background: var(--azul-suave);
+    border-color: var(--azul-borde);
+    color: var(--azul);
+    font-weight: 700;
+  }
+  .dia-cal[data-cupo="si"]:hover {
+    background: var(--azul-borde);
+  }
+  .dia-cal[aria-pressed="true"] {
+    background: var(--azul);
+    border-color: var(--azul);
+    color: #fff;
+  }
+  .dia-cal:disabled {
+    cursor: default;
+  }
+
   .estado {
     @apply inline-flex max-w-full items-center gap-1.5 whitespace-nowrap px-2 py-[3px] font-semibold;
     border-radius: var(--r-chico);

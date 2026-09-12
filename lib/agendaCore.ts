@@ -46,11 +46,25 @@ export type Ocupado = {
   tipo?: "cita" | "bloqueo";
 };
 
-/** Cupo ofrecible. */
+/** Cupo ofrecible, ya agrupado por instante (Fase 2). */
 export type Slot = {
   inicio: string; // ISO UTC
   fin: string;    // ISO UTC
+  /**
+   * Profesional con el que se muestra el cupo. Es el PRIMERO de `profesionales`
+   * (orden estable): se conserva para no romper a quien ya leía este campo.
+   */
   profesionalId: string;
+  /**
+   * TODOS los profesionales libres a esa hora, en orden estable.
+   *
+   * ⚠️ POR QUÉ EXISTE (Fase 2, 12-sep-2026). Antes se devolvía un cupo POR
+   * PROFESIONAL: con tres profesionales libres a las 15:00, la página pública
+   * pintaba «15:00 15:00 15:00» sin decir en qué se diferencian. Ahora el cupo
+   * es UNO y la lista dice quiénes pueden tomarlo; a quién se le asigna lo
+   * decide el servidor al confirmar (ver `elegirProfesional`).
+   */
+  profesionales: string[];
 };
 
 // ---------------------------------------------------------------------------
@@ -151,8 +165,27 @@ export type ParamsSlots = {
   pasoMin?: number;
   /** No ofrecer cupos que empiecen antes de ahora + esta anticipación. */
   anticipacionMin: number;
-  /** Tope de cupos a devolver (los más próximos). */
+  /**
+   * Primer día chileno del cálculo. Por defecto, el día de `ahora`.
+   * Permite pedir «el mes que viene» sin generar todo lo anterior.
+   */
+  desdeDia?: Date;
+  /**
+   * Tope de cupos a devolver (los más próximos). Es una RED DE SEGURIDAD, no
+   * la forma de acotar la respuesta: para eso están `dias`, `desdeDia` y
+   * `maxPorDia`. Antes el único freno era este tope (120) aplicado después de
+   * mezclar profesionales, así que con tres profesionales el calendario
+   * público mostraba dos días en vez de un mes.
+   */
   maxSlots?: number;
+  /** Tope de cupos por día chileno (ej. la vista de mes no necesita más). */
+  maxPorDia?: number;
+  /**
+   * Con `true` basta el primer cupo de cada día: es lo único que necesita el
+   * calendario para pintar «este día tiene horas», y evita generar 40 cupos
+   * por día × 30 días × N profesionales para dibujar 30 puntitos.
+   */
+  soloPrimeroPorDia?: boolean;
   /**
    * Minutos de preparación que hay que respetar ENTRE horas (migración 277).
    * Se aplica solo contra otras citas, nunca contra bloqueos (ver Ocupado.tipo).
@@ -179,7 +212,8 @@ export function computarSlots(params: ParamsSlots): Slot[] {
   const paso = (params.pasoMin ?? duracionMin) * 60_000;
   const dur = duracionMin * 60_000;
   const desdeMs = ahora.getTime() + anticipacionMin * 60_000;
-  const max = params.maxSlots ?? 60;
+  const max = params.maxSlots ?? 2000;
+  const maxPorDia = params.maxPorDia ?? (params.soloPrimeroPorDia ? 1 : Infinity);
 
   // Ocupados pre-parseados una sola vez. El buffer se aplica ACÁ, ensanchando
   // el rango ocupado por las citas: así el cupo pegado deja de ofrecerse sin
@@ -200,11 +234,17 @@ export function computarSlots(params: ParamsSlots): Slot[] {
   // Mediodía de HOY en Chile como ancla: sumar días de a 24h desde un mediodía
   // nunca cruza mal un cambio de hora (el DST mueve la medianoche, no el
   // mediodía). Para cada día se rederiva la fecha chilena real vía Intl.
-  const hoy = fechaChileDe(ahora);
-  const anclaMediodia = horaChileAUtc(hoy.anio, hoy.mes, hoy.dia, 12, 0).getTime();
+  const base = params.desdeDia ?? ahora;
+  const dia0 = fechaChileDe(base);
+  const anclaMediodia = horaChileAUtc(dia0.anio, dia0.mes, dia0.dia, 12, 0).getTime();
 
   for (let i = 0; i < dias; i++) {
+    if (slots.length >= max) break;
     const fecha = fechaChileDe(new Date(anclaMediodia + i * 86_400_000));
+
+    // Un cupo por INSTANTE, con la lista de quiénes pueden tomarlo. El mapa es
+    // por día para no cargar el mes entero en memoria de una vez.
+    const porInicio = new Map<number, string[]>();
 
     for (const v of ventanas) {
       if (v.diaSemana !== fecha.diaSemana) continue;
@@ -222,22 +262,68 @@ export function computarSlots(params: ParamsSlots): Slot[] {
             solapan(t, tFin, o.ini, o.fin),
         );
         if (choca) continue;
-        slots.push({
-          inicio: new Date(t).toISOString(),
-          fin: new Date(tFin).toISOString(),
-          profesionalId: v.profesionalId,
-        });
+        const previos = porInicio.get(t);
+        if (previos) {
+          if (!previos.includes(v.profesionalId)) previos.push(v.profesionalId);
+        } else {
+          if (porInicio.size >= maxPorDia) continue;
+          porInicio.set(t, [v.profesionalId]);
+        }
       }
+    }
+
+    const instantes = [...porInicio.keys()].sort((a, b) => a - b).slice(0, maxPorDia);
+    for (const t of instantes) {
+      const profesionales = (porInicio.get(t) ?? []).slice().sort((a, b) => a.localeCompare(b));
+      slots.push({
+        inicio: new Date(t).toISOString(),
+        fin: new Date(t + dur).toISOString(),
+        profesionalId: profesionales[0],
+        profesionales,
+      });
+      if (slots.length >= max) break;
     }
   }
 
-  // Orden cronológico y, a igual hora, estable por profesional.
-  slots.sort((a, b) =>
-    a.inicio === b.inicio
-      ? a.profesionalId.localeCompare(b.profesionalId)
-      : a.inicio.localeCompare(b.inicio),
-  );
+  // Orden cronológico (dentro de un día ya vienen ordenados).
+  slots.sort((a, b) => a.inicio.localeCompare(b.inicio));
   return slots.slice(0, max);
+}
+
+/**
+ * A QUIÉN SE LE ASIGNA UN CUPO CUANDO EL CLIENTE DIJO «CUALQUIERA» (Fase 2).
+ *
+ * Determinista y explicable en una frase: **el que tenga menos citas ese día**;
+ * si empatan, el que menos citas tenga en todo el rango; si siguen empatados,
+ * un orden estable por id. Nada de IA, nada de azar: dos cálculos con los
+ * mismos datos dan el mismo profesional, y el dueño puede entender por qué.
+ *
+ * `preferido` gana siempre que esté entre los disponibles: es el caso «quiero
+ * con Marcelo».
+ */
+export function elegirProfesional(
+  candidatos: readonly string[],
+  carga: { porDia?: ReadonlyMap<string, number>; total?: ReadonlyMap<string, number> } = {},
+  preferido?: string | null,
+): string | null {
+  if (!candidatos.length) return null;
+  if (preferido && candidatos.includes(preferido)) return preferido;
+  const orden = candidatos.slice().sort((a, b) => {
+    const da = carga.porDia?.get(a) ?? 0;
+    const db = carga.porDia?.get(b) ?? 0;
+    if (da !== db) return da - db;
+    const ta = carga.total?.get(a) ?? 0;
+    const tb = carga.total?.get(b) ?? 0;
+    if (ta !== tb) return ta - tb;
+    return a.localeCompare(b);
+  });
+  return orden[0] ?? null;
+}
+
+/** Clave de día chileno ("2026-09-18") de un instante. */
+export function diaChileDe(iso: string | Date): string {
+  const f = fechaChileDe(typeof iso === "string" ? new Date(iso) : iso);
+  return `${f.anio}-${String(f.mes).padStart(2, "0")}-${String(f.dia).padStart(2, "0")}`;
 }
 
 /**

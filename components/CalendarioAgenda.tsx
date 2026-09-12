@@ -48,7 +48,13 @@ type Vista = "lista" | "dia" | "semana";
 
 const PX_POR_MIN = 1.5; // 30 min = 45 px: cómodo sin desperdiciar pantalla
 const MARGEN = 12; // aire arriba y abajo para que la 1ª y última hora no se corten
-const PALETA = ["#4f46e5", "#0d9488", "#b84a86", "#b45309", "#2563eb", "#7c3aed"];
+/**
+ * Color por profesional (Fase 2): familia azul/cian del producto, con tonos
+ * bien separados entre sí para que dos personas no se confundan de un vistazo.
+ * Antes era una paleta índigo/violeta que no tenía nada que ver con el resto
+ * del portal.
+ */
+const PALETA = ["#1d3f8f", "#0e7490", "#7c2d63", "#b45309", "#2563eb", "#166534"];
 
 const ACTIVOS = ["agendada", "confirmada", "reagendada"];
 
@@ -58,12 +64,12 @@ const ACTIVOS = ["agendada", "confirmada", "reagendada"];
  * se distinguía una hora confirmada de una por confirmar.
  */
 const ESTILO_ESTADO: Record<string, { etiqueta: string; fondo: string; borde: string; texto: string }> = {
-  agendada: { etiqueta: "Por confirmar", fondo: "#e0e7ff", borde: "#4f46e5", texto: "#312e81" },
-  confirmada: { etiqueta: "Confirmada", fondo: "#d1fae5", borde: "#059669", texto: "#065f46" },
-  reagendada: { etiqueta: "Reagendada", fondo: "#e0e7ff", borde: "#4f46e5", texto: "#312e81" },
-  completada: { etiqueta: "Ya vino", fondo: "#e2e8f0", borde: "#64748b", texto: "#334155" },
-  cancelada: { etiqueta: "Cancelada", fondo: "#f1f5f9", borde: "#cbd5e1", texto: "#94a3b8" },
-  no_show: { etiqueta: "No llegó", fondo: "#fee2e2", borde: "#dc2626", texto: "#991b1b" },
+  agendada: { etiqueta: "Por confirmar", fondo: "var(--azul-suave)", borde: "var(--azul)", texto: "var(--azul)" },
+  confirmada: { etiqueta: "Confirmada", fondo: "var(--ok-suave)", borde: "var(--ok)", texto: "var(--ok)" },
+  reagendada: { etiqueta: "Reagendada", fondo: "var(--cian-suave)", borde: "var(--cian)", texto: "var(--cian)" },
+  completada: { etiqueta: "Ya vino", fondo: "var(--fondo-fila)", borde: "var(--muted-2)", texto: "var(--muted)" },
+  cancelada: { etiqueta: "Cancelada", fondo: "var(--fondo-hundido)", borde: "var(--borde-fuerte)", texto: "var(--muted-2)" },
+  no_show: { etiqueta: "No llegó", fondo: "var(--coral-medio)", borde: "var(--peligro)", texto: "var(--peligro)" },
 };
 
 const LEYENDA = ["agendada", "confirmada", "completada", "no_show", "cancelada"];
@@ -127,17 +133,28 @@ export default function CalendarioAgenda({
   franjas,
   accionEstado,
   accionReabrir,
+  accionReagendar,
+  citaInicial,
 }: {
   citas: CitaCal[];
   profesionales: ProfCal[];
   franjas: FranjaSemanal[];
   accionEstado: (formData: FormData) => Promise<void>;
   accionReabrir: (formData: FormData) => Promise<void>;
+  /** (Fase 2) Mover la hora sin cancelar y volver a crear. */
+  accionReagendar: (formData: FormData) => Promise<{ ok: boolean; error?: string }>;
+  /** (Fase 2) Abrir directo esta cita: llega desde Inicio o desde el chat. */
+  citaInicial?: string | null;
 }) {
   const hoy = fechaChileDe(new Date());
-  const [vista, setVista] = useState<Vista>("semana");
+  /**
+   * (Fase 2) LISTA por defecto. La pregunta diaria del dueño es «quién viene
+   * hoy y a qué hora», y eso se responde con una lista; la grilla semanal se
+   * ve linda y obliga a buscar. La semana sigue estando a un clic.
+   */
+  const [vista, setVista] = useState<Vista>("lista");
   const [ancla, setAncla] = useState(hoy);
-  const [seleccionada, setSeleccionada] = useState<string | null>(null);
+  const [seleccionada, setSeleccionada] = useState<string | null>(citaInicial ?? null);
   const yaOriento = useRef(false);
 
   const ahoraMs = Date.now();
@@ -311,7 +328,7 @@ export default function CalendarioAgenda({
             <button
               onClick={() => setAncla(hoy)}
               className="rounded-lg px-3 py-1.5 text-[13px] font-bold hover:bg-slate-50"
-              style={{ color: "var(--indigo)" }}
+              style={{ color: "var(--azul)" }}
             >
               Hoy
             </button>
@@ -330,9 +347,9 @@ export default function CalendarioAgenda({
             <button
               key={v}
               onClick={() => setVista(v)}
-              className="rounded-lg px-3 py-1.5 text-[13px] font-bold transition"
+              className="min-h-[34px] rounded-lg px-3 text-[13px] font-bold transition"
               style={vista === v
-                ? { background: "var(--indigo)", color: "#fff", boxShadow: "var(--glow-indigo)" }
+                ? { background: "var(--azul)", color: "#fff" }
                 : { color: "var(--muted)" }}
             >
               {t}
@@ -347,16 +364,16 @@ export default function CalendarioAgenda({
         <button
           onClick={() => irA(proxima.inicio)}
           className="mb-3 flex w-full flex-wrap items-center gap-2 rounded-[7px] border p-3 text-left text-[13.5px]"
-          style={{ borderColor: "var(--borde)", background: "var(--indigo-suave)" }}
+          style={{ borderColor: "var(--azul-borde)", background: "var(--azul-suave)" }}
         >
-          <span className="font-bold" style={{ color: "var(--indigo)" }}>
+          <span className="font-bold" style={{ color: "var(--azul)" }}>
             Aquí no hay horas.
           </span>
           <span style={{ color: "var(--muted)" }}>
             La próxima es el {etiquetaDia(fechaChileDe(new Date(proxima.inicio)), true)} a las{" "}
             {hhmm(minutosDelDia(proxima.inicio))} — {proxima.nombre}.
           </span>
-          <span className="ml-auto font-bold" style={{ color: "var(--indigo)" }}>Ir →</span>
+          <span className="ml-auto font-bold" style={{ color: "var(--azul)" }}>Ir →</span>
         </button>
       )}
 
@@ -405,7 +422,7 @@ export default function CalendarioAgenda({
               return (
                 <section key={clave}>
                   <div className="mb-2 flex items-baseline gap-2">
-                    <h3 className="text-[15px] font-semibold" style={{ color: esHoy ? "var(--indigo)" : "var(--tinta)" }}>
+                    <h3 className="text-[15px] font-semibold" style={{ color: esHoy ? "var(--azul)" : "var(--tinta)" }}>
                       {esHoy ? "Hoy" : mayus(etiquetaDia(f, true))}
                     </h3>
                     <span className="text-[12.5px]" style={{ color: "var(--muted-2)" }}>
@@ -478,9 +495,9 @@ export default function CalendarioAgenda({
                     <div
                       key={col.clave}
                       className="border-l px-2 py-2.5 text-center"
-                      style={{ borderColor: "var(--borde)", background: esHoy ? "var(--indigo-suave)" : undefined }}
+                      style={{ borderColor: "var(--borde)", background: esHoy ? "var(--azul-suave)" : undefined }}
                     >
-                      <div className="truncate text-[13px] font-bold" style={{ color: esHoy ? "var(--indigo)" : "var(--tinta)" }}>
+                      <div className="truncate text-[13px] font-bold" style={{ color: esHoy ? "var(--azul)" : "var(--tinta)" }}>
                         {col.titulo}
                       </div>
                       <div className="mt-0.5 flex items-center justify-center gap-1 text-[11px] font-semibold" style={{ color: cuenta ? "var(--muted)" : "var(--muted-2)" }}>
@@ -587,7 +604,7 @@ export default function CalendarioAgenda({
                               opacity: anulada ? 0.7 : 1,
                               zIndex: activa ? 30 : 5,
                               boxShadow: activa
-                                ? "0 0 0 2px var(--indigo)"
+                                ? "0 0 0 2px var(--azul)"
                                 : "0 1px 2px rgba(15,23,42,0.10)",
                             }}
                             title={`${hhmm(ini)}–${hhmm(fin)} · ${cita.nombre} · ${cita.servicio} · ${cita.profesional} · ${est.etiqueta}`}
@@ -637,9 +654,16 @@ export default function CalendarioAgenda({
 
       {/* ── Panel lateral de detalle ─────────────────────────────────── */}
       {detalle && (
+        /*
+          (Fase 2) El velo es más claro en pantalla grande. La agenda es una
+          pantalla de trabajo: mientras se confirma una hora, lo normal es
+          seguir mirando el resto del día ("¿tengo algo antes?"). Con el velo
+          al 35 % la lista de atrás quedaba ilegible. En celular el panel ocupa
+          toda la pantalla, así que el velo no se ve y da igual.
+        */
         <div
           className="fixed inset-0 z-50 flex justify-end"
-          style={{ background: "rgba(15,23,42,0.35)" }}
+          style={{ background: "rgba(15,23,42,0.18)" }}
           onClick={(e) => e.target === e.currentTarget && setSeleccionada(null)}
         >
           <aside
@@ -649,11 +673,11 @@ export default function CalendarioAgenda({
             aria-label="Detalle de la reserva"
             style={{ boxShadow: "-20px 0 50px -25px rgba(15,23,42,0.4)" }}
           >
-            <div className="flex items-start justify-between gap-3">
+            <div className="flex items-center justify-between gap-3">
               <span className="pildora" style={{ background: estilo(detalle.estado).fondo, color: estilo(detalle.estado).texto }}>
                 {estilo(detalle.estado).etiqueta}
               </span>
-              <button onClick={() => setSeleccionada(null)} className="btn-suave px-2.5 py-1.5 text-[12px]">
+              <button onClick={() => setSeleccionada(null)} className="btn-suave min-h-[36px] px-3 text-[12px]">
                 Cerrar
               </button>
             </div>
@@ -708,6 +732,16 @@ export default function CalendarioAgenda({
                       Escribir por WhatsApp
                     </a>
                   )}
+
+                  {/* (Fase 2) MOVER, no «cancelar y crear otra»: así la hora
+                      conserva su historial, su enlace de autogestión y su
+                      evento de Google, y los recordatorios se reprograman. */}
+                  <MoverHora
+                    cita={detalle}
+                    profesionales={profesionales}
+                    accion={accionReagendar}
+                    onListo={() => setSeleccionada(null)}
+                  />
                   <div className="my-1 border-t" style={{ borderColor: "var(--borde)" }} />
                   <div className="grid grid-cols-2 gap-2">
                     <form action={accionEstado}>
@@ -724,7 +758,7 @@ export default function CalendarioAgenda({
                   <form action={accionEstado}>
                     <input type="hidden" name="id" value={detalle.id} />
                     <input type="hidden" name="estado" value="cancelada" />
-                    <button className="btn-suave w-full px-4 py-2 text-[13px]" style={{ color: "#b91c1c" }}>
+                    <button className="btn-suave w-full px-4 py-2 text-[13px]" style={{ color: "var(--peligro)" }}>
                       Cancelar hora
                     </button>
                   </form>
@@ -748,6 +782,91 @@ export default function CalendarioAgenda({
         </div>
       )}
     </div>
+  );
+}
+
+function MoverHora({
+  cita,
+  profesionales,
+  accion,
+  onListo,
+}: {
+  cita: { id: string; inicio: string; profesionalId: string | null };
+  profesionales: { id: string; nombre: string }[];
+  accion: (formData: FormData) => Promise<{ ok: boolean; error?: string }>;
+  onListo: () => void;
+}) {
+  const [abierto, setAbierto] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [enviando, setEnviando] = useState(false);
+
+  // El <input datetime-local> se alimenta en hora de pared de Chile, igual que
+  // el formulario de «nueva hora» (ver parsearLocalChile en las acciones).
+  const partes = new Intl.DateTimeFormat("sv-SE", {
+    timeZone: "America/Santiago",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  }).format(new Date(cita.inicio));
+  const valorLocal = partes.replace(" ", "T");
+
+  if (!abierto) {
+    return (
+      <button type="button" className="btn-suave w-full px-4 py-2.5 text-[14px]" onClick={() => setAbierto(true)}>
+        Mover a otra hora
+      </button>
+    );
+  }
+
+  return (
+    <form
+      className="grid gap-2 rounded-[7px] border p-3"
+      style={{ borderColor: "var(--borde)" }}
+      action={async (fd) => {
+        setEnviando(true);
+        setError(null);
+        const r = await accion(fd);
+        setEnviando(false);
+        if (r?.ok) onListo();
+        else setError(r?.error ?? "No se pudo mover la hora.");
+      }}
+    >
+      <input type="hidden" name="id" value={cita.id} />
+      <label className="rotulo" htmlFor={`mv-${cita.id}`}>
+        Nueva fecha y hora
+      </label>
+      <input id={`mv-${cita.id}`} className="campo" type="datetime-local" name="inicio" defaultValue={valorLocal} required />
+      {profesionales.length > 1 && (
+        <>
+          <label className="rotulo" htmlFor={`mp-${cita.id}`}>
+            Con quién
+          </label>
+          <select id={`mp-${cita.id}`} className="campo" name="profesional" defaultValue={cita.profesionalId ?? ""}>
+            {profesionales.map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.nombre}
+              </option>
+            ))}
+          </select>
+        </>
+      )}
+      {error && (
+        <p role="alert" style={{ fontSize: "var(--t-menor)", color: "var(--peligro)" }}>
+          {error}
+        </p>
+      )}
+      <div className="grid grid-cols-2 gap-2">
+        <button type="button" className="btn-suave px-3 py-2 text-[13px]" onClick={() => setAbierto(false)}>
+          Cancelar
+        </button>
+        <button type="submit" className="btn-azul justify-center px-3 py-2 text-[13px]" disabled={enviando}>
+          {enviando ? "Moviendo…" : "Mover"}
+        </button>
+      </div>
+    </form>
   );
 }
 

@@ -27,18 +27,27 @@ export default async function PaginaGestionCita({
   const { token } = await params;
   const cita = await citaPorToken(token);
 
-  // Mismo mensaje para "no existe", "mal escrito" y "de otro negocio": no le
-  // confirmamos a nadie si un token es real, para que no se puedan tantear.
+  /**
+   * UN SOLO MENSAJE para "no existe", "mal escrito", "de otro negocio" y
+   * "vencido". Distinguir el enlace caducado del inválido sería más amable,
+   * pero confirmaría que ese token existió: quien tantea enlaces sabría cuándo
+   * acertó. El texto dice la regla —dejan de funcionar el día después de la
+   * hora— que es cierta en los cuatro casos y explica el que de verdad le pasa
+   * a la gente, sin afirmar nada sobre este token en particular.
+   */
   if (!cita) {
     return (
       <main className="mx-auto max-w-md px-5 py-16">
         <div className="tarjeta p-7 text-center">
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img src="/brand/isotipo.svg" alt="Respondo" width={32} height={32} className="mx-auto" />
-          <h1 className="titular mt-4 text-[21px] font-bold">Este enlace no es válido</h1>
+          <h1 className="titular mt-4 text-[21px] font-bold">Este enlace ya no sirve</h1>
           <p className="mt-2 text-[14.5px]" style={{ color: "var(--muted)" }}>
-            Puede que esté incompleto o que la hora ya no exista. Si necesitas
-            ayuda, escríbele directo al negocio por WhatsApp.
+            Los enlaces dejan de funcionar el día después de la hora. También
+            puede que esté incompleto o que la hora ya no exista.
+          </p>
+          <p className="mt-3 text-[13.5px]" style={{ color: "var(--muted-2)" }}>
+            Si necesitas ayuda, escríbele directo al negocio por WhatsApp.
           </p>
         </div>
       </main>

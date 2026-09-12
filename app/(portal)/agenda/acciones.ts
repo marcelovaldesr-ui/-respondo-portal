@@ -8,7 +8,12 @@ import { obtenerUsuarioConPermiso } from "@/lib/auth";
 import { auditarAccion } from "@/lib/auditoria";
 import type { PermisoPortal } from "@/lib/permisos";
 import { horaChileAUtc } from "@/lib/agendaCore";
-import { crearCita, cambiarEstado, reabrirCita as reabrirCitaDatos } from "@/lib/agenda";
+import {
+  crearCita,
+  cambiarEstado,
+  reabrirCita as reabrirCitaDatos,
+  reagendar as reagendarDatos,
+} from "@/lib/agenda";
 import {
   programarSeguimientosCita,
   anularSeguimientosDeCita,
@@ -478,7 +483,9 @@ export async function configurarReservas(formData: FormData) {
       reservas_online: activar && !!slug,
       confirmacion_automatica: texto(formData, "confirmacion_automatica") === "on",
       anticipacion_min_horas: Math.min(72, numero(formData, "anticipacion", 2)),
-      horizonte_dias: Math.min(90, numero(formData, "horizonte", 30)),
+      // Tope 90 y piso 1: el formulario ofrece 14/30/60/90, pero la acción no
+      // confía en el formulario.
+      horizonte_dias: Math.max(1, Math.min(90, numero(formData, "horizonte", 30))),
     })
     .eq("id", clienteId);
   if (error) console.error("[agenda] configurarReservas:", error.message);
@@ -503,13 +510,23 @@ export async function rotarTokenIcal() {
 // Citas
 // ---------------------------------------------------------------------------
 
-export async function crearCitaManual(formData: FormData) {
+/**
+ * CITA A MANO DESDE EL PORTAL.
+ *
+ * Es deliberadamente más permisiva que la reserva pública: el dueño puede
+ * atender fuera de horario si quiere. Lo que NO puede seguir pasando (Fase 2)
+ * es que un choque se trague en silencio: antes, si el cupo estaba tomado, la
+ * pantalla se recargaba igual y la cita simplemente no existía.
+ */
+export async function crearCitaManual(formData: FormData): Promise<{ ok: boolean; error?: string }> {
   const clienteId = await clienteActual("operar_agenda");
   const inicio = parsearLocalChile(texto(formData, "inicio"));
   const servicioId = texto(formData, "servicio");
   const profesionalId = texto(formData, "profesional");
   const nombre = texto(formData, "nombre");
-  if (!inicio || !servicioId || !profesionalId || !nombre) return;
+  if (!inicio || !servicioId || !profesionalId || !nombre) {
+    return { ok: false, error: "Faltan datos: revisa servicio, profesional, nombre y hora." };
+  }
 
   const telefono = texto(formData, "telefono").replace(/\D/g, "");
   const chatId = telefono
@@ -531,19 +548,31 @@ export async function crearCitaManual(formData: FormData) {
     origen: "portal",
   });
 
-  if (r.ok) {
-    const { data: svc } = await db()
-      .from("ed_servicios")
-      .select("nombre")
-      .eq("id", servicioId)
-      .maybeSingle();
-    await programarSeguimientosCita({
-      cita: r.cita,
-      servicioNombre: (svc?.nombre as string) ?? "tu hora",
-      clienteId,
-    }).catch(() => 0);
+  if (!r.ok) {
+    const error =
+      r.motivo === "cupo_tomado"
+        ? "Esa hora ya está ocupada para ese profesional."
+        : r.motivo === "servicio_invalido"
+          ? "Ese servicio ya no está activo."
+          : r.motivo === "profesional_invalido"
+            ? "Ese profesional ya no está activo."
+            : "No se pudo crear la hora. Intenta de nuevo.";
+    return { ok: false, error };
   }
+
+  const { data: svc } = await db()
+    .from("ed_servicios")
+    .select("nombre")
+    .eq("id", servicioId)
+    .maybeSingle();
+  await programarSeguimientosCita({
+    cita: r.cita,
+    servicioNombre: (svc?.nombre as string) ?? "tu hora",
+    clienteId,
+  }).catch(() => 0);
+
   revalidatePath("/agenda", "layout"); // "layout" = también /agenda/configuracion
+  return { ok: true };
 }
 
 /**
@@ -562,7 +591,71 @@ export async function reabrirCita(formData: FormData) {
 
   const r = await reabrirCitaDatos(clienteId, id);
   if (!r.ok) console.error("[agenda] reabrirCita:", r.error ?? r.motivo);
+  // (Fase 2) Una cita reabierta vuelve a tener recordatorios: al cancelarla se
+  // borraron, y antes quedaba viva pero muda —sin confirmación, sin aviso de
+  // 24 h y sin encuesta— sin que nadie se diera cuenta.
+  if (r.ok) await reprogramarAvisos(clienteId, id);
   revalidatePath("/agenda", "layout"); // "layout" = también /agenda/configuracion
+}
+
+/**
+ * MOVER UNA HORA DESDE EL PORTAL (Fase 2).
+ *
+ * Hasta ahora el dueño solo podía cancelar y volver a crear: perdía el
+ * historial, el enlace de autogestión del cliente y el evento de Google
+ * quedaba huérfano un rato. Esto mueve la cita de verdad —misma fila, mismo
+ * enlace, el evento de Google se mueve en vez de duplicarse— y deja los
+ * recordatorios apuntando a la hora nueva.
+ */
+export async function reagendarCitaPortal(
+  formData: FormData,
+): Promise<{ ok: boolean; error?: string }> {
+  const clienteId = await clienteActual("operar_agenda");
+  const id = texto(formData, "id");
+  const inicio = parsearLocalChile(texto(formData, "inicio"));
+  const profesionalId = texto(formData, "profesional") || null;
+  if (!id || !inicio) return { ok: false, error: "Falta la hora nueva." };
+
+  const r = await reagendarDatos(clienteId, id, inicio.toISOString(), undefined, { profesionalId });
+  if (!r.ok) {
+    const error =
+      r.motivo === "cupo_tomado"
+        ? "Esa hora ya está ocupada para ese profesional."
+        : r.motivo === "inscripcion_de_clase"
+          ? "Las inscripciones a clase no se mueven: anula el cupo e inscríbelo en otra clase."
+          : r.motivo === "profesional_invalido"
+            ? "Ese profesional ya no está activo."
+            : "No se pudo mover la hora.";
+    return { ok: false, error };
+  }
+
+  await reprogramarAvisos(clienteId, id);
+  revalidatePath("/agenda", "layout");
+  return { ok: true };
+}
+
+/** Borra los recordatorios viejos y programa los de la hora que quedó. */
+async function reprogramarAvisos(clienteId: string, citaId: string): Promise<void> {
+  try {
+    const supa = db();
+    const { data } = await supa
+      .from("ed_citas")
+      .select("*, ed_servicios!servicio_id(nombre)")
+      .eq("id", citaId)
+      .eq("cliente_id", clienteId)
+      .maybeSingle();
+    if (!data) return;
+    await anularSeguimientosDeCita(citaId, clienteId, supa);
+    const nombre = (data as { ed_servicios?: { nombre?: string } }).ed_servicios?.nombre ?? "tu hora";
+    await programarSeguimientosCita({
+      cita: data as Parameters<typeof programarSeguimientosCita>[0]["cita"],
+      servicioNombre: nombre,
+      clienteId,
+      supa,
+    });
+  } catch (e) {
+    console.error("[agenda] no se pudieron reprogramar los avisos:", (e as Error).message);
+  }
 }
 
 export async function cambiarEstadoCita(formData: FormData) {

@@ -94,21 +94,21 @@ export default async function PaginaReservas({ params }: Props) {
     .join("");
 
   return (
-    <main className="mx-auto max-w-4xl px-4 py-8 sm:px-6 sm:py-12">
+    <main className="mx-auto max-w-5xl px-4 py-8 sm:px-6 sm:py-12">
       <header className="flex flex-col items-center gap-3 text-center sm:flex-row sm:text-left">
         <div
-          className="flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl text-[19px] font-bold text-white"
-          style={{ background: "linear-gradient(135deg,#4f46e5,#7c3aed)", boxShadow: "var(--glow-indigo)" }}
+          className="flex h-14 w-14 shrink-0 items-center justify-center rounded-[var(--r-card)] font-bold text-white"
+          style={{ background: "var(--azul)", fontSize: "var(--t-ficha)" }}
           aria-hidden
         >
           {iniciales}
         </div>
         <div className="min-w-0">
           <div className="eyebrow">Reserva online</div>
-          <h1 className="titular mt-1 text-[26px] font-bold leading-tight sm:text-[29px]">
+          <h1 className="titular mt-1 text-[24px] font-bold leading-tight sm:text-[28px]">
             {cliente.nombre}
           </h1>
-          <p className="mt-1 text-[14.5px]" style={{ color: "var(--muted)" }}>
+          <p className="mt-1" style={{ fontSize: "var(--t-cuerpo)", color: "var(--muted)" }}>
             Elige tu servicio y tu hora — te llegará la confirmación y el
             recordatorio por WhatsApp.
           </p>

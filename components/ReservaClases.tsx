@@ -134,8 +134,8 @@ export default function ReservaClases({
           {elegida.servicio} · {tituloDia(elegida.inicio)} a las {hora(elegida.inicio)}
         </p>
         <p className="mt-3" style={{ fontSize: "var(--t-menor)", color: "var(--muted-2)" }}>
-          Te llegará la confirmación y el recordatorio por WhatsApp al{" "}
-          <span className="cifra">{telefono}</span>.
+          Guardamos tu lugar a nombre del {" "}
+          <span className="cifra">{telefono}</span>. Si no puedes venir, avísanos por WhatsApp.
         </p>
       </div>
     );
@@ -169,7 +169,7 @@ export default function ReservaClases({
                   className="tarjeta flex items-center gap-3 p-3 text-left transition"
                   style={
                     sel
-                      ? { borderColor: "var(--indigo)", background: "var(--indigo-suave)" }
+                      ? { borderColor: "var(--azul)", background: "var(--azul-suave)" }
                       : undefined
                   }
                 >
@@ -213,7 +213,7 @@ export default function ReservaClases({
       {/* Datos — aparecen recién al elegir, para no mostrar un formulario a
           quien todavía está mirando horarios. */}
       {elegida && (
-        <div className="tarjeta mt-2 p-4" style={{ borderColor: "var(--indigo-borde)" }}>
+        <div className="tarjeta mt-2 p-4" style={{ borderColor: "var(--azul-borde)" }}>
           <h2 className="h-seccion">
             {elegida.servicio} · {tituloDia(elegida.inicio)} a las {hora(elegida.inicio)}
           </h2>

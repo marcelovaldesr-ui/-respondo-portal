@@ -1,0 +1,122 @@
+FASE 2 · AGENDA — archivos tocados
+Base: origin/main 20c40bb. Nada commiteado, nada desplegado.
+Incluye la 2ª vuelta del 12-sep con las seis decisiones de Marcelo.
+
+==========================================================================
+NUEVOS
+==========================================================================
+
+components/agenda/piezas.tsx
+    Piezas compartidas de reserva: SelectorProfesional (se esconde si hay uno solo), CalendarioMes (celdas de 44 px, flechas de mes de 40 px, días sin horas apagados) y BotonesHora (Mañana/Tarde/Noche). Las usan la reserva pública y la autogestión del cliente.
+
+tests/agenda-fase2.test.mjs
+    21 pruebas del motor: hora única, asignación determinista, dos clientes simultáneos, Google no verificable, reagendar con cambio de profesional, clases, cambio de hora de Chile, consultas constantes, vigencia del enlace (24 h tras el término) y horizonte del negocio al mover.
+
+sql/307_agenda_fase2.sql
+    Índice único parcial: una sola inscripción viva por persona y clase. YA APLICADA por Marcelo en Supabase (12-sep). El archivo va en el repo para que codigo e historial de base cuenten lo mismo.
+
+docs/FASE2_AGENDA_SEP2026.md
+    El informe (A-W). V = como se valido; W = cierre, revision adversarial final y smoke.
+
+docs/FASE2_ARCHIVOS.txt
+    Este archivo.
+
+docs/capturas/fase2/
+    18 capturas antes/despues, todas listadas en la seccion Q del informe.
+
+==========================================================================
+MODIFICADOS
+==========================================================================
+
+app/(portal)/agenda/acciones.ts  (+108 -15)
+    crearCitaManual devuelve error (antes fallaba en silencio); reagendarCitaPortal; reprogramarAvisos al mover o reabrir. (2ª vuelta) horizonte_dias con piso 1 y tope 90 en el servidor.
+
+app/(portal)/agenda/configuracion/page.tsx  (+228 -61)
+    Partida en seis secciones con enlace propio (?s=). El estado de Google va ANTES del botón de conectar, con el motivo y la consecuencia. El horario de un profesional apagado va plegado con resumen. (2ª vuelta) «Se puede reservar hasta»: 14/30/60/90 días, en vez del campo numérico libre; y se dice la vigencia del enlace de autogestión.
+
+app/(portal)/agenda/page.tsx  (+81 -17)
+    Enlace profundo ?cita=<id>; aviso de calendarios no verificables con enlace directo a reconectar; colores por token.
+
+app/api/reservas/clase/route.ts  (+3 -1)
+    Mensaje propio para «ya estás inscrito».
+
+app/api/reservas/disponibilidad/route.ts  (+54 -11)
+    Dos modos: ?modo=dias&mes=YYYY-MM (qué días abren) y ?modo=horas&fecha=YYYY-MM-DD. Antes devolvía «los próximos 120 cupos», que con tres profesionales eran dos días.
+
+app/api/reservas/route.ts  (+44 -24)
+    profesional opcional (vacío = cualquiera). Reserva por reservarCupo; ante conflicto devuelve alternativas en vez de un error seco.
+
+app/cita/[token]/page.tsx  (+14 -5)
+    (2ª vuelta) Texto del enlace muerto: «Este enlace ya no sirve — los enlaces dejan de funcionar el día después de la hora». Mismo mensaje para vencido, mal escrito e inexistente: distinguirlos confirmaría que el token existió.
+
+app/globals.css  (+137 -10)
+    Tokens --indigo* apuntando al azul de la marca (nombres conservados a propósito); hover del botón primario corregido; --peligro-suave; piso táctil en .btn y .btn-chico; clases .chip-opcion, .btn-hora, .dia-cal, .nav-mes, .pildora-azul.
+
+app/reservar/[slug]/page.tsx  (+5 -5)
+    Cabecera pública en el azul de la marca, ancho mayor.
+
+components/CalendarioAgenda.tsx  (+142 -23)
+    Vista Lista por defecto; formulario «Mover a otra hora» con selector de profesional; velo del panel más claro en escritorio; paleta por tokens.
+
+components/FichaServicioConfig.tsx  (+2 -2)
+    Colores por token.
+
+components/GestionCita.tsx  (+72 -72)
+    Usa las piezas compartidas; colores por token.
+
+components/HorarioSemanal.tsx  (+5 -5)
+    Blancos táctiles (36 px) y colores por token.
+
+components/NuevaCita.tsx  (+21 -2)
+    El error de la base se ve y el panel no se cierra. (El calendario acá se evaluó y quedó como quick win posterior: ver sección T del informe.)
+
+components/ReservaClases.tsx  (+4 -4)
+    Azul de la marca.
+
+components/ReservaPublica.tsx  (+468 -488)
+    Reescrita: servicio → con quién → día → hora → datos. Calendario de mes real, horas por franja, resumen pegajoso en escritorio y compacto en celular, bloque de error con alternativas arriba, confirmación que dice con quién quedó.
+
+components/inbox/FichaLateral.tsx  (+13 -1)
+    La cita del chat lleva a /agenda?cita= («Ver o mover la hora →»).
+
+components/inicio/NecesitaAtencion.tsx  (+2 -1)
+    La cita accionable abre la cita concreta.
+
+lib/agenda.ts  (+341 -25)
+    EL MOTOR. disponibilidad() canónica con rango, tope por día y «solo el primero», acotada por el horizonte_dias del negocio; reservarCupo() que revalida el día, asigna profesional y reintenta ante 23P01; alternativasCercanas(); reagendar() que ahora SÍ cambia de profesional y rechaza inscripciones a clase; las clases ocupan al profesional.
+
+lib/agendaBot.ts  (+92 -11)
+    Tino sobre el mismo motor. Entiende «con Marcela» y «me da lo mismo»; dice «(con Marcela o Camila)» cuando la hora la puede tomar más de uno; reserva por reservarCupo; al mover mantiene al profesional.
+
+lib/agendaCore.ts  (+102 -16)
+    Slot pasa a llevar la lista de quiénes pueden tomar la hora (de ahí la hora única). elegirProfesional(): menos citas ese día, menos en total, orden estable. diaChileDe(). Tope de 120 cupos reemplazado por generación por día.
+
+lib/agendaGoogle.ts  (+66 -12)
+    FAIL-CLOSED. accesosDe() y ocupadosDesdeGoogle() reportan qué profesionales NO se pudieron comprobar (token ilegible, refresh caído, freeBusy con error, credenciales ausentes, sin gcal_id). Antes cualquier fallo devolvía «nada ocupado».
+
+lib/autogestionDatos.ts  (+77 -8)
+    (2ª vuelta) Se eliminó la constante de 21 días: mover por el enlace usa el horizonte_dias del negocio, una sola regla de disponibilidad. El enlace vive hasta 24 h DESPUÉS DEL TÉRMINO de la cita (antes, 30 días después del inicio; antes de la Fase 2, para siempre). Las inscripciones a clase no se mueven.
+
+lib/clases.ts  (+32 -1)
+    Guarda contra doble inscripción (motivo nuevo ya_inscrito) y traducción del 23505 del índice de la 307.
+
+lib/reservasPublicas.ts  (+26 -0)
+    rangoDelMes() y rangoDelDia(): el calendario público pide por mes y las horas por día.
+
+tests/_baseMemoria.mjs  (+38 -1)
+    Emula el EXCLUDE de ed_citas (devuelve 23P01) y permite emular RPC. Sin esto, la prueba de los dos clientes simultáneos no probaba nada.
+
+tests/agenda-google-estado.test.mjs  (+14 -4)
+    Reescrito: la versión anterior AFIRMABA el comportamiento inseguro (que un fallo de Google dejara pasar las horas).
+
+==========================================================================
+ESTADO
+==========================================================================
+
+  725 pruebas en verde (eran 704 antes de la Fase 2).
+  typecheck: sin errores nuevos (17 antes -> 16 ahora).
+  Commit preparado y validado; el PUSH lo tiene que hacer Marcelo (el proxy de
+  esta sesion no tiene credencial de escritura para este repo). Ver seccion X del
+  informe: son tres comandos. Beto sigue apagado.
+  Migracion 307: APLICADA por Marcelo en Supabase.
+  Recorrido local: no se hizo (localhost nunca estuvo arriba); reemplazado por smoke del deploy.

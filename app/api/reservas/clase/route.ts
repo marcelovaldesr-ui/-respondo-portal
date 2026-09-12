@@ -126,10 +126,12 @@ export async function POST(request: NextRequest) {
     cancelada: "Esa clase fue cancelada. Elige otra de la lista.",
     ya_paso: "Esa clase ya comenzó. Elige una de las próximas.",
     no_existe: "No encontramos esa clase.",
+    // (Fase 2) El doble clic ya no consume dos lugares: se dice y listo.
+    ya_inscrito: "Ya tienes tu lugar en esa clase. Te esperamos.",
     error: "No pudimos completar la inscripción. Intenta de nuevo en un momento.",
   };
   return NextResponse.json(
     { ok: false, motivo: r.motivo, mensaje: mensajes[r.motivo] ?? mensajes.error },
-    { status: r.motivo === "cupo_tomado" ? 409 : 400 },
+    { status: r.motivo === "cupo_tomado" || r.motivo === "ya_inscrito" ? 409 : 400 },
   );
 }

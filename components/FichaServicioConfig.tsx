@@ -133,7 +133,7 @@ export default function FichaServicioConfig({
                 <div
                   key={c.id}
                   className="flex items-center justify-between gap-2 rounded-[6px] px-2.5 py-2"
-                  style={{ background: "#F7F8FC" }}
+                  style={{ background: "var(--fondo-hundido)" }}
                 >
                   <div className="min-w-0 text-[13px]">
                     <span className="font-bold">{c.etiqueta}</span>
@@ -150,7 +150,7 @@ export default function FichaServicioConfig({
                   <form action={eliminarCampo} className="shrink-0">
                     <input type="hidden" name="id" value={c.id} />
                     <input type="hidden" name="servicio" value={servicioId} />
-                    <button className="text-[11.5px] font-bold" style={{ color: "#B33A3A" }}>
+                    <button className="text-[11.5px] font-bold" style={{ color: "var(--peligro)" }}>
                       Quitar
                     </button>
                   </form>

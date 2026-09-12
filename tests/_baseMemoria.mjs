@@ -101,6 +101,31 @@ export function crearBaseMemoria(tablas = {}, esquema = {}) {
     return false;
   }
 
+  /**
+   * EXCLUDE anti-solape de ed_citas (sql/220_agenda.sql), que es la única
+   * garantía real contra la doble reserva. Se declara como
+   * `esquema.exclusiones = { ed_citas: [{ por: "profesional_id", desde: "inicio",
+   * hasta: "fin", donde: (f) => ... }] }` y devuelve 23P01, igual que Postgres.
+   */
+  function violaExclusion(nombre, fila, ignorar) {
+    for (const e of esquema.exclusiones?.[nombre] ?? []) {
+      if (e.donde && !e.donde(fila)) continue;
+      const clave = fila[e.por];
+      if (clave === null || clave === undefined) continue;
+      const ini = Date.parse(fila[e.desde]);
+      const fin = Date.parse(fila[e.hasta]);
+      if (!Number.isFinite(ini) || !Number.isFinite(fin)) continue;
+      const choca = tabla(nombre).some((o) => {
+        if (o === ignorar) return false;
+        if (e.donde && !e.donde(o)) return false;
+        if (o[e.por] !== clave) return false;
+        return Date.parse(o[e.desde]) < fin && ini < Date.parse(o[e.hasta]);
+      });
+      if (choca) return true;
+    }
+    return false;
+  }
+
   function builder(nombre) {
     const q = { tabla: nombre, op: "select", filtros: [], orden: [], limite: null, unico: null, head: false, retorno: false, payload: null, opciones: null };
     llamadas.push(q);
@@ -165,6 +190,7 @@ export function crearBaseMemoria(tablas = {}, esquema = {}) {
       }));
       for (const n of nuevas) {
         if (violaUnico(q.tabla, n)) return { data: null, error: { code: "23505", message: "duplicate key value violates unique constraint" } };
+        if (violaExclusion(q.tabla, n)) return { data: null, error: { code: "23P01", message: "conflicting key value violates exclusion constraint" } };
       }
       filas.push(...nuevas);
       return q.retorno ? salida(nuevas) : { data: null, error: null };
@@ -188,6 +214,7 @@ export function crearBaseMemoria(tablas = {}, esquema = {}) {
       for (const f of l) {
         const tentativa = { ...f, ...q.payload };
         if (violaUnico(q.tabla, tentativa, f)) return { data: null, error: { code: "23505", message: "duplicate key" } };
+        if (violaExclusion(q.tabla, tentativa, f)) return { data: null, error: { code: "23P01", message: "conflicting key value violates exclusion constraint" } };
       }
       for (const f of l) Object.assign(f, q.payload);
       return q.retorno ? salida(l) : { data: null, error: null };
@@ -204,6 +231,16 @@ export function crearBaseMemoria(tablas = {}, esquema = {}) {
     tablas,
     llamadas,
     from: (n) => builder(n),
-    rpc: async () => ({ data: null, error: { message: "rpc no emulada" } }),
+    /**
+     * Por defecto no hay RPC emuladas. Un test puede pasar `esquema.rpc` con
+     * `{ nombre: (args) => ({ data, error }) }` para probar lo que hace el
+     * código con una respuesta concreta (por ejemplo un 23505 del índice único
+     * de inscripciones que trae la migración 307).
+     */
+    rpc: async (nombre, args) => {
+      const fn = esquema.rpc?.[nombre];
+      if (!fn) return { data: null, error: { message: "rpc no emulada" } };
+      return fn(args);
+    },
   };
 }

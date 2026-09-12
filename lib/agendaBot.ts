@@ -4,7 +4,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import {
   listarServicios,
   disponibilidad,
-  crearCita,
+  reservarCupo,
   reagendar,
   cambiarEstado,
   citasDe,
@@ -39,7 +39,18 @@ import { setModo } from "@/lib/estadoChat";
 
 export type ContextoAgenda = {
   texto: string; // bloque para el prompt
-  cupos: Map<string, { servicioId: string; profesionalId: string; inicio: string; servicioNombre: string }>;
+  cupos: Map<
+    string,
+    {
+      servicioId: string;
+      /** Primer profesional disponible (compatibilidad). */
+      profesionalId: string;
+      /** TODOS los que pueden tomar ese cupo (Fase 2): el servidor elige. */
+      profesionales: { id: string; nombre: string }[];
+      inicio: string;
+      servicioNombre: string;
+    }
+  >;
   citas: Map<string, Cita>;
   servicios: Servicio[];
   /**
@@ -55,6 +66,7 @@ export type ContextoAgenda = {
 
 export type CitaDelMotor = {
   servicio?: string | null; // token svc (solo informativo; el cupo ya lo trae)
+  profesional?: string | null; // nombre pedido por el cliente («con Marcelo»)
   cupo?: string | null;     // token del cupo elegido (C1, C2, ...)
   clase?: string | null;    // token de la clase grupal elegida (K1, K2, ...)
   cita?: string | null;     // token de cita vigente (V1, ...) para reagendar/cancelar
@@ -65,7 +77,12 @@ export type CitaDelMotor = {
 // Construcción del bloque (pura, testeable sin BD)
 // ---------------------------------------------------------------------------
 
-export type ServicioConCupos = { servicio: Servicio; slots: Slot[] };
+export type ServicioConCupos = {
+  servicio: Servicio;
+  slots: Slot[];
+  /** Nombres de los profesionales elegibles, para el caso «con Marcelo». */
+  profesionales?: { id: string; nombre: string }[];
+};
 
 export function construirBloqueAgenda(
   serviciosConCupos: ServicioConCupos[],
@@ -99,16 +116,32 @@ export function construirBloqueAgenda(
     lineasServicios.push(
       `- ${sc.servicio.nombre} · ${sc.servicio.duracion_min} min · ${precio}`,
     );
+    const nombreDe = new Map((sc.profesionales ?? []).map((p) => [p.id, p.nombre]));
     for (const slot of sc.slots) {
       n += 1;
       const token = `C${n}`;
+      const quienes = (slot.profesionales ?? [slot.profesionalId]).map((id) => ({
+        id,
+        nombre: nombreDe.get(id) ?? "",
+      }));
       cupos.set(token, {
         servicioId: sc.servicio.id,
         profesionalId: slot.profesionalId,
+        profesionales: quienes,
         inicio: slot.inicio,
         servicioNombre: sc.servicio.nombre,
       });
-      lineasCupos.push(`- [${token}] ${sc.servicio.nombre}: ${formatearSlot(slot.inicio)}`);
+      /**
+       * (Fase 2) Un cupo por HORA, no por profesional. Cuando hay varios que
+       * pueden atenderla, el prompt dice con quiénes: así el cliente puede
+       * pedir «con Marcelo» y el token sigue siendo uno solo. Antes la misma
+       * hora aparecía repetida con tokens distintos y nada que las distinguiera.
+       */
+      const conQuien =
+        quienes.length > 1 && quienes.every((q) => q.nombre)
+          ? ` (con ${quienes.map((q) => q.nombre).join(" o ")})`
+          : "";
+      lineasCupos.push(`- [${token}] ${sc.servicio.nombre}: ${formatearSlot(slot.inicio)}${conQuien}`);
     }
   }
 
@@ -152,6 +185,7 @@ REGLAS DE AGENDA (se suman a tus reglas; NO reemplazan el formato de salida):
 - Si quiere CAMBIAR una cita vigente: elige el token de su cita y un cupo nuevo → "accion":"reagendar_cita", "cita":{"cita":"<tokenV>","cupo":"<tokenC>"}.
 - Si quiere CANCELAR una cita vigente → "accion":"cancelar_cita", "cita":{"cita":"<tokenV>"}. Confirma con empatía y ofrece reagendar.
 - Si la persona no da su nombre, pídelo con naturalidad antes de reservar (una sola pregunta).
+- Si el cupo dice "(con X o Y)" y a la persona le da lo mismo, no preguntes con quién: reserva y el sistema asigna. Si pide a alguien en concreto, agrega "profesional":"<nombre tal como aparece>" dentro de "cita".
 ${lineasClases.length ? `
 REGLAS DE CLASES (cuando la persona quiere una clase grupal, no una hora personal):
 - Las clases son grupales: varias personas en el mismo horario. Ofrece 2-3 de la lista [K…], diciendo día, hora y cuántos lugares quedan.
@@ -181,9 +215,20 @@ export async function contextoAgenda(
 
     const conCupos: ServicioConCupos[] = [];
     for (const servicio of servicios.slice(0, MAX_SERVICIOS_EN_PROMPT)) {
-      const disp = await disponibilidad(clienteId, servicio.id, { supa, maxSlots: 40 });
+      // (Fase 2) Se piden POCOS días y pocos cupos por día: al prompt van 8
+      // como mucho, así que generar 40 era trabajo (y llamadas a Google) tirado.
+      const disp = await disponibilidad(clienteId, servicio.id, {
+        supa,
+        dias: 14,
+        maxPorDia: 3,
+        maxSlots: 24,
+      });
       if (!disp.ok) continue;
-      conCupos.push({ servicio, slots: slotsParaPrompt(disp.slots, 4, 2) });
+      conCupos.push({
+        servicio,
+        slots: slotsParaPrompt(disp.slots, 4, 2),
+        profesionales: disp.profesionales,
+      });
     }
     if (conCupos.length === 0) return null; // hay servicios pero nada calculable
 
@@ -245,12 +290,33 @@ export function interpretarAccionAgenda(
   return { op: null };
 }
 
+/**
+ * «Quiero con Marcelo»: el modelo manda el nombre tal como lo vio, y acá se
+ * traduce a un id REAL de los que pueden tomar ese cupo. Si no calza con
+ * ninguno, devuelve null y la reserva sigue como «cualquiera» — nunca se
+ * inventa un profesional.
+ */
+export function profesionalPedido(
+  disponibles: { id: string; nombre: string }[],
+  pedido: string | null | undefined,
+): string | null {
+  const busca = String(pedido ?? "").trim().toLowerCase();
+  if (!busca) return null;
+  const normal = (t: string) => t.trim().toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+  const exacto = disponibles.find((p) => normal(p.nombre) === normal(busca));
+  if (exacto) return exacto.id;
+  const parcial = disponibles.find(
+    (p) => p.nombre && (normal(p.nombre).startsWith(normal(busca)) || normal(busca).startsWith(normal(p.nombre))),
+  );
+  return parcial?.id ?? null;
+}
+
 async function cuposAlternativos(
   clienteId: string,
   servicioId: string,
   supa: SupabaseClient,
 ): Promise<string> {
-  const disp = await disponibilidad(clienteId, servicioId, { supa, maxSlots: 10 });
+  const disp = await disponibilidad(clienteId, servicioId, { supa, dias: 7, maxPorDia: 3, maxSlots: 9 });
   if (!disp.ok || disp.slots.length === 0) return "";
   return slotsParaPrompt(disp.slots, 3, 2)
     .map((s) => `• ${formatearSlot(s.inicio)}`)
@@ -318,19 +384,28 @@ export async function ejecutarAccionAgenda(params: {
         }
         return {
           tipo: "agendada",
-          textoExtra: `✅ Listo, quedaste inscrito: ${clase.servicioNombre} · ${formatearSlot(clase.inicio)}. Te llegará un recordatorio por aquí 🙌`,
+          // (Fase 2) Las clases NO programan recordatorio hoy: prometerlo era
+          // mentir. Se dice lo que sí es cierto.
+          textoExtra: `✅ Listo, quedaste inscrito: ${clase.servicioNombre} · ${formatearSlot(clase.inicio)}. Te esperamos 🙌`,
         };
       }
 
       const cupo = ctx.cupos.get(String(params.cita?.cupo).trim().toUpperCase());
       if (!cupo) return { tipo: "ninguna" }; // token inválido: no se agenda nada
       const nombre = String(params.cita?.nombre ?? "").trim() || "Cliente WhatsApp";
+      const preferido = profesionalPedido(cupo.profesionales, params.cita?.profesional);
 
-      const r = await crearCita(
+      /**
+       * (Fase 2) Pasa por `reservarCupo`: revalida el cupo contra la agenda de
+       * AHORA, elige profesional cuando da lo mismo y reintenta con el
+       * siguiente si justo se lo tomaron. Antes se insertaba directo con el
+       * profesional que venía pegado al token.
+       */
+      const r = await reservarCupo(
         {
           clienteId: params.clienteId,
           servicioId: cupo.servicioId,
-          profesionalId: cupo.profesionalId,
+          profesionalId: preferido,
           inicioIso: cupo.inicio,
           nombreContacto: nombre,
           chatId: params.chatId,
@@ -380,7 +455,13 @@ export async function ejecutarAccionAgenda(params: {
       const cupo = ctx.cupos.get(String(params.cita?.cupo).trim().toUpperCase());
       if (!vigente || !cupo) return { tipo: "ninguna" };
 
-      const r = await reagendar(params.clienteId, vigente.id, cupo.inicio, supa);
+      // Se mantiene al profesional de la cita si puede tomar la hora nueva;
+      // si no, se asigna a quien sí esté libre (antes se movía a ciegas).
+      const puedeElMismo = cupo.profesionales.some((p) => p.id === vigente.profesional_id);
+      const nuevoProf = puedeElMismo
+        ? (vigente.profesional_id as string)
+        : (profesionalPedido(cupo.profesionales, params.cita?.profesional) ?? cupo.profesionales[0]?.id ?? null);
+      const r = await reagendar(params.clienteId, vigente.id, cupo.inicio, supa, { profesionalId: nuevoProf });
       if (r.ok) {
         await anularSeguimientosDeCita(vigente.id, params.clienteId, supa);
         await programarSeguimientosCita({

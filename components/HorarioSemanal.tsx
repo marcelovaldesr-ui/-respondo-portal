@@ -52,7 +52,7 @@ export default function HorarioSemanal({
               className="flex flex-wrap items-center gap-2 px-3 py-2"
               style={{
                 borderTop: i === 0 ? undefined : "1px solid var(--borde)",
-                background: delDia.length ? "#fff" : "#fbfcfe",
+                background: delDia.length ? "#fff" : "var(--fondo-hundido)",
               }}
             >
               <div
@@ -70,7 +70,7 @@ export default function HorarioSemanal({
                   <form key={t.id} action={accionEliminar} className="inline">
                     <input type="hidden" name="id" value={t.id} />
                     <button
-                      className="group inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-[12.5px] font-bold tabular-nums transition"
+                      className="group inline-flex min-h-[34px] items-center gap-1.5 rounded-lg px-3 py-1.5 text-[12.5px] font-bold tabular-nums transition"
                       style={{ background: "var(--indigo-suave)", color: "var(--indigo)" }}
                       title="Quitar este tramo"
                     >
@@ -100,7 +100,7 @@ export default function HorarioSemanal({
           })
         }
         className="mt-3 flex flex-wrap items-center gap-2 rounded-[7px] border p-3"
-        style={{ borderColor: "var(--borde)", background: "#fbfcfe", ...(enviando ? { opacity: 0.6, pointerEvents: "none" } : {}) }}
+        style={{ borderColor: "var(--borde)", background: "var(--fondo-hundido)", ...(enviando ? { opacity: 0.6, pointerEvents: "none" } : {}) }}
       >
         <input type="hidden" name="profesional" value={profesionalId} />
         {dias.map((d) => (
@@ -116,7 +116,7 @@ export default function HorarioSemanal({
                 type="button"
                 onClick={() => alternar(d)}
                 aria-pressed={activo}
-                className="h-8 w-9 rounded-lg text-[12px] font-bold transition"
+                className="h-[36px] w-[40px] rounded-lg text-[12px] font-bold transition"
                 style={
                   activo
                     ? { background: "var(--indigo)", color: "#fff" }
@@ -132,7 +132,7 @@ export default function HorarioSemanal({
         <input type="time" name="desde" defaultValue="10:00" required className="campo !w-auto" />
         <span className="text-[13px]" style={{ color: "var(--muted)" }}>a</span>
         <input type="time" name="hasta" defaultValue="19:00" required className="campo !w-auto" />
-        <button type="submit" className="btn-suave px-3 py-1.5 text-[13px]" disabled={dias.length === 0}>
+        <button type="submit" className="btn-suave min-h-[36px] px-3 text-[13px]" disabled={dias.length === 0}>
           Agregar tramo
         </button>
       </form>

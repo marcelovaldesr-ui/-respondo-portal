@@ -25,7 +25,8 @@ export function hrefConversacion(f: { chatId: string; empleadoId: string | null 
 
 function hrefAccion(f: FilaAtencion, a: AccionSugerida | null): string {
   if (a?.tipo === "revisar_propuesta") return "/seguimientos";
-  if (a?.tipo === "ver_cita") return "/agenda";
+  // (Fase 2) Con el id se abre ESA hora, no el calendario entero.
+  if (a?.tipo === "ver_cita") return a.citaId ? `/agenda?cita=${encodeURIComponent(a.citaId)}` : "/agenda";
   return hrefConversacion(f);
 }
 

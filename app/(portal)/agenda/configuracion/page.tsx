@@ -58,7 +58,7 @@ type Bloqueo = { id: string; profesional_id: string | null; desde: string; hasta
 export default async function ConfiguracionAgenda({
   searchParams,
 }: {
-  searchParams?: Promise<{ gcal_oauth?: string }>;
+  searchParams?: Promise<{ gcal_oauth?: string; s?: string }>;
 }) {
   const params = searchParams ? await searchParams : undefined;
   const usuario = await exigirPermisoPortal("configurar_agenda");
@@ -206,26 +206,64 @@ export default async function ConfiguracionAgenda({
   const gcalListo = googleCalendarConfigurado();
   const gcalOauthListo = oauthConfigurado();
   const avisoOauth = params?.gcal_oauth;
+  /**
+   * Sección visible. Con `?s=google` se puede enlazar directo desde el aviso
+   * de la agenda («no podemos comprobar el calendario de Marcela → Reconectar»).
+   */
+  /**
+   * Cuánto hacia adelante se puede reservar. Se ofrecen cuatro opciones, pero
+   * si el negocio ya tenía guardado otro número (el campo antes era libre) se
+   * agrega a la lista: cambiar la pantalla no debe cambiarle la configuración
+   * a nadie por la espalda.
+   */
+  const horizonteActual = Math.min(90, Math.max(1, Number(cliente?.horizonte_dias ?? 30) || 30));
+  const opcionesHorizonte = [...new Set([14, 30, 60, 90, horizonteActual])].sort((a, b) => a - b);
+
+  const pedida = String(params?.s ?? "");
+  const seccion = SECCIONES.some((x) => x.clave === pedida) ? pedida : "servicios";
 
   return (
     <main className="mx-auto max-w-4xl px-4 py-6 sm:px-6 lg:px-10 lg:py-9">
       <Link
         href="/agenda"
-        className="text-[13px] font-bold"
-        style={{ color: "var(--indigo)" }}
+        className="btn-texto px-0"
+        style={{ color: "var(--azul)" }}
       >
         ‹ Volver al calendario
       </Link>
       <h1 className="h-pagina">
         Configuración de la agenda
       </h1>
-      <p className="mt-1.5 max-w-2xl text-[15px]" style={{ color: "var(--muted)" }}>
+      <p className="mt-1.5 max-w-2xl" style={{ fontSize: "var(--t-cuerpo)", color: "var(--muted)" }}>
         Qué vendes, quién lo hace, a qué horas y quién puede reservar solo. Esto define
         los cupos que ofrecen tus empleados por WhatsApp y tu página pública.
       </p>
 
+      {/*
+        (Fase 2) UNA COSA A LA VEZ. Antes esto era una sola página de 700
+        líneas con seis bloques distintos y diez formularios: para cambiar un
+        horario había que pasar por servicios, profesionales, bloqueos y
+        reservas. Ahora cada cosa tiene su lugar y su enlace propio
+        (?s=horarios), que además sirve para mandar a alguien justo ahí.
+      */}
+      <nav className="mt-4 flex flex-wrap gap-2" aria-label="Secciones de la configuración">
+        {SECCIONES.map((x) => (
+          <Link
+            key={x.clave}
+            href={`/agenda/configuracion?s=${x.clave}`}
+            className="chip-opcion"
+            aria-current={seccion === x.clave ? "page" : undefined}
+            aria-pressed={seccion === x.clave}
+          >
+            {x.titulo}
+          </Link>
+        ))}
+      </nav>
+
       {/* ── Servicios ───────────────────────────────────────────────── */}
       <Seccion
+        clave="servicios"
+        visible={seccion}
         titulo="Servicios"
         cuenta={listaServicios.length}
         ayuda="Lo que ofreces y cuánto dura cada cosa. La duración define el largo del bloque en el calendario."
@@ -249,12 +287,12 @@ export default async function ConfiguracionAgenda({
                   <form action={alternarServicio}>
                     <input type="hidden" name="id" value={s.id} />
                     <input type="hidden" name="activo" value={String(s.activo)} />
-                    <button className="btn-suave px-3 py-1.5 text-[12px]">{s.activo ? "Apagar" : "Encender"}</button>
+                    <button className="btn-suave min-h-[34px] px-3 text-[12px]">{s.activo ? "Apagar" : "Encender"}</button>
                   </form>
                   {!serviciosConCitas.has(s.id) && (
                     <form action={eliminarServicio}>
                       <input type="hidden" name="id" value={s.id} />
-                      <button className="btn-suave px-3 py-1.5 text-[12px]" style={{ color: "#B33A3A" }} title="Eliminar definitivamente (no tiene citas)">
+                      <button className="btn-suave min-h-[34px] px-3 text-[12px]" style={{ color: "var(--peligro)" }} title="Eliminar definitivamente (no tiene citas)">
                         Eliminar
                       </button>
                     </form>
@@ -291,6 +329,8 @@ export default async function ConfiguracionAgenda({
 
       {/* ── Profesionales y horarios ────────────────────────────────── */}
       <Seccion
+        clave="profesionales"
+        visible={seccion}
         titulo="Profesionales y horarios"
         cuenta={listaProfesionales.length}
         ayuda="Cada profesional es una columna del calendario y una agenda independiente. Puede ser una persona, un sillón, una sala o una cancha."
@@ -304,7 +344,7 @@ export default async function ConfiguracionAgenda({
                   <div className="text-[15px] font-bold">
                     {p.nombre}
                     {!p.activo && (
-                      <span className="pildora ml-2" style={{ background: "#F1F2F7", color: "var(--muted)" }}>
+                      <span className="pildora ml-2" style={{ background: "var(--fondo-hundido)", color: "var(--muted)" }}>
                         apagado
                       </span>
                     )}
@@ -313,12 +353,12 @@ export default async function ConfiguracionAgenda({
                     <form action={alternarProfesional}>
                       <input type="hidden" name="id" value={p.id} />
                       <input type="hidden" name="activo" value={String(p.activo)} />
-                      <button className="btn-suave px-3 py-1.5 text-[12px]">{p.activo ? "Apagar" : "Encender"}</button>
+                      <button className="btn-suave min-h-[34px] px-3 text-[12px]">{p.activo ? "Apagar" : "Encender"}</button>
                     </form>
                     {!profesionalesConCitas.has(p.id) && (
                       <form action={eliminarProfesional}>
                         <input type="hidden" name="id" value={p.id} />
-                        <button className="btn-suave px-3 py-1.5 text-[12px]" style={{ color: "#B33A3A" }} title="Eliminar definitivamente (no tiene citas)">
+                        <button className="btn-suave min-h-[34px] px-3 text-[12px]" style={{ color: "var(--peligro)" }} title="Eliminar definitivamente (no tiene citas)">
                           Eliminar
                         </button>
                       </form>
@@ -326,17 +366,34 @@ export default async function ConfiguracionAgenda({
                   </div>
                 </div>
 
-                <HorarioSemanal
-                  profesionalId={p.id}
-                  tramos={suyos.map((h) => ({
-                    id: h.id,
-                    diaSemana: h.dia_semana,
-                    desde: String(h.desde).slice(0, 5),
-                    hasta: String(h.hasta).slice(0, 5),
-                  }))}
-                  accionAgregar={agregarHorario}
-                  accionEliminar={eliminarHorario}
-                />
+                {/*
+                  (Fase 2) El horario de un profesional APAGADO va plegado. No
+                  ofrece ni una hora, así que su grilla de siete días solo estira
+                  la pantalla: con cinco profesionales, dos de ellos apagados,
+                  había que bajar por 900 px de "cerrado" en gris para llegar a
+                  quien sí atiende. Plegado, pero nunca escondido: el resumen
+                  dice cuántas horas tiene y se abre con un clic.
+                */}
+                {p.activo ? (
+                  <HorarioSemanal
+                    profesionalId={p.id}
+                    tramos={tramosDe(suyos)}
+                    accionAgregar={agregarHorario}
+                    accionEliminar={eliminarHorario}
+                  />
+                ) : (
+                  <details className="mt-3">
+                    <summary className="cursor-pointer text-[13px] font-semibold" style={{ color: "var(--azul)" }}>
+                      Ver su horario ({resumenHorario(suyos)})
+                    </summary>
+                    <HorarioSemanal
+                      profesionalId={p.id}
+                      tramos={tramosDe(suyos)}
+                      accionAgregar={agregarHorario}
+                      accionEliminar={eliminarHorario}
+                    />
+                  </details>
+                )}
               </div>
             );
           })}
@@ -349,6 +406,8 @@ export default async function ConfiguracionAgenda({
 
       {/* ── Bloqueos ────────────────────────────────────────────────── */}
       <Seccion
+        clave="bloqueos"
+        visible={seccion}
         titulo="Bloqueos y feriados"
         cuenta={listaBloqueos.length}
         ayuda="Días u horas en que no se atiende. Mientras un bloqueo esté vigente, esas horas no se ofrecen en ningún lado."
@@ -360,14 +419,14 @@ export default async function ConfiguracionAgenda({
                 <b>{formatearSlot(b.desde)}</b> → <b>{formatearSlot(b.hasta)}</b>
                 {b.motivo ? ` · ${b.motivo}` : ""}
                 {!b.profesional_id && (
-                  <span className="pildora ml-2" style={{ background: "#FDE9EA", color: "#B33A3A" }}>
+                  <span className="pildora ml-2" style={{ background: "var(--peligro-suave)", color: "var(--peligro)" }}>
                     todo el negocio
                   </span>
                 )}
               </div>
               <form action={eliminarBloqueo}>
                 <input type="hidden" name="id" value={b.id} />
-                <button className="btn-suave px-3 py-1.5 text-[12px]">Quitar</button>
+                <button className="btn-suave min-h-[34px] px-3 text-[12px]">Quitar</button>
               </form>
             </div>
           ))}
@@ -405,6 +464,8 @@ export default async function ConfiguracionAgenda({
 
       {/* ── Página pública ──────────────────────────────────────────── */}
       <Seccion
+        clave="reservas"
+        visible={seccion}
         titulo="Página pública de reservas"
         insignia={cliente?.reservas_online ? "activa" : "apagada"}
         ayuda="Un enlace para que tus clientes reserven solos (Instagram, Google, QR en el local). Cada reserva llega a esta agenda y respeta los mismos cupos que ven tus empleados."
@@ -428,12 +489,34 @@ export default async function ConfiguracionAgenda({
           </div>
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="text-[13px] font-bold">Anticipación mín. (horas)</label>
+              <label className="text-[13px] font-bold">Anticipación mínima (horas)</label>
               <input type="number" name="anticipacion" min={0} max={72} defaultValue={cliente?.anticipacion_min_horas ?? 2} className="campo mt-1.5" />
+              <p className="mt-1 text-[12px]" style={{ color: "var(--muted-2)" }}>
+                Horas mínimas entre la reserva y la hora. Con 2, nadie puede
+                reservar para dentro de media hora.
+              </p>
             </div>
             <div>
-              <label className="text-[13px] font-bold">Horizonte (días)</label>
-              <input type="number" name="horizonte" min={1} max={90} defaultValue={cliente?.horizonte_dias ?? 30} className="campo mt-1.5" />
+              {/*
+                (Fase 2) Era un campo numérico libre de 1 a 90, rotulado
+                "Horizonte (días)". Ni el nombre ni el número decían nada: un
+                dueño no piensa en horizontes, piensa en "hasta cuándo pueden
+                reservarme". Cuatro opciones cubren los casos reales —dos
+                semanas, un mes, dos, tres— y el tope sigue siendo 90 en la
+                acción del servidor, que es donde importa.
+              */}
+              <label className="text-[13px] font-bold">Se puede reservar hasta</label>
+              <select name="horizonte" defaultValue={String(horizonteActual)} className="campo mt-1.5">
+                {opcionesHorizonte.map((d) => (
+                  <option key={d} value={d}>
+                    {d} días
+                  </option>
+                ))}
+              </select>
+              <p className="mt-1 text-[12px]" style={{ color: "var(--muted-2)" }}>
+                Hacia adelante. Más allá de eso tu página no muestra horas; casi
+                todos los negocios trabajan con 30.
+              </p>
             </div>
           </div>
           <label className="flex items-start gap-2.5 rounded-[7px] border p-3 text-[14px] font-semibold" style={{ borderColor: "var(--borde)" }}>
@@ -462,6 +545,8 @@ export default async function ConfiguracionAgenda({
 
       {/* ── Autogestión del cliente final (migración 277) ────────────── */}
       <Seccion
+        clave="autogestion"
+        visible={seccion}
         titulo="Que tus clientes se muevan solos"
         ayuda="En la confirmación y el recordatorio va un enlace propio de cada hora. Desde ahí el cliente la cambia o la anula sin escribirte."
       >
@@ -470,6 +555,15 @@ export default async function ConfiguracionAgenda({
           otra persona puede tomarlo. Si tiene que escribirte, la hora se pierde
           igual pero el cupo queda ocupado hasta que alcances a moverlo.
         </div>
+        {/*
+          (Fase 2) Se dice la vigencia del enlace. El dueño manda ese enlace en
+          cada confirmación: tiene derecho a saber cuánto vive, sobre todo si un
+          cliente le escribe diciendo que "no le abre".
+        */}
+        <p className="mt-2 text-[12.5px]" style={{ color: "var(--muted-2)" }}>
+          El enlace deja de abrir 24 horas después de que termina la hora, y
+          entonces muestra un aviso sin datos de nadie.
+        </p>
 
         <form action={configurarAutogestion} className="mt-4 grid gap-3.5 sm:grid-cols-2">
           <label className="flex items-start gap-2.5 rounded-[7px] border p-3 text-[14px] font-semibold" style={{ borderColor: "var(--borde)" }}>
@@ -482,7 +576,9 @@ export default async function ConfiguracionAgenda({
             <span>
               Puede cambiar día u hora
               <span className="block text-[12.5px] font-normal" style={{ color: "var(--muted)" }}>
-                Elige entre los cupos que tengas libres. Nunca fuera de tu horario.
+                Elige entre los cupos que tengas libres, con la misma persona y
+                dentro de los mismos {horizonteActual} días que ve tu página pública.
+                Nunca fuera de tu horario.
               </span>
             </span>
           </label>
@@ -526,6 +622,8 @@ export default async function ConfiguracionAgenda({
 
       {/* ── Google Calendar ─────────────────────────────────────────── */}
       <Seccion
+        clave="google"
+        visible={seccion}
         titulo="Ver tus horas en Google Calendar"
         ayuda="Para tener las horas de Respondo junto al resto de tu calendario, en el celular."
       >
@@ -564,29 +662,29 @@ export default async function ConfiguracionAgenda({
             ofrecer horas cuando ya estás ocupado.
           </p>
           {!gcalListo && !gcalOauthListo && (
-            <p className="mt-2 text-[13px] font-semibold" style={{ color: "#B0842A" }}>
+            <p className="mt-2 text-[13px] font-semibold" style={{ color: "var(--alerta)" }}>
               Falta que el equipo de Respondo configure la conexión con Google en el servidor.
             </p>
           )}
           {avisoOauth === "ok" && (
-            <p className="mt-2 rounded-[7px] px-3 py-2 text-[13px] font-semibold" style={{ color: "#0E7C66", background: "#E9F7F3" }}>
+            <p className="mt-2 rounded-[7px] px-3 py-2 text-[13px] font-semibold" style={{ color: "var(--ok)", background: "var(--ok-suave)" }}>
               Google Calendar conectado ✓
             </p>
           )}
           {avisoOauth === "cancelado" && (
-            <p className="mt-2 rounded-[7px] px-3 py-2 text-[13px] font-semibold" style={{ color: "#B0842A", background: "#FBF3E4" }}>
+            <p className="mt-2 rounded-[7px] px-3 py-2 text-[13px] font-semibold" style={{ color: "var(--alerta)", background: "var(--alerta-suave)" }}>
               Cancelaste la conexión en Google — no se cambió nada.
             </p>
           )}
           {(avisoOauth === "calendario_ajeno" || avisoOauth === "no_verificado") && (
-            <p className="mt-2 rounded-[7px] px-3 py-2 text-[13px] font-semibold" style={{ color: "#B33A3A", background: "#FBECEC" }}>
+            <p className="mt-2 rounded-[7px] px-3 py-2 text-[13px] font-semibold" style={{ color: "var(--peligro)", background: "var(--peligro-suave)" }}>
               {avisoOauth === "calendario_ajeno"
                 ? "Ese calendario ya está conectado en otra cuenta de Respondo, así que no se guardó. Si es tuyo, escríbenos."
                 : "No se pudo verificar ese calendario. Intenta guardarlo de nuevo."}
             </p>
           )}
           {avisoOauth === "error" && (
-            <p className="mt-2 rounded-[7px] px-3 py-2 text-[13px] font-semibold" style={{ color: "#B33A3A", background: "#FBECEC" }}>
+            <p className="mt-2 rounded-[7px] px-3 py-2 text-[13px] font-semibold" style={{ color: "var(--peligro)", background: "var(--peligro-suave)" }}>
               Algo falló al conectar con Google. Probá de nuevo, o usá la opción manual más abajo.
             </p>
           )}
@@ -595,35 +693,71 @@ export default async function ConfiguracionAgenda({
             // Estado según lo que respondió Google la última vez, no según si
             // hay credenciales guardadas (Fase 0). Ver lib/estadoGoogleCore.ts.
             const eg = estadoConexionGoogle(p);
-            const colorEstado = eg.estado === "conectado" ? "#0E7C66" : eg.estado === "error" ? "#B0842A" : "#B33A3A";
+            const colorEstado = eg.estado === "conectado" ? "var(--ok)" : eg.estado === "error" ? "var(--alerta)" : "var(--peligro)";
+            const fondoEstado =
+              eg.estado === "conectado" ? "var(--ok-suave)" : eg.estado === "error" ? "var(--alerta-suave)" : "var(--peligro-suave)";
+            /**
+             * (Fase 2) EL ESTADO VA PRIMERO. Antes el botón azul «Conectar
+             * Google Calendar» era lo más visible de la tarjeta y el aviso de
+             * que Google había dejado de responder iba abajo, en letra chica.
+             * Es justo al revés: que no podamos leer el calendario de alguien
+             * es lo que hace que sus horas dejen de ofrecerse, y es lo primero
+             * que el dueño tiene que ver.
+             */
+            const configurado = conectadoOauth || !!p.gcal_id;
             return (
-              <div key={p.id} className="mt-3 rounded-[7px] border p-3" style={{ borderColor: "var(--borde)" }}>
-                <div className="text-[14px] font-bold">{p.nombre}</div>
+              <div
+                key={p.id}
+                className="mt-3 rounded-[7px] border p-3"
+                style={{
+                  borderColor: configurado && eg.estado !== "conectado" ? "var(--coral-borde)" : "var(--borde)",
+                }}
+              >
+                <div className="flex flex-wrap items-center gap-2">
+                  <div className="text-[14px] font-bold">{p.nombre}</div>
+                  {configurado && (
+                    <span className="pildora" style={{ background: fondoEstado, color: colorEstado }}>
+                      {eg.estado === "conectado" ? "conectado" : eg.texto.toLowerCase()}
+                    </span>
+                  )}
+                  {conectadoOauth && p.gcal_oauth_email && (
+                    <span className="cifra" style={{ fontSize: "var(--t-meta)", color: "var(--muted-2)" }}>
+                      {p.gcal_oauth_email}
+                    </span>
+                  )}
+                </div>
+
+                {configurado && eg.estado !== "conectado" && (
+                  <p
+                    className="mt-2 rounded-[7px] px-3 py-2 text-[12.5px] font-semibold"
+                    style={{ color: colorEstado, background: fondoEstado }}
+                  >
+                    {eg.detalle ? `Google respondió: ${eg.detalle}. ` : ""}
+                    Mientras no podamos leer su calendario no ofrecemos sus horas, ni en tu página
+                    pública ni por WhatsApp: preferimos ofrecer menos horas antes que dar una que
+                    ya está tomada.
+                    {eg.estado === "necesita_reconexion" &&
+                      (conectadoOauth
+                        ? " Desconecta y vuelve a conectar Google Calendar."
+                        : " Vuelve a compartir el calendario con Respondo, o conéctalo con Google acá abajo.")}
+                  </p>
+                )}
 
                 {conectadoOauth ? (
-                  <>
-                    <p className="mt-2 text-[12.5px] font-semibold" style={{ color: colorEstado }}>
-                      {eg.estado === "conectado" ? "Conectado ✓" : eg.texto} {p.gcal_oauth_email ? `· como ${p.gcal_oauth_email}` : ""}
-                    </p>
-                    {eg.detalle && (
-                      <p className="mt-1 text-[12.5px] font-semibold" style={{ color: colorEstado }}>
-                        Google respondió: {eg.detalle}
-                        {eg.estado === "necesita_reconexion" && " — desconecta y vuelve a conectar Google Calendar."}
-                      </p>
-                    )}
-                    <form action={desconectarGoogleOauth} className="mt-2">
-                      <input type="hidden" name="profesional" value={p.id} />
-                      <button type="submit" className="btn-suave px-3 py-1.5 text-[13px]">Desconectar</button>
-                    </form>
-                  </>
+                  <form action={desconectarGoogleOauth} className="mt-2">
+                    <input type="hidden" name="profesional" value={p.id} />
+                    <button type="submit" className="btn-suave px-3 text-[13px]">Desconectar</button>
+                  </form>
                 ) : (
                   <>
                     {gcalOauthListo && (
                       <a
                         href={`/api/google/conectar?profesional=${p.id}`}
-                        className="btn-primario mt-2 inline-block px-4 py-2 text-[13.5px]"
+                        // Ya configurado a mano: conectar con Google es una
+                        // mejora, no la acción principal de la tarjeta.
+                        className={`${configurado ? "btn-suave" : "btn-primario"} mt-2 inline-block px-4 text-[13.5px]`}
                       >
-                        Conectar Google Calendar
+                        {configurado ? "Reconectar con Google" : "Conectar Google Calendar"}
                       </a>
                     )}
                     <details className="mt-2">
@@ -650,14 +784,6 @@ export default async function ConfiguracionAgenda({
                         </div>
                       </form>
                     </details>
-                    {eg.detalle && (
-                      <p className="mt-2 text-[12.5px] font-semibold" style={{ color: eg.estado === "desconectado" ? "#B33A3A" : colorEstado }}>
-                        {eg.estado === "desconectado" ? eg.detalle : `${eg.texto} · Google respondió: ${eg.detalle}`}
-                      </p>
-                    )}
-                    {eg.estado === "conectado" && (
-                      <p className="mt-2 text-[12.5px] font-semibold" style={{ color: "#0E7C66" }}>Conectado ✓</p>
-                    )}
                   </>
                 )}
               </div>
@@ -680,32 +806,73 @@ export default async function ConfiguracionAgenda({
   );
 }
 
+const DIAS_CORTOS_CFG = ["do", "lu", "ma", "mi", "ju", "vi", "sá"];
+
+function tramosDe(horarios: Horario[]) {
+  return horarios.map((h) => ({
+    id: h.id,
+    diaSemana: h.dia_semana,
+    desde: String(h.desde).slice(0, 5),
+    hasta: String(h.hasta).slice(0, 5),
+  }));
+}
+
+/** "12 h · lu, mi, vi" — lo mínimo para decidir si vale la pena abrir. */
+function resumenHorario(horarios: Horario[]): string {
+  if (horarios.length === 0) return "sin horario";
+  const minutos = horarios.reduce((t, h) => {
+    const a = String(h.desde).slice(0, 5).split(":").map(Number);
+    const b = String(h.hasta).slice(0, 5).split(":").map(Number);
+    return t + (b[0] * 60 + b[1] - a[0] * 60 - a[1]);
+  }, 0);
+  const dias = [...new Set(horarios.map((h) => h.dia_semana))]
+    .sort((x, y) => ((x + 6) % 7) - ((y + 6) % 7))
+    .map((d) => DIAS_CORTOS_CFG[d]);
+  const horas = (minutos / 60).toLocaleString("es-CL", { maximumFractionDigits: 1 });
+  return `${horas} h · ${dias.join(", ")}`;
+}
+
 /** Bloque de configuración: título, ayuda de una línea y contenido. */
+/** Las seis cosas que se configuran, en el orden en que se tocan. */
+const SECCIONES = [
+  { clave: "servicios", titulo: "Servicios" },
+  { clave: "profesionales", titulo: "Profesionales y horarios" },
+  { clave: "bloqueos", titulo: "Bloqueos y feriados" },
+  { clave: "reservas", titulo: "Reserva online" },
+  { clave: "autogestion", titulo: "Autogestión del cliente" },
+  { clave: "google", titulo: "Google Calendar" },
+] as const;
+
 function Seccion({
+  clave,
+  visible,
   titulo,
   cuenta,
   insignia,
   ayuda,
   children,
 }: {
+  clave: string;
+  visible: string;
   titulo: string;
   cuenta?: number;
   insignia?: string;
   ayuda: string;
   children: React.ReactNode;
 }) {
+  if (clave !== visible) return null;
   return (
     <section className="tarjeta mt-5 p-5 sm:p-6">
       <div className="flex flex-wrap items-center gap-2">
         <h2 className="h-seccion">{titulo}</h2>
-        {cuenta !== undefined && <span className="pildora-indigo">{cuenta}</span>}
+        {cuenta !== undefined && <span className="pildora pildora-azul">{cuenta}</span>}
         {insignia && (
           <span
             className="pildora"
             style={
               insignia === "activa"
                 ? { background: "var(--ok-suave)", color: "var(--ok)" }
-                : { background: "#F1F2F7", color: "var(--muted)" }
+                : { background: "var(--fondo-hundido)", color: "var(--muted)" }
             }
           >
             {insignia}

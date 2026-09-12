@@ -2,6 +2,10 @@ import { db } from "@/lib/db";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import {
   computarSlots,
+  diaChileDe,
+  elegirProfesional,
+  fechaChileDe,
+  horaChileAUtc,
   type Ocupado,
   type Slot,
   type VentanaSemanal,
@@ -63,9 +67,22 @@ export type Cita = {
 
 export type ResultadoCita =
   | { ok: true; cita: Cita }
-  | { ok: false; motivo: "cupo_tomado" | "servicio_invalido" | "profesional_invalido" | "error"; detalle?: string };
+  | {
+      ok: false;
+      motivo:
+        | "cupo_tomado"
+        | "servicio_invalido"
+        | "profesional_invalido"
+        | "sin_profesionales"
+        | "inscripcion_de_clase"
+        | "error";
+      detalle?: string;
+    };
 
 const ESTADOS_ACTIVOS = ["agendada", "confirmada", "reagendada"];
+
+/** Fila mínima de ed_clases que necesita el cálculo de disponibilidad. */
+type FilaClase = { profesional_id: string | null; inicio: string; fin: string };
 
 /** Código Postgres de exclusion_violation (el EXCLUDE de ed_citas). */
 const EXCLUSION_VIOLATION = "23P01";
@@ -110,11 +127,54 @@ export async function citasDe(
  * profesionales, de ed_servicio_profesional (o todos los activos si el
  * servicio no está mapeado a nadie).
  */
+export type OpcionesDisponibilidad = {
+  ahora?: Date;
+  supa?: SupabaseClient;
+  /** Primer día chileno del cálculo (por defecto, hoy). Vista de mes. */
+  desdeDia?: Date;
+  /** Días a mirar. Se acota al horizonte que configuró el negocio. */
+  dias?: number;
+  /** Solo este profesional: el caso «quiero con Marcelo». */
+  profesionalId?: string | null;
+  /** Tope de cupos por día (la vista de mes solo necesita 1). */
+  maxPorDia?: number;
+  /** Basta con saber si el día tiene cupo. */
+  soloPrimeroPorDia?: boolean;
+  maxSlots?: number;
+  /**
+   * Incluir a los profesionales cuyo Google Calendar no se pudo comprobar.
+   * Por defecto NO (regla de Fase 2, ver `noVerificables`). El portal puede
+   * pedirlos para mostrarle al dueño lo que hay, avisando del problema.
+   */
+  incluirNoVerificables?: boolean;
+};
+
+export type ProfesionalDisponible = { id: string; nombre: string };
+
+export type ResultadoDisponibilidad =
+  | {
+      ok: true;
+      servicio: Servicio;
+      slots: Slot[];
+      /** Profesionales elegibles de este servicio, para el selector público. */
+      profesionales: ProfesionalDisponible[];
+      /**
+       * Elegibles cuyo calendario de Google no se pudo comprobar AHORA. Sus
+       * horas quedaron FUERA (salvo `incluirNoVerificables`): no sabemos si
+       * están libres, y ofrecerlas es cómo se produce una doble reserva encima
+       * del calendario personal del dueño.
+       */
+      noVerificables: ProfesionalDisponible[];
+      /** Citas ya tomadas por profesional, para repartir carga al asignar. */
+      carga: { porDia: Map<string, number>; total: Map<string, number> };
+    }
+  | { ok: false; motivo: string };
+
 export async function disponibilidad(
   clienteId: string,
   servicioId: string,
-  opts: { ahora?: Date; maxSlots?: number; supa?: SupabaseClient } = {},
-): Promise<{ ok: true; servicio: Servicio; slots: Slot[] } | { ok: false; motivo: string }> {
+  opts: OpcionesDisponibilidad = {},
+): Promise<ResultadoDisponibilidad> {
   const supa = opts.supa ?? db();
   const ahora = opts.ahora ?? new Date();
 
@@ -133,7 +193,27 @@ export async function disponibilidad(
     .eq("id", clienteId)
     .maybeSingle();
   const anticipacionMin = (cfg?.anticipacion_min_horas ?? 2) * 60;
-  const dias = cfg?.horizonte_dias ?? 30;
+  const horizonte = cfg?.horizonte_dias ?? 30;
+  /**
+   * (Fase 2) El rango lo pide el llamador —un mes, un día— y el horizonte del
+   * negocio lo acota. Antes el único freno era un tope de 120 CUPOS aplicado
+   * después de mezclar profesionales: con tres profesionales, el calendario
+   * público mostraba dos días de los treinta que el negocio tenía abiertos.
+   */
+  const desdeDia = opts.desdeDia ?? ahora;
+  const diasYaPasados = Math.max(
+    0,
+    Math.round((mediodiaChile(desdeDia) - mediodiaChile(ahora)) / 86_400_000),
+  );
+  const dias = Math.max(0, Math.min(opts.dias ?? horizonte, horizonte - diasYaPasados));
+  if (dias === 0) {
+    const vacio = { porDia: new Map<string, number>(), total: new Map<string, number>() };
+    return { ok: true, servicio: servicio as Servicio, slots: [], profesionales: [], noVerificables: [], carga: vacio };
+  }
+
+  // Nombre de cada profesional: se va llenando con las consultas que ya se
+  // hacen, para no gastar una consulta extra solo en los nombres.
+  const nombres = new Map<string, string>();
 
   // Profesionales que atienden este servicio (o todos los activos del cliente).
   const { data: mapeo } = await supa
@@ -152,26 +232,37 @@ export async function disponibilidad(
   if (profesionalIds.length) {
     const { data: propios } = await supa
       .from("ed_profesionales")
-      .select("id")
+      .select("id, nombre")
       .eq("cliente_id", clienteId)
       .in("id", profesionalIds);
+    for (const p of propios ?? []) nombres.set(p.id as string, (p.nombre as string) ?? "");
     const deEsteNegocio = new Set((propios ?? []).map((p) => p.id as string));
     profesionalIds = profesionalIds.filter((id) => deEsteNegocio.has(id));
   }
   if (profesionalIds.length === 0) {
     const { data: todos } = await supa
       .from("ed_profesionales")
-      .select("id")
+      .select("id, nombre")
       .eq("cliente_id", clienteId)
       .eq("activo", true);
+    for (const p of todos ?? []) nombres.set(p.id as string, (p.nombre as string) ?? "");
     profesionalIds = (todos ?? []).map((p) => p.id as string);
   }
   if (profesionalIds.length === 0) return { ok: false, motivo: "sin_profesionales" };
 
-  const hastaIso = new Date(ahora.getTime() + dias * 86_400_000).toISOString();
-  const ahoraIso = ahora.toISOString();
+  // «Quiero con Marcelo»: se filtra ACÁ, antes de consultar horarios y Google,
+  // para no traer ni calcular lo que no se va a ofrecer.
+  if (opts.profesionalId) {
+    if (!profesionalIds.includes(opts.profesionalId)) return { ok: false, motivo: "profesional_invalido" };
+    profesionalIds = [opts.profesionalId];
+  }
 
-  const [{ data: horarios }, { data: bloqueos }, { data: citas }] = await Promise.all([
+  const desdeMs = mediodiaChile(desdeDia) - 12 * 3_600_000;
+  const inicioRango = new Date(Math.max(desdeMs, ahora.getTime()));
+  const hastaIso = new Date(mediodiaChile(desdeDia) + (dias - 1) * 86_400_000 + 12 * 3_600_000).toISOString();
+  const ahoraIso = inicioRango.toISOString();
+
+  const [{ data: horarios }, { data: bloqueos }, { data: citas }, { data: clases }] = await Promise.all([
     supa
       .from("ed_horarios")
       .select("profesional_id, dia_semana, desde, hasta")
@@ -189,20 +280,59 @@ export async function disponibilidad(
       .in("estado", ESTADOS_ACTIVOS)
       .lt("inicio", hastaIso)
       .gt("fin", ahoraIso),
+    /**
+     * CLASES GRUPALES (Fase 2). Una clase ocupa al profesional aunque todavía
+     * no tenga inscritos: antes solo bloqueaban las inscripciones, así que una
+     * clase de yoga recién programada y vacía seguía ofreciéndose como hora
+     * personal a esa misma hora. Suave: si la migración 260 no está aplicada,
+     * la agenda sigue funcionando igual que siempre.
+     */
+    (async () => {
+      try {
+        const r = await supa
+          .from("ed_clases")
+          .select("profesional_id, inicio, fin")
+          .eq("cliente_id", clienteId)
+          .eq("estado", "activa")
+          .lt("inicio", hastaIso)
+          .gt("fin", ahoraIso);
+        return r.error ? { data: [] as FilaClase[] } : { data: (r.data ?? []) as unknown as FilaClase[] };
+      } catch {
+        return { data: [] as FilaClase[] };
+      }
+    })(),
   ]);
 
-  const ventanas: VentanaSemanal[] = (horarios ?? []).map((h) => ({
-    profesionalId: h.profesional_id as string,
-    diaSemana: h.dia_semana as number,
-    // Postgres devuelve time como "10:00:00" — parseHHMM del núcleo toma HH:MM.
-    desde: String(h.desde).slice(0, 5),
-    hasta: String(h.hasta).slice(0, 5),
-  }));
+  const comoLista = (ids: readonly string[]): ProfesionalDisponible[] =>
+    ids.map((id) => ({ id, nombre: nombres.get(id) ?? "" }));
 
-  // Compromisos personales del dueño en SU Google Calendar (F5). Devuelve []
-  // si no hay credenciales o si nadie tiene la sincronización encendida, así
-  // que la disponibilidad se calcula igual que siempre en ese caso.
-  const ocupadosGoogle = await ocupadosDesdeGoogle(profesionalIds, ahoraIso, hastaIso, supa, clienteId);
+  // Compromisos personales en el Google Calendar de cada profesional (F5).
+  const { ocupados: ocupadosGoogle, noVerificables } = await ocupadosDesdeGoogle(
+    profesionalIds,
+    ahoraIso,
+    hastaIso,
+    supa,
+    clienteId,
+  );
+  /**
+   * REGLA DE SEGURIDAD (Fase 2): «no pude comprobar» ≠ «está libre».
+   * Un profesional con sincronización encendida cuyo calendario no responde
+   * queda fuera de la oferta hasta que se pueda verificar. Antes, cualquier
+   * caída de Google convertía su día entero en horas ofrecidas.
+   */
+  const ofrecibles = opts.incluirNoVerificables
+    ? profesionalIds
+    : profesionalIds.filter((id) => !noVerificables.includes(id));
+
+  const ventanas: VentanaSemanal[] = (horarios ?? [])
+    .filter((h) => ofrecibles.includes(h.profesional_id as string))
+    .map((h) => ({
+      profesionalId: h.profesional_id as string,
+      diaSemana: h.dia_semana as number,
+      // Postgres devuelve time como "10:00:00" — parseHHMM toma HH:MM.
+      desde: String(h.desde).slice(0, 5),
+      hasta: String(h.hasta).slice(0, 5),
+    }));
 
   const ocupados: Ocupado[] = [
     // Los bloqueos NO llevan preparación: si el negocio para 13-14 para
@@ -219,23 +349,60 @@ export async function disponibilidad(
       hasta: c.fin as string,
       tipo: "cita" as const,
     })),
-    // Compromisos personales del Google Calendar del dueño: son eventos
-    // ajenos a la agenda, no citas nuestras — sin buffer.
+    // Compromisos del calendario personal: son eventos ajenos a la agenda,
+    // no citas nuestras — sin buffer.
     ...ocupadosGoogle.map((o) => ({ ...o, tipo: "bloqueo" as const })),
+    // Clases programadas: el profesional está dando clase, tenga o no inscritos.
+    ...(clases ?? [])
+      .filter((c): c is FilaClase & { profesional_id: string } => typeof c.profesional_id === "string")
+      .map((c) => ({
+        profesionalId: c.profesional_id as string,
+        desde: c.inicio as string,
+        hasta: c.fin as string,
+        tipo: "bloqueo" as const,
+      })),
   ];
 
   const slots = computarSlots({
     ahora,
+    desdeDia,
     dias,
     ventanas,
     ocupados,
     duracionMin: (servicio as Servicio).duracion_min,
     bufferMin: (servicio as Servicio).buffer_min ?? 0,
     anticipacionMin,
-    maxSlots: opts.maxSlots ?? 60,
+    maxSlots: opts.maxSlots,
+    maxPorDia: opts.maxPorDia,
+    soloPrimeroPorDia: opts.soloPrimeroPorDia,
   });
 
-  return { ok: true, servicio: servicio as Servicio, slots };
+  // Carga real de cada profesional, para repartir cuando el cliente dice
+  // «cualquiera» (ver elegirProfesional en el núcleo).
+  const porDia = new Map<string, number>();
+  const total = new Map<string, number>();
+  for (const c of citas ?? []) {
+    const id = c.profesional_id as string;
+    if (!id) continue;
+    total.set(id, (total.get(id) ?? 0) + 1);
+    const clave = `${id}|${diaChileDe(c.inicio as string)}`;
+    porDia.set(clave, (porDia.get(clave) ?? 0) + 1);
+  }
+
+  return {
+    ok: true,
+    servicio: servicio as Servicio,
+    slots,
+    profesionales: comoLista(ofrecibles),
+    noVerificables: comoLista(noVerificables.filter((id) => profesionalIds.includes(id))),
+    carga: { porDia, total },
+  };
+}
+
+/** Mediodía chileno (en ms UTC) del día calendario al que pertenece `d`. */
+function mediodiaChile(d: Date): number {
+  const f = fechaChileDe(d);
+  return horaChileAUtc(f.anio, f.mes, f.dia, 12, 0).getTime();
 }
 
 // ---------------------------------------------------------------------------
@@ -338,6 +505,13 @@ export async function reagendar(
   citaId: string,
   nuevoInicioIso: string,
   supa: SupabaseClient = db(),
+  /**
+   * (Fase 2) Profesional que atenderá la hora nueva. Va aquí porque el hueco
+   * elegido puede ser de OTRA persona: antes la cita se movía conservando al
+   * profesional original, que podía no trabajar a esa hora o estar bloqueado,
+   * y el único freno era que ya tuviera otra cita encima.
+   */
+  opts: { profesionalId?: string | null } = {},
 ): Promise<ResultadoCita> {
   const { data: cita } = await supa
     .from("ed_citas")
@@ -347,9 +521,31 @@ export async function reagendar(
     .maybeSingle();
   if (!cita) return { ok: false, motivo: "error", detalle: "cita no encontrada" };
 
+  /**
+   * Una inscripción a clase NO se mueve de hora: pertenece a una sesión
+   * concreta (clase_id) con su cupo contado. Moverla dejaba la inscripción
+   * apuntando a la clase vieja, sin liberar el cupo y fuera del anti-solape.
+   * Para cambiarse de clase, se anula y se inscribe en otra.
+   */
+  if ((cita as { clase_id?: string | null }).clase_id) {
+    return { ok: false, motivo: "inscripcion_de_clase" };
+  }
+
   const dur = ((cita as { ed_servicios?: { duracion_min?: number } }).ed_servicios?.duracion_min ?? 30) * 60_000;
   const inicio = new Date(nuevoInicioIso);
   if (Number.isNaN(inicio.getTime())) return { ok: false, motivo: "error", detalle: "inicio inválido" };
+
+  let profesionalId = (cita as Cita).profesional_id as string | null;
+  if (opts.profesionalId && opts.profesionalId !== profesionalId) {
+    const { data: prof } = await supa
+      .from("ed_profesionales")
+      .select("id, activo")
+      .eq("id", opts.profesionalId)
+      .eq("cliente_id", clienteId) // barrera de acceso
+      .maybeSingle();
+    if (!prof || !prof.activo) return { ok: false, motivo: "profesional_invalido" };
+    profesionalId = opts.profesionalId;
+  }
 
   const { data, error } = await supa
     .from("ed_citas")
@@ -357,6 +553,7 @@ export async function reagendar(
       inicio: inicio.toISOString(),
       fin: new Date(inicio.getTime() + dur).toISOString(),
       estado: "reagendada",
+      profesional_id: profesionalId,
       actualizado_en: new Date().toISOString(),
     })
     .eq("id", citaId)
@@ -377,9 +574,128 @@ export async function reagendar(
     .maybeSingle();
   // El evento de Google usa un id derivado del id de la cita, así que esto
   // MUEVE el evento existente en vez de duplicarlo.
+  const anterior = (cita as Cita).profesional_id as string | null;
+  if (anterior && anterior !== actualizada.profesional_id) {
+    // Cambió de persona: hay que sacar el evento del calendario del anterior,
+    // o queda una hora fantasma bloqueando su día.
+    await quitarCitaDeGoogle(actualizada.id, anterior, supa);
+  }
   await sincronizarCita(actualizada, (svc2?.nombre as string) ?? "Hora reservada", supa);
 
   return { ok: true, cita: actualizada };
+}
+
+/**
+ * RESERVAR UN CUPO CON ASIGNACIÓN DE PROFESIONAL (Fase 2).
+ *
+ * Es el único camino que deberían usar la página pública y Tino. Hace tres
+ * cosas que por separado se olvidaban:
+ *
+ *  1. VUELVE A CALCULAR la disponibilidad del día pedido. Lo que el cliente vio
+ *     hace dos minutos no prueba nada; entre medio pudo entrar otra reserva o
+ *     aparecer un compromiso en el Google del profesional.
+ *  2. ELIGE al profesional cuando el cliente dijo «cualquiera», de forma
+ *     determinista (menos citas ese día; ver `elegirProfesional`).
+ *  3. REINTENTA con el siguiente disponible si justo le ganaron la carrera a
+ *     ese profesional (Postgres devuelve 23P01 y aquí se traduce). Solo si no
+ *     queda ninguno se responde `cupo_tomado`, con las horas más cercanas para
+ *     no dejar al cliente en un callejón sin salida.
+ */
+export async function reservarCupo(
+  params: {
+    clienteId: string;
+    servicioId: string;
+    inicioIso: string;
+    /** Profesional pedido por el cliente; null/undefined = «cualquiera». */
+    profesionalId?: string | null;
+    nombreContacto: string;
+    chatId?: string;
+    telefono?: string;
+    origen: "whatsapp" | "web" | "portal" | "importada";
+    empleadoId?: string;
+    notas?: string;
+    estado?: "agendada" | "confirmada";
+    datosExtra?: Record<string, string> | null;
+    ahora?: Date;
+  },
+  supa: SupabaseClient = db(),
+): Promise<ResultadoCita & { alternativas?: Slot[] }> {
+  const ahora = params.ahora ?? new Date();
+  const disp = await disponibilidad(params.clienteId, params.servicioId, {
+    ahora,
+    supa,
+    desdeDia: new Date(params.inicioIso),
+    dias: 1,
+    profesionalId: params.profesionalId ?? null,
+  });
+  if (!disp.ok) {
+    const motivo = disp.motivo === "sin_profesionales" || disp.motivo === "profesional_invalido" ? disp.motivo : "servicio_invalido";
+    return { ok: false, motivo };
+  }
+
+  const cupo = disp.slots.find((s) => s.inicio === params.inicioIso);
+  if (!cupo) {
+    // Puede ser que se acabe de ocupar, o que nunca haya existido. Para quien
+    // reserva es lo mismo: esa hora ya no está. Se ofrecen las cercanas.
+    const cercanas = await alternativasCercanas(params, ahora, supa);
+    return { ok: false, motivo: "cupo_tomado", alternativas: cercanas };
+  }
+
+  const dia = diaChileDe(cupo.inicio);
+  const porDia = new Map<string, number>();
+  for (const id of cupo.profesionales) porDia.set(id, disp.carga.porDia.get(`${id}|${dia}`) ?? 0);
+
+  const pendientes = [...cupo.profesionales];
+  let ultimo: ResultadoCita = { ok: false, motivo: "cupo_tomado" };
+  while (pendientes.length) {
+    const elegido = elegirProfesional(pendientes, { porDia, total: disp.carga.total }, params.profesionalId ?? null);
+    if (!elegido) break;
+    const r = await crearCita(
+      {
+        clienteId: params.clienteId,
+        servicioId: params.servicioId,
+        profesionalId: elegido,
+        inicioIso: params.inicioIso,
+        nombreContacto: params.nombreContacto,
+        chatId: params.chatId,
+        telefono: params.telefono,
+        origen: params.origen,
+        empleadoId: params.empleadoId,
+        notas: params.notas,
+        estado: params.estado,
+        datosExtra: params.datosExtra,
+      },
+      supa,
+    );
+    if (r.ok) return r;
+    ultimo = r;
+    if (r.motivo !== "cupo_tomado") return r; // un error real no se reintenta
+    pendientes.splice(pendientes.indexOf(elegido), 1);
+    if (params.profesionalId) break; // pidió a una persona concreta: no se sustituye
+  }
+
+  const cercanas = await alternativasCercanas(params, ahora, supa);
+  return { ...ultimo, alternativas: cercanas };
+}
+
+/** Las próximas horas libres del mismo servicio, para «esa hora se acaba de ocupar». */
+async function alternativasCercanas(
+  params: { clienteId: string; servicioId: string; profesionalId?: string | null; inicioIso: string },
+  ahora: Date,
+  supa: SupabaseClient,
+  cuantas = 3,
+): Promise<Slot[]> {
+  const r = await disponibilidad(params.clienteId, params.servicioId, {
+    ahora,
+    supa,
+    desdeDia: new Date(params.inicioIso),
+    dias: 7,
+    profesionalId: params.profesionalId ?? null,
+    maxPorDia: 4,
+    maxSlots: 12,
+  });
+  if (!r.ok) return [];
+  return r.slots.filter((s) => s.inicio !== params.inicioIso).slice(0, cuantas);
 }
 
 export async function cambiarEstado(

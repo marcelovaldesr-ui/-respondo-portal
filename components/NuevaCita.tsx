@@ -30,7 +30,7 @@ export default function NuevaCita({
   servicios,
   profesionales,
 }: {
-  accion: (formData: FormData) => Promise<void>;
+  accion: (formData: FormData) => Promise<{ ok: boolean; error?: string }>;
   servicios: ServicioOpt[];
   profesionales: ProfOpt[];
 }) {
@@ -38,6 +38,7 @@ export default function NuevaCita({
   const [servicioId, setServicioId] = useState(servicios[0]?.id ?? "");
   const [inicio, setInicio] = useState("");
   const [enviando, iniciar] = useTransition();
+  const [error, setError] = useState<string | null>(null);
   const formRef = useRef<HTMLFormElement>(null);
 
   const listo = servicios.length > 0 && profesionales.length > 0;
@@ -105,7 +106,15 @@ export default function NuevaCita({
               className="mt-4 grid gap-3.5"
               action={(fd) =>
                 iniciar(async () => {
-                  await accion(fd);
+                  // (Fase 2) Si falla —el cupo está tomado, el servicio se
+                  // apagó— el panel se queda abierto y lo dice. Antes se
+                  // cerraba igual y la hora simplemente no existía.
+                  const r = await accion(fd);
+                  if (!r?.ok) {
+                    setError(r?.error ?? "No se pudo crear la hora.");
+                    return;
+                  }
+                  setError(null);
                   formRef.current?.reset();
                   setInicio("");
                   setAbierto(false);
@@ -169,6 +178,16 @@ export default function NuevaCita({
               <p className="text-[12.5px]" style={{ color: "var(--muted-2)" }}>
                 Con el WhatsApp, tu empleado le manda el recordatorio y la confirmación solo.
               </p>
+
+              {error && (
+                <p
+                  role="alert"
+                  className="rounded-[var(--r-chico)] px-3 py-2"
+                  style={{ background: "var(--coral-medio)", color: "var(--peligro)", fontSize: "var(--t-menor)" }}
+                >
+                  {error}
+                </p>
+              )}
 
               <div className="mt-1 flex justify-end gap-2">
                 <button type="button" onClick={() => setAbierto(false)} className="btn-suave px-4 py-2 text-[13.5px]">

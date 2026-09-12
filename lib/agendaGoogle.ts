@@ -57,8 +57,31 @@ export async function calendariosDe(
   /** Si se da, solo se usan profesionales de ESTE negocio (Fase 0). */
   clienteId?: string,
 ): Promise<AccesoProfesional[]> {
-  if (profesionalIds.length === 0) return [];
-  if (!googleCalendarConfigurado() && !oauthConfigurado()) return [];
+  return (await accesosDe(profesionalIds, supa, clienteId)).accesos;
+}
+
+/**
+ * Igual que `calendariosDe`, pero además dice QUIÉNES QUEDARON SIN VERIFICAR
+ * (Fase 2): profesionales con la sincronización encendida cuyo calendario no
+ * se pudo consultar —token ilegible, refresh rechazado, credenciales sin
+ * configurar—. Antes esos casos se saltaban con `continue` y su agenda se
+ * ofrecía como si no tuvieran ningún compromiso.
+ */
+export async function accesosDe(
+  profesionalIds: string[],
+  supa: SupabaseClient = db(),
+  clienteId?: string,
+): Promise<{ accesos: AccesoProfesional[]; noVerificables: string[] }> {
+  const noVerificables: string[] = [];
+  if (profesionalIds.length === 0) return { accesos: [], noVerificables };
+  /**
+   * (Fase 2) Antes, si la PLATAFORMA no tenía credenciales de Google, esto
+   * devolvía «nada que mirar» sin consultar la base. El efecto: si un día
+   * faltan las variables de entorno, todos los profesionales que dependen de
+   * su calendario vuelven a ofrecerse como libres, en silencio. Ahora se mira
+   * quién tiene la sincronización encendida y, si no se puede comprobar, se
+   * dice. La consulta es una sola, por id, e indexada.
+   */
   try {
     let consulta = supa
       .from("ed_profesionales")
@@ -67,7 +90,7 @@ export async function calendariosDe(
       .eq("gcal_sync", true);
     if (clienteId) consulta = consulta.eq("cliente_id", clienteId);
     const { data, error } = await consulta;
-    if (error) return []; // migración 221/222 pendiente
+    if (error) return { accesos: [], noVerificables }; // migración 221/222 pendiente
 
     const salida: AccesoProfesional[] = [];
     for (const p of data ?? []) {
@@ -77,7 +100,10 @@ export async function calendariosDe(
 
       if (modo === "oauth") {
         const cifrado = p.gcal_oauth_refresh_cifrado as string | null;
-        if (!cifrado || !oauthConfigurado()) continue;
+        if (!cifrado || !oauthConfigurado()) {
+          noVerificables.push(p.id as string);
+          continue;
+        }
         const refresh = descifrarRefreshToken(cifrado);
         if (!refresh) {
           // Clave rotada o dato corrupto. Antes: `continue` sin rastro y la
@@ -85,6 +111,7 @@ export async function calendariosDe(
           if (p.gcal_ultimo_error !== ERROR_TOKEN_ILEGIBLE) {
             await anotarEstadoSync(p.id as string, ERROR_TOKEN_ILEGIBLE, supa);
           }
+          noVerificables.push(p.id as string);
           continue;
         }
         const tk = await accessTokenDesdeRefresh(refresh);
@@ -94,6 +121,7 @@ export async function calendariosDe(
           if (p.gcal_ultimo_error !== `oauth: ${tk.motivo}`) {
             await anotarEstadoSync(p.id as string, `oauth: ${tk.motivo}`, supa);
           }
+          noVerificables.push(p.id as string);
           continue;
         }
         salida.push({ profesionalId: p.id as string, calendarioId: CALENDARIO_PROPIO, tokenOAuth: tk.datos, teniaError, errorPrevio: (p.gcal_ultimo_error as string | null) ?? null });
@@ -101,16 +129,35 @@ export async function calendariosDe(
       }
 
       // Modo cuenta de servicio (default, incluye filas de antes de la 222).
-      if (!googleCalendarConfigurado()) continue;
+      if (!googleCalendarConfigurado()) {
+        noVerificables.push(p.id as string);
+        continue;
+      }
       const gcalId = (p.gcal_id as string | null)?.trim();
-      if (!gcalId) continue;
+      if (!gcalId) {
+        // Sync encendido sin calendario que mirar: no se puede verificar.
+        noVerificables.push(p.id as string);
+        continue;
+      }
       salida.push({ profesionalId: p.id as string, calendarioId: gcalId, teniaError, errorPrevio: (p.gcal_ultimo_error as string | null) ?? null });
     }
-    return salida;
+    return { accesos: salida, noVerificables };
   } catch {
-    return [];
+    return { accesos: [], noVerificables };
   }
 }
+
+export type OcupadosGoogle = {
+  ocupados: { profesionalId: string; desde: string; hasta: string }[];
+  /**
+   * Profesionales con sincronización encendida cuyo calendario NO se pudo
+   * comprobar en esta consulta. Quien los reciba decide qué hacer; la página
+   * pública no ofrece sus horas (Fase 2): un «no sé» no puede leerse como
+   * «está libre», que es exactamente cómo se producen las dobles reservas
+   * encima del calendario personal del dueño.
+   */
+  noVerificables: string[];
+};
 
 /**
  * Bloques ocupados en los calendarios personales de los profesionales, ya
@@ -124,9 +171,9 @@ export async function ocupadosDesdeGoogle(
   hastaIso: string,
   supa: SupabaseClient = db(),
   clienteId?: string,
-): Promise<{ profesionalId: string; desde: string; hasta: string }[]> {
-  const cals = await calendariosDe(profesionalIds, supa, clienteId);
-  if (cals.length === 0) return [];
+): Promise<OcupadosGoogle> {
+  const { accesos: cals, noVerificables } = await accesosDe(profesionalIds, supa, clienteId);
+  if (cals.length === 0) return { ocupados: [], noVerificables };
 
   const salida: { profesionalId: string; desde: string; hasta: string }[] = [];
 
@@ -142,6 +189,12 @@ export async function ocupadosDesdeGoogle(
   }
   if (porCalendarioServicio.size > 0) {
     const r = await ocupadosDeGoogleDetalle([...porCalendarioServicio.keys()], desdeIso, hastaIso);
+    // Fase 2: si la consulta entera falló, NINGUNO de esos profesionales quedó
+    // verificado; si falló un calendario puntual, solo el suyo.
+    for (const [calendarioId, profs] of porCalendarioServicio) {
+      const falloEste = !r.ok || Boolean(r.erroresPorCalendario[calendarioId]);
+      if (falloEste) noVerificables.push(...profs);
+    }
     for (const o of r.ocupaciones) {
       for (const profesionalId of porCalendarioServicio.get(o.calendarioId) ?? []) {
         salida.push({ profesionalId, desde: o.desde, hasta: o.hasta });
@@ -168,6 +221,7 @@ export async function ocupadosDesdeGoogle(
     conOAuth.map(async (c) => {
       const r = await ocupadosDeUnCalendario(c.calendarioId, desdeIso, hastaIso, c.tokenOAuth!);
       if (!r.ok) {
+        noVerificables.push(c.profesionalId);
         // Que quede ESCRITO y visible en la pantalla de configuración. Un fallo
         // acá no rompe nada a la vista —la agenda sigue ofreciendo horas—, y
         // ese es justamente el problema: sin dejar rastro, el dueño descubre
@@ -184,7 +238,7 @@ export async function ocupadosDesdeGoogle(
     }),
   );
 
-  return salida;
+  return { ocupados: salida, noVerificables: [...new Set(noVerificables)] };
 }
 
 async function anotarEstadoSync(
