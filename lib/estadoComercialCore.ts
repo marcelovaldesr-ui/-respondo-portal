@@ -165,6 +165,11 @@ function diasDesde(iso: string | null | undefined, ahora: number): number | null
   return Number.isFinite(t) ? Math.floor((ahora - t) / DIA) : null;
 }
 
+function horasDesde(iso: string | null | undefined, ahora: number): number | null {
+  const t = ms(iso);
+  return Number.isFinite(t) ? (ahora - t) / 3_600_000 : null;
+}
+
 function masReciente<T>(filas: readonly T[], fecha: (x: T) => string | null): T | null {
   let mejor: T | null = null;
   let tMejor = -Infinity;
@@ -271,7 +276,18 @@ export type MotivoAtencion =
   | "cita_por_cerrar";
 
 export type Prioridad = "urgente" | "hoy" | "pendiente";
-export type GrupoAtencion = Prioridad | "antiguo";
+export type GrupoAtencion = Prioridad | "esta_semana" | "antiguo";
+
+/**
+ * «Para hoy» tiene que querer decir HOY (11-sep, mirando Impresora en vivo).
+ *
+ * Con la prioridad sola, «Para hoy» juntaba 75 conversaciones, casi todas de 4
+ * a 7 días: el rótulo mentía y el bloque dejaba de servir para decidir qué
+ * hacer ahora. La prioridad sigue saliendo de la señal; lo que el reloj decide
+ * es en qué montón cae: hasta 24 h es hoy, de ahí a 7 días es esta semana, más
+ * allá es lo antiguo (que ya estaba plegado).
+ */
+export const HORAS_HOY = 24;
 
 /**
  * PRIORIDAD POR SEÑAL, NO POR PUNTAJE.
@@ -301,7 +317,39 @@ export const PRIORIDAD: Record<MotivoAtencion, Prioridad> = {
   cita_por_cerrar: "pendiente",
 };
 
-const RANGO_GRUPO: Record<GrupoAtencion, number> = { urgente: 0, hoy: 1, pendiente: 2, antiguo: 3 };
+// Un cliente esperando desde hace tres días pesa más que una decisión del
+// negocio sin nadie en línea: «esta semana» va antes que «por decidir».
+const RANGO_GRUPO: Record<GrupoAtencion, number> = { urgente: 0, hoy: 1, esta_semana: 2, pendiente: 3, antiguo: 4 };
+
+/**
+ * Orden DENTRO de una misma conversación, para elegir qué se muestra como
+ * «siguiente acción». Visto en vivo: un cliente que dijo «ahí aboné $10.000»
+ * salía como «Responder» y el «confirma el pago» quedaba de nota al pie. La
+ * plata por verificar manda sobre el «escribió y espera».
+ *
+ * Solo para el principal: la LISTA de Inicio se sigue ordenando por antigüedad
+ * dentro de cada grupo (compararItems), que es lo justo entre conversaciones.
+ */
+const RANGO_MOTIVO: Record<MotivoAtencion, number> = {
+  cliente_molesto: 0,
+  pidio_persona: 1,
+  tema_delicado: 2,
+  pago_por_confirmar: 3,
+  problema_tecnico: 4,
+  asistente_no_pudo: 5,
+  cliente_espera: 6,
+  falta_pago: 7,
+  cita_por_cerrar: 8,
+  propuesta_beto: 9,
+};
+
+export function compararEnElChat(a: ItemAtencion, b: ItemAtencion): number {
+  const g = RANGO_GRUPO[grupoDe(a)] - RANGO_GRUPO[grupoDe(b)];
+  if (g) return g;
+  const m = RANGO_MOTIVO[a.motivo] - RANGO_MOTIVO[b.motivo];
+  if (m) return m;
+  return compararItems(a, b);
+}
 
 export type ItemAtencion = {
   motivo: MotivoAtencion;
@@ -310,6 +358,8 @@ export type ItemAtencion = {
   desde: string | null;
   prioridad: Prioridad;
   antiguo: boolean;
+  /** Horas esperando. Null si la fuente no guarda fecha (ver `desde`). */
+  horas: number | null;
 };
 
 export type Atencion = {
@@ -320,7 +370,9 @@ export type Atencion = {
 };
 
 export function grupoDe(item: ItemAtencion): GrupoAtencion {
-  return item.antiguo ? "antiguo" : item.prioridad;
+  if (item.antiguo) return "antiguo";
+  if (item.prioridad === "hoy" && item.horas !== null && item.horas > HORAS_HOY) return "esta_semana";
+  return item.prioridad;
 }
 
 export function compararItems(a: ItemAtencion, b: ItemAtencion): number {
@@ -337,7 +389,8 @@ export function atencionRequerida(h: HechosContacto, ctx: ContextoNegocio): Aten
   const items: ItemAtencion[] = [];
   const agregar = (motivo: MotivoAtencion, label: string, desde: string | null) => {
     const d = diasDesde(desde, ctx.ahora);
-    items.push({ motivo, label, desde, prioridad: PRIORIDAD[motivo], antiguo: d !== null && d > DIAS_ANTIGUO });
+    const horas = horasDesde(desde, ctx.ahora);
+    items.push({ motivo, label, desde, prioridad: PRIORIDAD[motivo], antiguo: d !== null && d > DIAS_ANTIGUO, horas });
   };
 
   // 1. Derivaciones abiertas: una fila por clase, con la fecha de la más antigua.
@@ -390,7 +443,7 @@ export function atencionRequerida(h: HechosContacto, ctx: ContextoNegocio): Aten
     .sort((a, b) => ms(b.fin) - ms(a.fin))[0];
   if (pasada) agregar("cita_por_cerrar", "La cita ya pasó: marca si vino", pasada.fin);
 
-  items.sort(compararItems);
+  items.sort(compararEnElChat);
   const principal = items[0] ?? null;
   return { requiere: items.length > 0, items, principal, grupo: principal ? grupoDe(principal) : null };
 }

@@ -199,6 +199,41 @@ test("atención: «Ya lo atendí» saca al cliente que espera hasta que vuelva a
   assert.equal(atencionRequerida({ ...h, atendidaEn: haceMin(90) }, DUENO).principal.motivo, "cliente_espera");
 });
 
+test("atención: «para hoy» es de hoy; más viejo cae en «esta semana»", () => {
+  const base = { modo: "humano", ultimoMensajeRol: "cliente" };
+  const hoy = atencionRequerida(hechos({ ...base, ultimoMensajeEn: haceMin(90) }), DUENO);
+  assert.equal(hoy.grupo, "hoy");
+  const semana = atencionRequerida(hechos({ ...base, ultimoMensajeEn: haceDias(3) }), DUENO);
+  assert.equal(semana.grupo, "esta_semana");
+  assert.equal(semana.principal.prioridad, "hoy", "la prioridad no cambia: cambia el montón");
+  const viejo = atencionRequerida(hechos({ ...base, ultimoMensajeEn: haceDias(9) }), DUENO);
+  assert.equal(viejo.grupo, "antiguo");
+  // Lo urgente sigue urgente aunque lleve dos días.
+  const urgente = atencionRequerida(
+    hechos({ derivaciones: [{ trigger: "pedido_explicito", resumen: null, creadoEn: haceDias(2) }] }),
+    DUENO,
+  );
+  assert.equal(urgente.grupo, "urgente");
+});
+
+test("atención: con plata por verificar, la siguiente acción es confirmar el pago", () => {
+  // Caso real (Impresora, 11-sep): el cliente dijo «ahí aboné $10.000» y el
+  // panel ofrecía «Responder», dejando el pago de nota al pie.
+  const a = atencionRequerida(
+    hechos({
+      modo: "humano",
+      ultimoMensajeRol: "cliente",
+      ultimoMensajeEn: haceMin(120),
+      etiquetas: ["pago_por_confirmar"],
+      resultados: [{ tipo: "venta_confirmada", creadoEn: haceMin(125), puntaje: null }],
+    }),
+    DUENO,
+  );
+  assert.equal(a.principal.motivo, "pago_por_confirmar");
+  assert.deepEqual(a.items.map((i) => i.motivo), ["pago_por_confirmar", "cliente_espera"]);
+  assert.equal(siguienteAccion(hechos({ etiquetas: ["pago_por_confirmar"] }), DUENO, a).tipo, "confirmar_pago");
+});
+
 test("atención: sin señales, no requiere nada", () => {
   const a = atencionRequerida(hechos(), DUENO);
   assert.equal(a.requiere, false);

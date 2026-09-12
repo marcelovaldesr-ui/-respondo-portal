@@ -302,7 +302,7 @@ export async function panoramaInicio(
   const empIds = empleados.map((e) => e.id);
   const vacio: PanoramaInicio = {
     atencion: [],
-    conteoAtencion: { urgente: 0, hoy: 0, pendiente: 0, antiguo: 0 },
+    conteoAtencion: { urgente: 0, hoy: 0, esta_semana: 0, pendiente: 0, antiguo: 0 },
     derivadas: 0,
     oportunidades: [],
     conteoOportunidades: {},
@@ -397,7 +397,7 @@ export async function panoramaInicio(
 
   const atencion: FilaAtencion[] = [];
   const oportunidades: FilaOportunidad[] = [];
-  const conteoAtencion: Record<GrupoAtencion, number> = { urgente: 0, hoy: 0, pendiente: 0, antiguo: 0 };
+  const conteoAtencion: Record<GrupoAtencion, number> = { urgente: 0, hoy: 0, esta_semana: 0, pendiente: 0, antiguo: 0 };
   const conteoOportunidades: Partial<Record<Oportunidad["tipo"], number>> = {};
 
   for (const h of hechos.values()) {

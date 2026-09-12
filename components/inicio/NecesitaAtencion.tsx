@@ -169,7 +169,7 @@ export default function NecesitaAtencion({
                 <strong className="cifra" style={{ color: "var(--tinta)" }}>
                   {recientes.length - VISIBLES}
                 </strong>{" "}
-                más para hoy o por decidir
+                más por revisar
               </span>
               <span aria-hidden>▾</span>
             </summary>

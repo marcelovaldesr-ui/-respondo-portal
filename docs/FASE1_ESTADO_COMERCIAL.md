@@ -74,12 +74,17 @@ Inicio (la tabla no se borra, por si la usa algo fuera de mi alcance). En
 
 "Necesita tu atención" no es otra bandeja: es lo que el NEGOCIO tiene que hacer.
 
-| Prioridad | Motivos |
+| Grupo | Qué entra |
 |---|---|
 | Urgente | cliente molesto, pidió hablar con una persona |
-| Para hoy | tema delicado, problema técnico, el asistente no pudo, cliente esperando respuesta, dice que pagó (falta confirmar) |
+| Para hoy | tema delicado, problema técnico, el asistente no pudo, cliente esperando, dice que pagó — **de las últimas 24 horas** |
+| Esta semana | lo mismo, entre 1 y 7 días |
 | Por decidir | sugerencia de Beto por aprobar, falta el pago, cita que pasó sin cerrar |
 | Más de 7 días | cualquiera de los anteriores con más de 7 días encima |
+
+La prioridad la da la señal; el reloj solo decide en qué montón cae. Se separó
+«Esta semana» al mirar Impresora en producción: «Para hoy» juntaba 75
+conversaciones, casi todas de 4 a 7 días, y el rótulo dejaba de ser cierto.
 
 Detalles que importan:
 
@@ -93,6 +98,9 @@ Detalles que importan:
   conversación deja de pedir atención hasta que el cliente vuelva a escribir.
 - Dos derivaciones de la misma clase son UNA fila, con la fecha de la más
   antigua.
+- Cuando una conversación tiene varias cosas pendientes, la que se ofrece como
+  siguiente acción es la de más peso, no la más antigua: si el cliente dijo que
+  pagó, la acción es **confirmar el pago**, no «responder».
 
 **Siguiente acción** (determinista, una por conversación): responder ·
 confirmar pago · revisar sugerencia · enviar cobro · ver cita · devolver al

@@ -124,7 +124,7 @@ test("panorama: agrupa por urgencia, separa lo antiguo, no mezcla negocios", asy
   assert.equal(porChat.C.atencion.principal.motivo, "pago_por_confirmar");
   assert.equal(porChat.C.accion.tipo, "confirmar_pago");
   assert.equal(porChat.E.atencion.grupo, "antiguo");
-  assert.deepEqual(p.conteoAtencion, { urgente: 1, hoy: 2, pendiente: 0, antiguo: 1 });
+  assert.deepEqual(p.conteoAtencion, { urgente: 1, hoy: 2, esta_semana: 0, pendiente: 0, antiguo: 1 });
   assert.equal(p.atencion[0].chatId, "A", "lo urgente primero");
   // La derivación de un empleado de otro negocio no cuenta (ni su «molesto»).
   assert.equal(porChat.A.atencion.items.some((i) => i.motivo === "cliente_molesto"), false);

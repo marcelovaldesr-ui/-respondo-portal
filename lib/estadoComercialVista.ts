@@ -40,12 +40,13 @@ export function haceCuanto(iso: string | null | undefined, ahora: number = Date.
 export const GRUPOS_ATENCION: { valor: GrupoAtencion; label: string; tono: Tono }[] = [
   { valor: "urgente", label: "Urgente", tono: "peligro" },
   { valor: "hoy", label: "Para hoy", tono: "alerta" },
+  { valor: "esta_semana", label: "Esta semana", tono: "cian" },
   { valor: "pendiente", label: "Por decidir", tono: "azul" },
   { valor: "antiguo", label: "Más de 7 días", tono: "neutro" },
 ];
 
 export function metaGrupo(g: GrupoAtencion) {
-  return GRUPOS_ATENCION.find((x) => x.valor === g) ?? GRUPOS_ATENCION[3];
+  return GRUPOS_ATENCION.find((x) => x.valor === g) ?? GRUPOS_ATENCION[GRUPOS_ATENCION.length - 1];
 }
 
 /** Estado de pago de la CONVERSACIÓN. */
