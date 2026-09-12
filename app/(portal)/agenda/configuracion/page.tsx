@@ -1,6 +1,5 @@
 import Link from "next/link";
 import { estadoConexionGoogle } from "@/lib/estadoGoogleCore";
-import { headers } from "next/headers";
 import { exigirPermisoPortal } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { formatearSlot } from "@/lib/agendaCore";
@@ -10,6 +9,7 @@ import CampoCopiar from "@/components/CampoCopiar";
 import FormularioAgregar from "@/components/FormularioAgregar";
 import HorarioSemanal from "@/components/HorarioSemanal";
 import FichaServicioConfig, { type CampoConfig } from "@/components/FichaServicioConfig";
+import { origenCanonico } from "@/lib/origenes";
 import {
   crearServicio,
   alternarServicio,
@@ -196,10 +196,10 @@ export default async function ConfiguracionAgenda({
   const serviciosConCitas = new Set((usados ?? []).map((u) => u.servicio_id as string));
   const profesionalesConCitas = new Set((usados ?? []).map((u) => u.profesional_id as string));
 
-  const cabeceras = await headers();
-  const host = cabeceras.get("x-forwarded-host") ?? cabeceras.get("host") ?? "";
-  const protocolo = host.startsWith("localhost") || host.startsWith("127.") ? "http" : "https";
-  const base = host ? `${protocolo}://${host}` : "";
+  // (Fase 1) Enlaces que se copian y se comparten (iCal con token, reserva
+  // pública): siempre del origen canónico, no del Host con que se abrió la
+  // página. Abierta desde un preview, se copiaba un enlace al preview.
+  const base = origenCanonico();
   const icalToken = (cliente as { ical_token?: string } | null)?.ical_token ?? null;
   const urlIcal = icalToken && base ? `${base}/api/agenda/ical/${icalToken}` : null;
   const urlPublica = cliente?.slug && base ? `${base}/reservar/${cliente.slug}` : null;

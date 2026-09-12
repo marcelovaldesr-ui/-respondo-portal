@@ -1,3 +1,4 @@
+import { origenCanonico } from "@/lib/origenes";
 import {
   createCipheriv,
   createDecipheriv,
@@ -35,10 +36,8 @@ const TOKEN_URL = "https://oauth2.googleapis.com/token";
 // Fijo a propósito (no derivado del request): tiene que ser BYTE A BYTE el
 // mismo URI que se registró en Google Cloud → Clientes → URIs de
 // redireccionamiento, o Google rechaza el intercambio con redirect_uri_mismatch.
-const URL_PORTAL = (process.env.NEXT_PUBLIC_SITE_URL || "https://respondo-portal.vercel.app").replace(
-  /\/+$/,
-  "",
-);
+// (Fase 1) Origen canónico explícito: nunca el Host de la petición ni un preview.
+const URL_PORTAL = origenCanonico();
 const REDIRECT_URI = `${URL_PORTAL}/api/google/callback`;
 
 /**

@@ -4,6 +4,7 @@ import { cerrarEscalacionesPendientes } from "@/lib/escalaciones";
 import { ETIQUETAS_ABIERTAS, conEtiqueta, etiquetasTrasCierre, sinEtiqueta } from "@/lib/etiquetasCiclo";
 import { notificarConTope } from "@/lib/puenteSalida";
 import { ultimaSalidaPorChat } from "@/lib/ultimaSalida";
+import { datosConPerdidaAnterior } from "@/lib/etapasCore";
 
 /**
  * RECONCILIAR LO QUE LAS ETIQUETAS DICEN CON LO QUE DE VERDAD PASÓ.
@@ -170,7 +171,7 @@ async function revisarCerradas(
   // automático: lo que movió una persona no se toca, ni para reabrirlo.
   const { data: conActividad } = await supa
     .from("ed_contactos")
-    .select("cliente_id, chat_id, nombre, etapa, etapa_en, etiquetas, ultimo_mensaje_en, ultimo_mensaje_rol")
+    .select("cliente_id, chat_id, nombre, etapa, etapa_en, etapa_motivo, etiquetas, datos, ultimo_mensaje_en, ultimo_mensaje_rol")
     .eq("etapa", "perdido")
     .eq("etapa_manual", false)
     .eq("ultimo_mensaje_rol", "cliente")
@@ -196,6 +197,9 @@ async function revisarCerradas(
         etapa_motivo: "volvio_a_escribir",
         etapa_en: new Date().toISOString(),
         etiquetas,
+        // (Fase 1) Se conserva POR QUÉ estaba perdido (hoy, casi siempre
+        // «sin respuesta»): la ficha lo muestra y nadie lo confunde con un «no».
+        datos: datosConPerdidaAnterior(c.datos, c.etapa_motivo as string | null, etapaEn),
       })
       .eq("cliente_id", c.cliente_id)
       .eq("chat_id", c.chat_id);

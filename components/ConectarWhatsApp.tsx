@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { esOrigenFacebook } from "@/lib/origenes";
 
 /**
  * Botón "Conectar WhatsApp" — EMBEDDED SIGNUP de Meta (Respondo como Tech
@@ -74,7 +75,8 @@ export default function ConectarWhatsApp() {
   // Escuchar los eventos del popup del Embedded Signup (sessionInfo v3).
   useEffect(() => {
     function onMessage(ev: MessageEvent) {
-      if (!ev.origin.endsWith("facebook.com")) return;
+      // (Fase 1) Dominio exacto: `endsWith("facebook.com")` aceptaba evilfacebook.com.
+      if (!esOrigenFacebook(ev.origin)) return;
       try {
         const data = typeof ev.data === "string" ? JSON.parse(ev.data) : ev.data;
         if (data?.type !== "WA_EMBEDDED_SIGNUP") return;

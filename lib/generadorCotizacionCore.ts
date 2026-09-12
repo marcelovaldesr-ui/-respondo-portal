@@ -23,9 +23,13 @@
  * envío), y no se puede evitar: se probaron dos redacciones y las movió las dos
  * (ver `lib/plantillas.ts`). Por eso acá hay topes de verdad, no decorativos.
  *
- * ⚠️ SIN IMPORTS A PROPÓSITO — `node --test` puede cargarlo. Mismo patrón que
- * `generadorCore.ts`, `parserMeta.ts` y `ventana24Regla.ts`.
+ * ⚠️ SOLO IMPORTS PUROS — `node --test` puede cargarlo. Mismo patrón que
+ * `generadorCore.ts`, `parserMeta.ts` y `ventana24Regla.ts`. Desde Fase 1
+ * importa `lib/etapasCore.ts` (puro) para que «perdido por silencio» sea una
+ * sola regla en todo el producto.
  */
+
+import { MOTIVO_SILENCIO, esPerdidoPorSilencio } from "@/lib/etapasCore";
 
 /**
  * Días de silencio antes de insistir.
@@ -45,8 +49,8 @@ export const DIAS_SIN_REPETIR = 45;
 export const ETIQUETA = "cotizacion";
 /** Etapa del embudo equivalente. */
 export const ETAPA = "cotizado";
-/** Mismo valor que MOTIVO_SILENCIO de lib/embudo.ts (acá sin imports a propósito). */
-export const MOTIVO_PERDIDO_SILENCIO = "sin_respuesta";
+/** Mismo valor que MOTIVO_SILENCIO de lib/etapasCore.ts (fuente única, pura). */
+export const MOTIVO_PERDIDO_SILENCIO = MOTIVO_SILENCIO;
 
 export type Candidato = {
   chatId: string;
@@ -109,7 +113,7 @@ export function decidirCotizacion(
    * abrir /embudo), el choque era sistemático. Un perdido por silencio pasa
    * la reja; el juez lee el hilo y decide si de verdad hubo una cotización.
    */
-  const perdidoPorSilencio = c.etapa === "perdido" && c.etapaMotivo === MOTIVO_PERDIDO_SILENCIO;
+  const perdidoPorSilencio = esPerdidoPorSilencio(c.etapa, c.etapaMotivo);
   const esCotizacion = c.etiquetas.includes(ETIQUETA) || c.etapa === ETAPA || perdidoPorSilencio;
   if (!esCotizacion) return { enviar: false, motivo: "no hay cotización de por medio" };
 

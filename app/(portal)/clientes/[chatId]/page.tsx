@@ -2,7 +2,8 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { exigirUsuarioPortal } from "@/lib/auth";
 import { fichaCliente, type EventoCliente } from "@/lib/clientes";
-import { metaEtapa } from "@/lib/embudo";
+import { etiquetaMotivoEtapa } from "@/lib/etapasCore";
+import { EtapaEstado, Estado } from "@/components/estado/Estados";
 import { metaEtiqueta } from "@/lib/etiquetas";
 import { fechaLarga } from "@/lib/fechas";
 import FichaClienteEditor from "@/components/FichaClienteEditor";
@@ -23,7 +24,6 @@ export default async function Ficha({ params }: { params: Promise<{ chatId: stri
   const f = await fichaCliente(usuario.clienteId, chatId);
   if (!f) notFound();
 
-  const me = metaEtapa(f.etapa);
 
   return (
     <main className="px-5 py-6 sm:px-7 lg:px-8">
@@ -38,10 +38,12 @@ export default async function Ficha({ params }: { params: Promise<{ chatId: stri
             <span className="text-[12.5px]" style={{ color: "var(--muted)" }}>
               +{f.chatId}
             </span>
-            <span className="pildora" style={{ background: me.fondo, color: me.color }}>
-              {me.label}
-            </span>
-            {f.esperandoHumano && <span className="pildora-alerta">Te espera</span>}
+            <EtapaEstado etapa={f.etapa} motivo={etiquetaMotivoEtapa(f.etapa, f.etapaMotivo)} />
+            {f.esperandoHumano && (
+              <Estado tono="peligro" punto>
+                Te espera
+              </Estado>
+            )}
             {f.etiquetas.map((v) => {
               const m = metaEtiqueta(v);
               return (

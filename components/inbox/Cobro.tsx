@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { cobrarEnChat } from "@/app/(portal)/conversaciones/accionesPagos";
 import { MONTO_MAX, MONTO_MIN, REF_EXTERNA_MAX, formatearMonto } from "@/lib/pagosCore";
 
@@ -39,6 +39,12 @@ export function Cobro({
   etiquetaRef?: string | null;
 }) {
   const [abierto, setAbierto] = useState(false);
+  // «Enviar cobro» desde la ficha lateral (Fase 1) abre este mismo formulario.
+  useEffect(() => {
+    const h = () => setAbierto(true);
+    window.addEventListener("respondo:abrir-cobro", h);
+    return () => window.removeEventListener("respondo:abrir-cobro", h);
+  }, []);
   const [monto, setMonto] = useState("");
   const [concepto, setConcepto] = useState(concepto0 ?? "");
   const [refExterna, setRefExterna] = useState("");

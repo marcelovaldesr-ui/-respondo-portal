@@ -253,6 +253,7 @@ export default function InboxConversacion({
 
   function setModoServidor(destino: "bot" | "humano") {
     setCambiando(true);
+    const anterior = modo;
     setModo(destino); // optimista: se refleja al tiro
     const fd = new FormData();
     fd.set("empleadoId", empleadoId);
@@ -260,12 +261,41 @@ export default function InboxConversacion({
     fd.set("modo", destino);
     startTransition(async () => {
       try {
-        await cambiarModo(fd);
+        const r = await cambiarModo(fd);
+        // (Fase 1) Si el servidor no lo aceptó, se vuelve atrás y se dice.
+        if (r && r.ok === false) {
+          setModo(anterior);
+          setAviso(r.error ?? "No se pudo cambiar quién atiende este chat.");
+        }
+      } catch {
+        setModo(anterior);
+        setAviso("No se pudo cambiar quién atiende este chat.");
       } finally {
         setCambiando(false);
+        // La ficha lateral recalcula la atención y la siguiente acción.
+        window.dispatchEvent(new Event("respondo:detalle-cambio"));
       }
     });
   }
+
+  /**
+   * La ficha lateral puede pedir «Devolver a Tino» o «Tomar el control». Pasa
+   * por ESTA función y no por su cuenta: así la barra, el optimismo y el
+   * servidor no pueden quedar desincronizados (Fase 1).
+   */
+  const setModoRef = useRef(setModoServidor);
+  useEffect(() => {
+    setModoRef.current = setModoServidor;
+  });
+  useEffect(() => {
+    const h = (ev: Event) => {
+      const det = (ev as CustomEvent<{ chatId?: string; modo?: string }>).detail;
+      if (!det || det.chatId !== chatId) return;
+      if (det.modo === "bot" || det.modo === "humano") setModoRef.current(det.modo);
+    };
+    window.addEventListener("respondo:cambiar-modo", h);
+    return () => window.removeEventListener("respondo:cambiar-modo", h);
+  }, [chatId]);
 
   /** Enviar texto: se dibuja al instante y se confirma o se revierte después. */
   const enviarTexto = useCallback(

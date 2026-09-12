@@ -38,6 +38,8 @@ export type PropuestaConContacto = Propuesta & {
   nombre: string;
   diasEsperando: number | null;
   ultimoMensaje: string;
+  /** Con quién abrir la conversación (Fase 1): sin esto el enlace no abría nada. */
+  empleadoId: string | null;
 };
 
 export type ModoSeguimiento = "aprobacion" | "automatico";
@@ -199,7 +201,7 @@ export async function listarPropuestas(p: {
   const supa = p.supa ?? db();
   const { data } = await supa
     .from("ed_propuestas_seguimiento")
-    .select("id, chat_id, tipo, cotizado, motivo_juez, evidencia, estado, creado_en")
+    .select("id, empleado_id, chat_id, tipo, cotizado, motivo_juez, evidencia, estado, creado_en")
     .eq("cliente_id", p.clienteId)
     .eq("estado", p.estado ?? "propuesto")
     .order("creado_en", { ascending: false })
@@ -217,7 +219,7 @@ export async function listarPropuestas(p: {
   const chatIds = filas.map((f) => f.chat_id);
   const { data: contactos } = await supa
     .from("ed_contactos")
-    .select("chat_id, nombre, ultimo_mensaje_en, ultimo_mensaje_texto, ultimo_mensaje_rol")
+    .select("chat_id, nombre, ultimo_mensaje_en, ultimo_mensaje_texto, ultimo_mensaje_rol, ultimo_empleado_id")
     .eq("cliente_id", p.clienteId)
     .in("chat_id", chatIds);
 
@@ -232,6 +234,7 @@ export async function listarPropuestas(p: {
     return {
       ...f,
       nombre: ((c?.nombre as string | null) ?? "").trim(),
+      empleadoId: ((c?.ultimo_empleado_id as string | null) ?? (f as { empleado_id?: string | null }).empleado_id ?? null) || null,
       diasEsperando: ultimoEn
         ? Math.floor((Date.now() - new Date(ultimoEn).getTime()) / 86_400_000)
         : null,

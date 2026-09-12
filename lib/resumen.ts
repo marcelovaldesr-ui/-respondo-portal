@@ -1,6 +1,6 @@
 import { db } from "@/lib/db";
 import { COL_DESCARTADO } from "@/lib/seguimientosCore";
-import { contarEsperando, leerTodo, leerTodoParalelo, unaPorChat } from "@/lib/metricas";
+import { leerTodo, leerTodoParalelo } from "@/lib/metricas";
 
 /**
  * Capa de datos del portal. TODO se filtra por clienteId — es la única barrera
@@ -54,15 +54,6 @@ export type ResumenEmpleado = {
   montoRecuperado: number;
 };
 
-export type MetricaPeriodo = {
-  periodo: string;
-  esBasal: boolean;
-  conversaciones: number | null;
-  leadsCapturados: number | null;
-  escalaciones: number | null;
-  resueltasSinHumanoPct: number | null;
-  tiempoRespuestaSeg: number | null;
-};
 
 // La ventana "este mes" se calcula con el calendario chileno, no con UTC.
 import { inicioDeMesChile } from "@/lib/fechas";
@@ -211,118 +202,11 @@ export function formatearCLP(monto: number): string {
   return "$" + monto.toLocaleString("es-CL", { maximumFractionDigits: 0 });
 }
 
-/** Métricas mensuales del cliente (incluye el mes basal, previo a activar). */
-export async function metricasCliente(
-  clienteId: string,
-): Promise<{ actual: MetricaPeriodo | null; comparacion: MetricaPeriodo | null }> {
-  const { data } = await db()
-    .from("ed_metricas")
-    .select(
-      "periodo, es_basal, conversaciones, leads_capturados, escalaciones, resueltas_sin_humano_pct, tiempo_respuesta_seg",
-    )
-    .eq("cliente_id", clienteId)
-    .order("periodo", { ascending: false });
-
-  const filas: MetricaPeriodo[] = (data ?? []).map((m) => ({
-    periodo: m.periodo as string,
-    esBasal: Boolean(m.es_basal),
-    conversaciones: m.conversaciones as number | null,
-    leadsCapturados: m.leads_capturados as number | null,
-    escalaciones: m.escalaciones as number | null,
-    resueltasSinHumanoPct: m.resueltas_sin_humano_pct as number | null,
-    tiempoRespuestaSeg: m.tiempo_respuesta_seg as number | null,
-  }));
-
-  const actual = filas.find((f) => !f.esBasal) ?? null;
-  // Comparamos contra el mes basal (cómo se atendía antes de Respondo); si no
-  // hay basal, contra el período inmediatamente anterior al actual.
-  const basal = filas.find((f) => f.esBasal) ?? null;
-  const anterior = actual
-    ? filas.find((f) => f.periodo < actual.periodo) ?? null
-    : null;
-
-  return { actual, comparacion: basal ?? anterior };
-}
-
 /**
- * QUIÉN ESTÁ ESPERANDO — las conversaciones que el asistente derivó y nadie ha
- * tomado todavía.
- *
- * La portada antes mostraba solo el número ("3 conversaciones te están
- * esperando"). Un número no permite actuar: obliga a ir a la bandeja, buscar
- * cuáles son y recién ahí decidir. Con nombre, antigüedad y enlace directo, la
- * portada deja de informar y empieza a servir.
- *
- * Se consulta ed_escalaciones directo, filtrando por los empleados del cliente
- * —la barrera de acceso de siempre— y se resuelve el nombre del contacto en una
- * segunda consulta acotada a esos chats. Dos consultas chicas: no depende del
- * resumen de contacto (migración 250) ni recorre mensajes.
+ * (Fase 1) Aquí vivían `metricasCliente` —lectora de ed_metricas, tabla que
+ * ningún proceso escribe— y `esperandoHumano`, reemplazada por el panorama del
+ * estado comercial (lib/estadoComercial.ts). Ver docs/FASE1_ESTADO_COMERCIAL.md.
  */
-export type ItemEsperando = {
-  empleadoId: string;
-  chatId: string;
-  contacto: string;
-  motivo: string;
-  resumen: string;
-  desde: string;
-};
-
-export async function esperandoHumano(
-  clienteId: string,
-  limite = 4,
-): Promise<{ items: ItemEsperando[]; total: number }> {
-  const supa = db();
-
-  const { data: empleados } = await supa
-    .from("ed_empleados")
-    .select("id")
-    .eq("cliente_id", clienteId);
-  const ids = (empleados ?? []).map((e) => e.id as string);
-  if (!ids.length) return { items: [], total: 0 };
-
-  /**
-   * Total = CONVERSACIONES esperando, con la misma función que el menú y la
-   * bandeja (Fase 0: antes eran filas de escalaciones, 53 vs 52). La lista se
-   * deduplica por chat: un chat con dos derivaciones abiertas aparece una vez,
-   * con la más antigua.
-   */
-  const [total, { data }] = await Promise.all([
-    contarEsperando(clienteId, ids, supa),
-    supa
-      .from("ed_escalaciones")
-      .select("empleado_id, chat_id, trigger, resumen, creado_en")
-      .in("empleado_id", ids)
-      .is("atendida_en", null)
-      .order("creado_en", { ascending: true }) // la más antigua primero: es la que peor está
-      .limit(limite * 5),
-  ]);
-
-  const filas = unaPorChat((data ?? []) as { empleado_id: string; chat_id: string; trigger: string | null; resumen: string | null; creado_en: string }[]).slice(0, limite);
-  if (!filas.length) return { items: [], total };
-
-  // Nombre del contacto, solo para los chats que se van a mostrar.
-  const chats = [...new Set(filas.map((f) => f.chat_id as string))];
-  const { data: contactos } = await supa
-    .from("ed_contactos")
-    .select("chat_id, nombre")
-    .eq("cliente_id", clienteId)
-    .in("chat_id", chats);
-  const nombre = new Map<string, string>(
-    (contactos ?? []).map((c) => [c.chat_id as string, (c.nombre as string | null) ?? ""]),
-  );
-
-  return {
-    total: Math.max(total, filas.length),
-    items: filas.map((f) => ({
-      empleadoId: f.empleado_id as string,
-      chatId: f.chat_id as string,
-      contacto: nombre.get(f.chat_id as string) || `+${f.chat_id}`,
-      motivo: (f.trigger as string) ?? "",
-      resumen: (f.resumen as string) ?? "",
-      desde: f.creado_en as string,
-    })),
-  };
-}
 
 /** "90 min", "25 s" — el número que más impresiona al dueño. */
 export function formatearDuracion(seg: number | null): string {

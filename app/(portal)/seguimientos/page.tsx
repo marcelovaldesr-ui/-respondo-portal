@@ -72,13 +72,15 @@ export default async function PaginaSeguimientos({
       <div className="mt-4">
         {estado === "propuesto" && !tienePermiso(usuario, "aprobar_mensajes_pagados") && propuestas.length > 0 && (
           <p className="mb-2 text-[13px]" style={{ color: "var(--muted)" }}>
-            Cada mensaje tiene costo, así que solo el dueño del negocio puede aprobarlos.
+            Cada mensaje tiene costo, así que solo el dueño del negocio puede aprobarlos. Tú puedes descartar
+            las que no correspondan.
           </p>
         )}
         <PropuestasLista
           propuestas={propuestas}
           negocio={usuario.clienteNombre}
-          soloLectura={estado !== "propuesto" || !tienePermiso(usuario, "aprobar_mensajes_pagados")}
+          puedeAprobar={estado === "propuesto" && tienePermiso(usuario, "aprobar_mensajes_pagados")}
+          puedeDescartar={estado === "propuesto" && tienePermiso(usuario, "gestionar_embudo")}
         />
       </div>
     </main>

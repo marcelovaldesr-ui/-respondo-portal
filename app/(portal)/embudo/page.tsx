@@ -92,7 +92,7 @@ export default async function Embudo({
             </span>
             {esperan > 0 && (
               <span style={{ color: "var(--muted)" }}>
-                <strong style={{ color: "var(--alerta)" }}>{esperan}</strong> te esperan
+                <strong style={{ color: "var(--peligro)" }}>{esperan}</strong> te esperan
               </span>
             )}
             <span style={{ color: "var(--muted)" }}>
@@ -142,7 +142,7 @@ export default async function Embudo({
                       ) : (
                         <>
                           {items.slice(0, TOPE_COLUMNA).map((t) => (
-                            <TarjetaEmbudo key={t.chatId} {...t} empleadoId={empleadoId} />
+                            <TarjetaEmbudo key={t.chatId} {...t} empleadoId={t.empleadoId ?? empleadoId} />
                           ))}
                           {items.length > TOPE_COLUMNA && (
                             <Link

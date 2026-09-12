@@ -5,6 +5,8 @@ import Link from "next/link";
 import { marcarPago } from "@/app/(portal)/conversaciones/accionesPagos";
 import { formatearMonto } from "@/lib/pagosCore";
 import type { PagoListado } from "@/lib/pagos";
+import { ESTADO_COBRO } from "@/lib/estadoComercialVista";
+import { Estado } from "@/components/estado/Estados";
 
 /**
  * LA LISTA GLOBAL DE COBROS — interactiva.
@@ -14,11 +16,7 @@ import type { PagoListado } from "@/lib/pagos";
  * el update condicionado. El que llega segundo ve el aviso, no un dato falso.
  */
 
-const ETIQUETA: Record<PagoListado["estado"], { txt: string; color: string; fondo: string }> = {
-  pendiente: { txt: "pendiente", color: "#92400E", fondo: "#FEF3C7" },
-  pagado: { txt: "pagado", color: "#166534", fondo: "#DCFCE7" },
-  anulado: { txt: "anulado", color: "#6B7280", fondo: "#F3F4F6" },
-};
+// (Fase 1) Estado y tono compartidos con la ficha de la conversación.
 
 function fechaCorta(iso: string): string {
   return new Intl.DateTimeFormat("es-CL", {
@@ -67,7 +65,7 @@ export function CobrosLista({ pagos: iniciales }: { pagos: PagoListado[] }) {
         </p>
       )}
       {pagos.map((p) => {
-        const e = ETIQUETA[p.estado];
+        const e = ESTADO_COBRO[p.estado] ?? ESTADO_COBRO.pendiente;
         return (
           <div
             key={p.id}
@@ -76,17 +74,12 @@ export function CobrosLista({ pagos: iniciales }: { pagos: PagoListado[] }) {
             <div className="min-w-0 flex-1">
               <div className="flex items-baseline gap-2">
                 <span className="cifra text-[15px] font-bold">{formatearMonto(p.monto)}</span>
-                <span
-                  className="rounded-full px-2 py-0.5 text-[10.5px] font-semibold"
-                  style={{ color: e.color, background: e.fondo }}
-                >
-                  {e.txt}
-                </span>
+                <Estado tono={e.tono}>{e.label}</Estado>
               </div>
               <div className="truncate text-[13px]" style={{ color: "var(--muted)" }}>
                 {p.contacto} · {p.concepto}
               </div>
-              <div className="cifra text-[11px]" style={{ color: "var(--muted-2)" }}>
+              <div className="cifra" style={{ fontSize: "var(--t-meta)", color: "var(--muted-2)" }}>
                 {p.referenciaExterna ? `N° ${p.referenciaExterna} · ` : ""}
                 {p.referencia} · {fechaCorta(p.creadoEn)}
               </div>

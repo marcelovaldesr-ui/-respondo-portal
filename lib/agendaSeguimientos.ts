@@ -4,6 +4,7 @@ import { plantillaPara, render, limpiarParam } from "@/lib/plantillas";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { formatearSlot, fechaChileDe, ZONA_AGENDA } from "@/lib/agendaCore";
 import type { Cita } from "@/lib/agenda";
+import { origenCanonico } from "@/lib/origenes";
 
 /**
  * SEGUIMIENTOS DE CITA (F3) — confirmación, recordatorio y encuesta postventa.
@@ -45,9 +46,7 @@ function horaChile(iso: string): string {
 function enlaceGestion(cita: Cita): string {
   const token = cita.gestion_token;
   if (!token) return "";
-  const base = (process.env.NEXT_PUBLIC_SITE_URL || "https://respondo-portal.vercel.app")
-    .replace(/\/+$/, "");
-  return `${base}/cita/${token}`;
+  return `${origenCanonico()}/cita/${token}`;
 }
 
 async function empleadoPorRol(

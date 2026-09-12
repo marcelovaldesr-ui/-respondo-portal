@@ -17,8 +17,8 @@ import { ventanaAbierta } from "@/lib/ventana24";
 import { cerrarEscalacionesPendientes } from "@/lib/escalaciones";
 import { idsEmpleadosDeCliente } from "@/lib/empleadosCache";
 import { explicarErrorMeta } from "@/lib/erroresMeta";
-import { mensajeDeCobro, validarCobro, type EstadoPago } from "@/lib/pagosCore";
-import { cambiarEstadoPago, crearPago, linkDePago } from "@/lib/pagos";
+import { mensajeDeCobro, validarCobro, validarPagoRecibido, type EstadoPago } from "@/lib/pagosCore";
+import { cambiarEstadoPago, crearPago, linkDePago, registrarPagoRecibido } from "@/lib/pagos";
 import { programarSeguimiento } from "@/lib/seguimientos";
 import { plantillasParaRubro } from "@/lib/plantillas";
 import { empleadoYContactoDelCliente } from "@/lib/tenant";
@@ -203,6 +203,39 @@ export async function marcarPago(formData: FormData): Promise<{ ok: boolean; err
   if (!pagoId || !desde || !hacia) return { ok: false, error: "Faltan datos" };
 
   return cambiarEstadoPago({ clienteId: usuario.clienteId, pagoId, desde, hacia });
+}
+
+/**
+ * CONFIRMAR UN PAGO QUE EL CLIENTE INFORMÓ, SIN COBRO PREVIO (Fase 1).
+ * Mismo permiso que marcar pagado un cobro (operar_conversaciones). No envía
+ * nada al cliente. Empleado y contacto se validan contra el negocio.
+ */
+export async function confirmarPagoRecibido(formData: FormData): Promise<{ ok: boolean; error?: string }> {
+  const usuario = await obtenerUsuarioConPermiso("operar_conversaciones");
+  if (!usuario) return { ok: false, error: "Sesión no válida" };
+  if (!(await limitarDistribuido(`pago-recibido:${usuario.email}`, 10, 60)).ok) {
+    return { ok: false, error: "Demasiados intentos seguidos. Espera un minuto." };
+  }
+
+  const empleadoId = String(formData.get("empleadoId") ?? "");
+  const chatId = String(formData.get("chatId") ?? "");
+  const v = validarPagoRecibido({ monto: formData.get("monto"), concepto: formData.get("concepto") });
+  if (!v.ok) return v;
+
+  const supa = db();
+  const acceso = await empleadoYContactoDelCliente(supa, { clienteId: usuario.clienteId, empleadoId, chatId });
+  if (!acceso.ok) return { ok: false, error: "Sin acceso a esta conversación" };
+
+  const r = await registrarPagoRecibido({
+    clienteId: usuario.clienteId,
+    empleadoId,
+    chatId,
+    monto: v.monto,
+    concepto: v.concepto,
+    creadoPor: usuario.email,
+    supa,
+  });
+  return r.ok ? { ok: true } : { ok: false, error: r.error };
 }
 
 /**

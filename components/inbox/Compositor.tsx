@@ -65,6 +65,18 @@ function CompositorBase({
     if (pedirPlantilla > 0) setConPlantilla(true);
   }, [pedirPlantilla]);
 
+  // «Responder» desde la ficha lateral (Fase 1): lleva el foco al campo.
+  useEffect(() => {
+    const h = () => {
+      const area = areaRef.current;
+      if (!area) return;
+      area.scrollIntoView({ block: "nearest", behavior: "smooth" });
+      area.focus({ preventScroll: true });
+    };
+    window.addEventListener("respondo:enfocar-compositor", h);
+    return () => window.removeEventListener("respondo:enfocar-compositor", h);
+  }, []);
+
   /**
    * En un teléfono, Enter NO envía: es el salto de línea. El teclado táctil no
    * tiene Shift+Enter cómodo, y un Enter que manda a medio escribir es el error

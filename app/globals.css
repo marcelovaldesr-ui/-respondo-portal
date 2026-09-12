@@ -68,6 +68,22 @@
   --malva: #b84a86;
   --violeta: #7c3aed;
 
+  /* ── Identidad Fase 1: azul profundo + cian (sep-2026) ──────────────────
+     Decisión de marca: azul profundo como principal, cian como acento, coral
+     fuera de lo estructural. Por ahora SOLO lo usan las piezas nuevas (Inicio,
+     ficha de la conversación, estado comercial compartido). El resto del
+     portal sigue en indigo hasta decidir el cambio global: cambiar --indigo de
+     golpe re-pinta 30 pantallas que nadie revisó. */
+  --azul: #1d3f8f;
+  --azul-hover: #17336f;
+  --azul-suave: #eef3fb;
+  --azul-borde: #d3dff2;
+  --cian: #0e7490; /* texto/ícono de acento: 5,4:1 sobre blanco */
+  --cian-vivo: #06b6d4; /* puntos y barras, nunca texto */
+  --cian-suave: #e7f6f9;
+  /* Metadato legible: el --t-micro de 11,5 px quedaba chico en las fichas. */
+  --t-meta: 12px;
+
   /* ── Radios ─────────────────────────────────────────────────────────────
      Bajan de 10/8 a 7/6. A 10 px una tabla de datos se ve blanda; a 7 px la
      tarjeta sigue siendo una tarjeta pero el contenido manda. */
@@ -430,6 +446,67 @@ h3,
     100% {
       background-position: -200% 0;
     }
+  }
+
+  /* ── Fase 1: piezas del estado comercial ─────────────────────────────── */
+
+  /* Botón principal de las piezas nuevas (azul profundo). */
+  .btn-azul {
+    @apply btn text-white;
+    background: var(--azul);
+  }
+  .btn-azul:hover {
+    background: var(--azul-hover);
+  }
+  .btn-azul:disabled {
+    opacity: 0.5;
+    background: var(--azul);
+  }
+  /* Acción de fila: compacta, legible (13 px) y con objetivo táctil de 32 px. */
+  .btn-fila {
+    @apply inline-flex shrink-0 items-center justify-center gap-1.5 border bg-white px-3 font-semibold;
+    min-height: 32px;
+    border-radius: var(--r-input);
+    font-size: var(--t-cuerpo);
+    border-color: var(--borde-fuerte);
+    color: var(--tinta);
+    transition: background 0.12s ease, border-color 0.12s ease;
+  }
+  .btn-fila:hover {
+    background: var(--fondo-hundido);
+  }
+  .btn-fila-azul {
+    @apply btn-fila text-white;
+    background: var(--azul);
+    border-color: var(--azul);
+  }
+  .btn-fila-azul:hover {
+    background: var(--azul-hover);
+  }
+
+  /* Estado (etapa, pago, atención): 12 px, radio chico, punto opcional. */
+  .estado {
+    @apply inline-flex max-w-full items-center gap-1.5 whitespace-nowrap px-2 py-[3px] font-semibold;
+    border-radius: var(--r-chico);
+    font-size: var(--t-meta);
+    line-height: 1.35;
+  }
+  .estado-punto {
+    @apply inline-block h-1.5 w-1.5 shrink-0 rounded-full;
+    background: currentColor;
+  }
+
+  /* Rótulo de sección de la ficha: sin mayúsculas gritonas y con contraste real. */
+  .rotulo {
+    font-size: var(--t-meta);
+    font-weight: 600;
+    color: var(--muted);
+    letter-spacing: 0;
+  }
+
+  /* Lista con divisores: filas sin tarjetas anidadas. */
+  .lista-filas > * + * {
+    border-top: 1px solid var(--borde);
   }
 
   /* Avatar circular del empleado */

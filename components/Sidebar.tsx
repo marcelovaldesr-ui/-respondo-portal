@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useState, type ReactElement } from "react";
+import FormularioSalir from "@/components/pwa/FormularioSalir";
 
 /* Iconos line-art, en línea con la identidad de la web (nada de emojis). */
 const Icono = {
@@ -377,7 +378,7 @@ export default function Sidebar({
         </button>
 
         {/* En móvil la salida va aquí, para no gastar una fila entera */}
-        <form action="/auth/salir" method="post" className="lg:hidden">
+        <FormularioSalir className="lg:hidden">
           <button
             type="submit"
             className="font-semibold underline"
@@ -385,7 +386,7 @@ export default function Sidebar({
           >
             Salir
           </button>
-        </form>
+        </FormularioSalir>
       </div>
 
       {/* Negocio — tarjeta blanca sobre el lienzo, igual que el ítem activo.
@@ -529,7 +530,7 @@ export default function Sidebar({
         >
           {email}
         </div>
-        <form action="/auth/salir" method="post" className={plegada ? "flex justify-center" : ""}>
+        <FormularioSalir className={plegada ? "flex justify-center" : ""}>
           <button
             type="submit"
             className={plegada ? "rounded-md p-1.5" : "mt-1 px-1 font-medium"}
@@ -554,7 +555,7 @@ export default function Sidebar({
               "Cerrar sesión"
             )}
           </button>
-        </form>
+        </FormularioSalir>
       </div>
     </aside>
   );

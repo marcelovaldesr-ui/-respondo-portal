@@ -35,6 +35,13 @@ export const ETIQUETAS: Etiqueta[] = [
   { valor: "pago_por_confirmar", label: "Pago por confirmar", color: "#854D0E", fondo: "#FEF3C7", auto: true },
   { valor: "cliente", label: "Cliente", color: "#166534", fondo: "#DCFCE7", auto: false },
   { valor: "resuelto", label: "Resuelto", color: "#475569", fondo: "#F1F5F9", auto: false },
+  /**
+   * (Fase 1) Existía solo como regla: 8 procesos la respetan (Beto,
+   * seguimientos, reingreso, avisos de pedido…) pero nada del producto la
+   * escribía. Ahora la pone «Perdido · pidió que no lo contacten» y se puede
+   * poner o quitar a mano.
+   */
+  { valor: "no_contactar", label: "No contactar", color: "#7F1D1D", fondo: "#FEE2E2", auto: false },
 ];
 
 const PORVALOR = new Map(ETIQUETAS.map((e) => [e.valor, e]));

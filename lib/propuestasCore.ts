@@ -12,8 +12,11 @@
  * conversación no cambie. Si llega un mensaje nuevo después de la decisión, se
  * vuelve a evaluar; si no, no.
  *
- * ⚠️ SIN IMPORTS: `node --test` lo carga directo.
+ * ⚠️ SOLO IMPORTS PUROS: `node --test` lo carga directo. Desde Fase 1 importa
+ * `lib/etapasCore.ts`, que tampoco toca base ni red.
  */
+
+import { esPerdidoPorSilencio } from "@/lib/etapasCore";
 
 export type EstadoPropuesta = "propuesto" | "aprobado" | "rechazado" | "vencido" | "frenado";
 
@@ -106,7 +109,7 @@ export function vigenciaAlAprobar(
   }
   // Perdido por silencio (sin_respuesta) sigue siendo retomable: es el caso de
   // Beto. Ver generadorCotizacionCore.ts.
-  const perdidoPorSilencio = contacto.etapa === "perdido" && contacto.etapa_motivo === "sin_respuesta";
+  const perdidoPorSilencio = esPerdidoPorSilencio(contacto.etapa, contacto.etapa_motivo);
   if (contacto.etapa === "ganado" || (contacto.etapa === "perdido" && !perdidoPorSilencio)) {
     return { vigente: false, motivo: `la oportunidad ya está ${contacto.etapa}` };
   }

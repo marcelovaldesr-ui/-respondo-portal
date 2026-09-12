@@ -6,6 +6,7 @@ import {
   type EstadoPago,
 } from "@/lib/pagosCore";
 import { etiquetasTrasPagoConfirmado } from "@/lib/etiquetasCiclo";
+import { inicioDeMesChile } from "@/lib/fechas";
 
 /**
  * DATOS DE LOS COBROS EN CONVERSACIÓN.
@@ -155,6 +156,63 @@ export async function cambiarEstadoPago(p: {
     await aplicarPagoConfirmado({ clienteId: p.clienteId, chatId: data[0].chat_id as string, supa });
   }
   return { ok: true };
+}
+
+/**
+ * REGISTRAR UN PAGO QUE YA LLEGÓ (Fase 1). Crea el cobro y lo marca pagado en
+ * la misma operación lógica, sin mandar ningún mensaje. Pasa por
+ * `cambiarEstadoPago`, así que la conversación se refleja igual que al marcar
+ * pagado un cobro enviado (etapa ganado, se va «Pago por confirmar»).
+ *
+ * Si el segundo paso falla, la fila se borra: un cobro «pendiente» que nadie
+ * mandó sería inventar una deuda.
+ */
+const VENTANA_DUPLICADO_MS = 2 * 60_000;
+
+export async function registrarPagoRecibido(p: {
+  clienteId: string;
+  empleadoId: string;
+  chatId: string;
+  monto: number;
+  concepto: string;
+  creadoPor: string;
+  supa?: SupabaseClient;
+}): Promise<{ ok: true; id: string } | { ok: false; error: string }> {
+  const supa = p.supa ?? db();
+  /**
+   * DOBLE CLIC (Fase 1, revisión). El formulario puede llegar dos veces (clic
+   * doble, red lenta, reintento). Un pago recibido igual —mismo chat, mismo
+   * monto, marcado pagado hace menos de 2 minutos— se toma como el mismo y no
+   * se duplica la plata en «Cobrado y confirmado».
+   */
+  const { data: reciente } = await supa
+    .from("ed_pagos")
+    .select("id")
+    .eq("cliente_id", p.clienteId)
+    .eq("chat_id", p.chatId)
+    .eq("estado", "pagado")
+    .eq("monto", p.monto)
+    .gte("pagado_en", new Date(Date.now() - VENTANA_DUPLICADO_MS).toISOString())
+    .limit(1);
+  const repetido = (reciente ?? [])[0] as { id?: string } | undefined;
+  if (repetido?.id) return { ok: true, id: repetido.id };
+
+  const creado = await crearPago({
+    clienteId: p.clienteId,
+    empleadoId: p.empleadoId,
+    chatId: p.chatId,
+    monto: p.monto,
+    concepto: p.concepto,
+    creadoPor: p.creadoPor,
+    supa,
+  });
+  if (!creado.ok) return creado;
+  const marcado = await cambiarEstadoPago({ clienteId: p.clienteId, pagoId: creado.id, desde: "pendiente", hacia: "pagado", supa });
+  if (!marcado.ok) {
+    await supa.from("ed_pagos").delete().eq("id", creado.id).eq("cliente_id", p.clienteId);
+    return { ok: false, error: marcado.error ?? "No se pudo registrar el pago" };
+  }
+  return { ok: true, id: creado.id };
 }
 
 /**
@@ -315,9 +373,9 @@ export async function resumenPagos(
   clienteId: string,
   supa: SupabaseClient = db(),
 ): Promise<{ pendientes: number; pagadosMes: number; montoMes: number }> {
-  const inicioMes = new Date();
-  inicioMes.setDate(1);
-  inicioMes.setHours(0, 0, 0, 0);
+  // Mes calendario de CHILE (Fase 1): con `setHours` del servidor (UTC en
+  // Vercel) los pagos de la última noche del mes anterior contaban en este.
+  const inicioMes = new Date(inicioDeMesChile());
 
   const [pend, pagados] = await Promise.all([
     supa

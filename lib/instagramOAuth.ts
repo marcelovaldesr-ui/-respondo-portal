@@ -1,4 +1,5 @@
 import { cifrar, firmarEstado, verificarEstado } from "@/lib/cifrado";
+import { origenCanonico } from "@/lib/origenes";
 
 /**
  * BUSINESS LOGIN FOR INSTAGRAM — el flujo con el que un cliente conecta SU
@@ -62,7 +63,8 @@ export function instagramConfigurado(): boolean {
  * BYTE A BYTE el mismo que se registre en el panel de Meta como URI de
  * redirección válida, o Instagram rechaza el intercambio.
  */
-const URL_PORTAL = (process.env.NEXT_PUBLIC_SITE_URL || "https://respondo-portal.vercel.app").replace(/\/+$/, "");
+// (Fase 1) Origen canónico explícito: nunca el Host de la petición ni un preview.
+const URL_PORTAL = origenCanonico();
 export const REDIRECT_URI_IG = `${URL_PORTAL}/api/instagram/callback`;
 
 export function urlAutorizacionIg(clienteId: string): string {

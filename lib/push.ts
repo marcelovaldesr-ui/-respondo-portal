@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import webpush from "web-push";
 import { db } from "@/lib/db";
 import type { SupabaseClient } from "@supabase/supabase-js";
@@ -207,4 +208,57 @@ export function suscripcionesVigentes<T extends { email?: unknown }>(
   const norm = (v: unknown) => String(v ?? "").toLowerCase().trim();
   const vigentes = new Set(usuariosActivos.map((u) => norm(u.email)).filter(Boolean));
   return suscripciones.filter((s) => vigentes.has(norm(s.email)));
+}
+
+/**
+ * AVISOS Y CIERRE DE SESIÓN EN UN EQUIPO COMPARTIDO (Fase 1).
+ *
+ * La suscripción es del NAVEGADOR, no de la persona. Dos agujeros:
+ *  1. Cerrar sesión no la tocaba: el equipo seguía recibiendo nombres de
+ *     clientes y trozos de mensajes de ese negocio.
+ *  2. Al entrar otra cuenta en el mismo navegador, la re-sincronización
+ *     silenciosa de Inicio TRASPASABA la suscripción a la cuenta nueva sin que
+ *     esa persona hubiera activado nada.
+ *
+ * Arreglo: el navegador se da de baja al salir (components/pwa/desvincularPush),
+ * el servidor borra por huella si el navegador no alcanzó (cookie HttpOnly con
+ * el hash del endpoint), y la re-sincronización nunca cambia de dueño.
+ */
+export const COOKIE_PUSH = "respondo_push_disp";
+
+/** Hash del endpoint: identifica «este navegador» sin guardar el endpoint en una cookie. */
+export function huellaEndpoint(endpoint: string): string {
+  return createHash("sha256").update(endpoint).digest("hex");
+}
+
+export type Sincronizacion = "propia" | "ajena" | "sin_registro";
+
+/** ¿La suscripción de este navegador ya pertenece a quien tiene la sesión? */
+export function decidirSincronizacion(
+  fila: { email?: unknown; cliente_id?: unknown } | null | undefined,
+  usuario: { email: string; clienteId: string },
+): Sincronizacion {
+  if (!fila) return "sin_registro";
+  const mismoCorreo = String(fila.email ?? "").trim().toLowerCase() === usuario.email.trim().toLowerCase();
+  return mismoCorreo && fila.cliente_id === usuario.clienteId ? "propia" : "ajena";
+}
+
+/** Borra la suscripción de ESTE navegador (por huella) de quien cierra sesión. */
+export async function borrarSuscripcionPorHuella(
+  supa: SupabaseClient,
+  usuario: { email: string; clienteId: string },
+  huella: string,
+): Promise<number> {
+  if (!/^[0-9a-f]{64}$/.test(huella)) return 0;
+  const { data, error } = await supa
+    .from("ed_push_suscripciones")
+    .select("id, endpoint")
+    .eq("cliente_id", usuario.clienteId)
+    .eq("email", usuario.email)
+    .limit(50);
+  if (error || !data?.length) return 0;
+  const ids = data.filter((f) => huellaEndpoint(String(f.endpoint)) === huella).map((f) => f.id as string);
+  if (!ids.length) return 0;
+  const { error: errBorrar } = await supa.from("ed_push_suscripciones").delete().in("id", ids).eq("cliente_id", usuario.clienteId);
+  return errBorrar ? 0 : ids.length;
 }

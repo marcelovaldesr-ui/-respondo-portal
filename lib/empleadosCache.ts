@@ -48,18 +48,21 @@ export type EmpleadoBasico = {
   id: string;
   rol: string;
   nombrePublico: string;
+  /** Inactivos siguen en la lista (barrera de acceso a su historial). */
+  activo?: boolean;
 };
 
 export const empleadosDeCliente = cache(
   async (clienteId: string): Promise<EmpleadoBasico[]> => {
     const { data } = await db()
       .from("ed_empleados")
-      .select("id, rol, nombre_publico")
+      .select("id, rol, nombre_publico, activo")
       .eq("cliente_id", clienteId);
     return (data ?? []).map((e) => ({
       id: e.id as string,
       rol: e.rol as string,
       nombrePublico: (e.nombre_publico as string) ?? "",
+      activo: e.activo !== false,
     }));
   },
 );

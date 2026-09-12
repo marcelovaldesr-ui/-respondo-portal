@@ -4,6 +4,13 @@ import { empleadosDeCliente } from "@/lib/empleadosCache";
 import { ventanaDesde } from "@/lib/ventana24Regla";
 import { pagosDeChat, type Pago } from "@/lib/pagos";
 import { plantillasParaRubro } from "@/lib/plantillas";
+import { CITAS_ACTIVAS, TIPOS_RESULTADO_ESTADO, armarHechos } from "@/lib/estadoComercialFilas";
+import {
+  TIPO_SEGUIMIENTO_COTIZACION,
+  derivarEstadoComercial,
+  type EstadoComercial,
+  type ModoChat,
+} from "@/lib/estadoComercialCore";
 
 /**
  * Datos de la pantalla de Conversaciones. Solo lectura en v1: el portal no
@@ -91,6 +98,19 @@ export type DetalleConversacion = {
   mensajesTotal: number;
   clienteDesde: string | null;
   notas: string | null;
+  /**
+   * ESTADO COMERCIAL (Fase 1): etapa y motivo, pago, atención requerida,
+   * Beto, siguiente acción y actividad. Sale del MISMO núcleo que Inicio
+   * (lib/estadoComercialCore.ts). Null solo si no se pudo armar.
+   */
+  estado: EstadoComercial | null;
+  /** Quien mira puede aprobar mensajes pagados de Beto (dueño). */
+  puedeAprobarPagados: boolean;
+  /** El negocio tiene enlace de pago: «Enviar cobro» es posible. */
+  tienePagoLink: boolean;
+  /** Nombres visibles de Tino y Beto en este negocio. */
+  nombreTino: string;
+  nombreBeto: string;
 };
 
 export type ResumenConversaciones = {
@@ -329,6 +349,7 @@ export async function obtenerConversacion(
   clienteId: string,
   empleadoId: string,
   chatId: string,
+  opciones: { puedeAprobarPagados?: boolean } = {},
 ): Promise<DetalleConversacion | null> {
   const supa = db();
 
@@ -361,7 +382,18 @@ export async function obtenerConversacion(
   // (auditoría 3-sep-2026). El modo sigue siendo del empleado abierto.
   const hilo = empleados.map((e) => e.id);
 
-  const [tramo, contacto, estado, escalaciones, resultados, cliente, pagos] = await Promise.all([
+  const hace = (dias: number) => new Date(Date.now() - dias * 86_400_000).toISOString();
+  /** Tablas opcionales (propuestas 297, citas 220): su error no tumba el chat. */
+  const suave = async (p: PromiseLike<{ data: unknown; error: unknown }>) => {
+    try {
+      const r = await p;
+      return r.error ? [] : ((r.data as Record<string, unknown>[] | null) ?? []);
+    } catch {
+      return [] as Record<string, unknown>[];
+    }
+  };
+
+  const [tramo, contacto, estado, escalaciones, resultados, cliente, pagos, propuestas, seguimientos, citas] = await Promise.all([
     /**
      * Tramo reciente, con id, adjunto y estado de entrega.
      *
@@ -373,7 +405,9 @@ export async function obtenerConversacion(
     ultimosMensajes(supa, { empleadoId: hilo, chatId, limite: 60 }),
     supa
       .from("ed_contactos")
-      .select("nombre, telefono, etiqueta, etiquetas, etapa, total_mensajes, primer_mensaje_en, notas")
+      .select(
+        "nombre, telefono, etiqueta, etiquetas, etapa, etapa_motivo, etapa_en, etapa_manual, total_mensajes, primer_mensaje_en, ultimo_mensaje_en, ultimo_mensaje_rol, notas, datos",
+      )
       .eq("cliente_id", clienteId)
       .eq("chat_id", chatId)
       .maybeSingle(),
@@ -397,7 +431,7 @@ export async function obtenerConversacion(
       .limit(5),
     supa
       .from("ed_resultados")
-      .select("tipo")
+      .select("tipo, creado_en, nota")
       .in("empleado_id", hilo)
       .eq("chat_id", chatId),
     // Solo el transporte: decide si la ventana de 24 h aplica. Es una consulta
@@ -405,6 +439,13 @@ export async function obtenerConversacion(
     (async () => {
       // La etiqueta llega con la 295: si no está, se pide sin ella para no
       // tumbar la conversación entera por una columna nueva.
+      // (Fase 1) + los interruptores que usa el estado comercial.
+      const completo = await supa
+        .from("ed_clientes")
+        .select("transporte, rubro, pago_ref_etiqueta, cotizacion_seguimiento, pago_link_base")
+        .eq("id", clienteId)
+        .maybeSingle();
+      if (!completo.error) return completo;
       const conEtiqueta = await supa
         .from("ed_clientes")
         .select("transporte, rubro, pago_ref_etiqueta")
@@ -423,6 +464,36 @@ export async function obtenerConversacion(
      * simplemente no se muestran pagos. Mismo criterio de rollout que la 273.
      */
     pagosDeChat({ clienteId, chatId, supa }).catch(() => [] as Pago[]),
+    // (Fase 1) Lo que falta para el estado comercial, en la MISMA tanda.
+    suave(
+      supa
+        .from("ed_propuestas_seguimiento")
+        .select("chat_id, estado, creado_en, resuelto_en, motivo_juez")
+        .eq("cliente_id", clienteId)
+        .eq("chat_id", chatId)
+        .eq("tipo", TIPO_SEGUIMIENTO_COTIZACION)
+        .order("creado_en", { ascending: false })
+        .limit(10),
+    ),
+    suave(
+      supa
+        .from("ed_seguimientos")
+        .select("empleado_id, chat_id, tipo, programado_para, enviado_en, respuesta_recibida, variables")
+        .in("empleado_id", hilo)
+        .eq("chat_id", chatId)
+        .gte("programado_para", hace(60))
+        .limit(50),
+    ),
+    suave(
+      supa
+        .from("ed_citas")
+        .select("id, chat_id, inicio, fin, estado")
+        .eq("cliente_id", clienteId)
+        .eq("chat_id", chatId)
+        .in("estado", [...CITAS_ACTIVAS])
+        .gte("fin", hace(30))
+        .limit(20),
+    ),
   ]);
 
   const mensajes = tramo.mensajes;
@@ -443,6 +514,46 @@ export async function obtenerConversacion(
     .filter((x): x is string => Boolean(x))
     .sort((a, b) => Date.parse(b) - Date.parse(a))[0] ?? null;
   const transporte = (cliente.data?.transporte as string | null) ?? "waha";
+  const datosCliente = (cliente.data ?? null) as Record<string, unknown> | null;
+  const tienePagoLink = typeof datosCliente?.pago_link_base === "string" && Boolean((datosCliente.pago_link_base as string).trim());
+  const nombreTino = empleados.find((e) => e.rol === "tino")?.nombre_publico || "Tino";
+  const nombreBeto = empleados.find((e) => e.rol === "rita")?.nombre_publico || "Beto";
+
+  /**
+   * ESTADO COMERCIAL con el núcleo compartido. El modo es el del empleado
+   * ABIERTO (el mismo que muestra la barra de control), no el de la bandeja:
+   * la ficha habla del chat que la persona tiene delante.
+   */
+  let estadoComercial: EstadoComercial | null = null;
+  if (contacto.data) {
+    const tipos = new Set<string>(TIPOS_RESULTADO_ESTADO);
+    const hechos = armarHechos({
+      contactos: [{ ...(contacto.data as Record<string, unknown>), chat_id: chatId }],
+      estados: [],
+      derivaciones: (escalaciones.data ?? []).filter((e) => !e.atendida_en).map((e) => ({ ...e, chat_id: chatId })),
+      atendidas: (escalaciones.data ?? []).filter((e) => e.atendida_en).map((e) => ({ ...e, chat_id: chatId })),
+      pagos: pagos.map((p) => ({ id: p.id, chat_id: chatId, estado: p.estado, monto: p.monto, creado_en: p.creadoEn, pagado_en: p.pagadoEn })),
+      resultados: (resultados.data ?? []).filter((r) => tipos.has(r.tipo as string)).map((r) => ({ ...r, chat_id: chatId })),
+      propuestas,
+      seguimientos,
+      citas,
+      empleados: empleados.map((e) => ({ id: e.id, rol: e.rol as string })),
+    }).get(chatId);
+    if (hechos) {
+      const modo = (estado.data?.modo as string) ?? "bot";
+      estadoComercial = derivarEstadoComercial(
+        { ...hechos, modo: (modo === "humano" || modo === "pausado" ? modo : "bot") as ModoChat },
+        {
+          ahora: Date.now(),
+          betoCotizaciones: datosCliente?.cotizacion_seguimiento === true,
+          tienePagoLink,
+          puedeAprobarPagados: Boolean(opciones.puedeAprobarPagados),
+          nombreTino,
+          nombreBeto,
+        },
+      );
+    }
+  }
 
   return {
     chatId,
@@ -463,6 +574,11 @@ export async function obtenerConversacion(
         }
       : null,
     resultados: (resultados.data ?? []).map((r) => r.tipo as string),
+    estado: estadoComercial,
+    puedeAprobarPagados: Boolean(opciones.puedeAprobarPagados),
+    tienePagoLink,
+    nombreTino,
+    nombreBeto,
     etiquetas: ((contacto.data?.etiquetas as string[] | null) ?? []),
     rubro: (cliente.data?.rubro as string | null) ?? null,
     pagos,

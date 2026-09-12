@@ -5,6 +5,7 @@ import { programarSeguimientosCita } from "@/lib/agendaSeguimientos";
 import { formatearSlot } from "@/lib/agendaCore";
 import { limitarDistribuido } from "@/lib/seguridad";
 import { validarFicha, type CampoFicha } from "@/lib/fichaServicio";
+import { origenCanonico } from "@/lib/origenes";
 import {
   coincideConSlotOfrecido,
   ipDeRequest,
@@ -172,9 +173,7 @@ export async function POST(request: NextRequest) {
   // Enlace de autogestión (migración 277): quien reserva por la web puede no
   // tener WhatsApp con el negocio, así que este enlace es su ÚNICA forma de
   // moverse solo. Se muestra en la pantalla de éxito para que lo guarde.
-  const base = (process.env.NEXT_PUBLIC_SITE_URL || "https://respondo-portal.vercel.app")
-    .replace(/\/+$/, "");
-  const gestion = r.cita.gestion_token ? `${base}/cita/${r.cita.gestion_token}` : null;
+  const gestion = r.cita.gestion_token ? `${origenCanonico()}/cita/${r.cita.gestion_token}` : null;
 
   return NextResponse.json({
     ok: true,

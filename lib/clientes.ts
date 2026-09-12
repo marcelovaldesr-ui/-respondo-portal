@@ -42,6 +42,8 @@ export type ResumenCliente = {
 
 export type FichaCliente = ResumenCliente & {
   empleadoId: string;
+  /** Motivo de la etapa (Fase 1): «Perdido · Sin respuesta». */
+  etapaMotivo: string | null;
   eventos: EventoCliente[];
 };
 
@@ -186,7 +188,7 @@ export async function fichaCliente(
 
   const { data: contacto } = await supa
     .from("ed_contactos")
-    .select("chat_id, nombre, telefono, email, notas, etiquetas, etapa, etapa_en")
+    .select("chat_id, nombre, telefono, email, notas, etiquetas, etapa, etapa_en, etapa_motivo, ultimo_empleado_id, ultimo_mensaje_en, total_mensajes")
     .eq("cliente_id", clienteId) // barrera de acceso
     .eq("chat_id", chatId)
     .maybeSingle();
@@ -288,7 +290,14 @@ export async function fichaCliente(
   eventos.sort((a, b) => b.fecha.localeCompare(a.fecha)); // más reciente arriba
 
   const primera = mensajes[0]?.creado_en as string | undefined;
-  const ultima = mensajes[mensajes.length - 1]?.creado_en as string | undefined;
+  /**
+   * (Fase 1) «Último contacto» y el conteo salen del resumen que mantiene el
+   * trigger de la 250. Los mensajes de arriba vienen en orden ascendente con
+   * tope de 1.000: en un chat largo el «último» era el mensaje N° 1.000 y la
+   * ficha decía «hace 40 días» de alguien que escribió hoy.
+   */
+  const ultima =
+    (contacto.ultimo_mensaje_en as string | null) ?? (mensajes[mensajes.length - 1]?.creado_en as string | undefined);
   const etiquetasContacto = ((contacto.etiquetas as string[] | null) ?? []);
   const cotizaciones =
     (resultadosR.data ?? []).filter((r) => r.tipo === "cotizacion_enviada").length ||
@@ -302,13 +311,19 @@ export async function fichaCliente(
     notas: (contacto.notas as string) ?? null,
     etiquetas: ((contacto.etiquetas as string[] | null) ?? []),
     etapa: (((contacto.etapa as string) ?? "nuevo") as Etapa),
-    mensajes: mensajes.length,
+    mensajes: (contacto.total_mensajes as number | null) || mensajes.length,
     primeraVez: primera ?? null,
     ultimaVez: ultima ?? null,
     diasSinHablar: diasDesde(ultima ?? null),
     cotizaciones,
     esperandoHumano: (escalacionesR.data ?? []).some((e) => !e.atendida_en),
-    empleadoId: (tinoR.data?.id as string) ?? "",
+    // Con quién abrir el chat: el último empleado que habló (si es del
+    // negocio); si no, Tino. Antes era siempre Tino.
+    empleadoId:
+      (ids.includes(contacto.ultimo_empleado_id as string) ? (contacto.ultimo_empleado_id as string) : null) ??
+      (tinoR.data?.id as string) ??
+      "",
+    etapaMotivo: (contacto.etapa_motivo as string | null) ?? null,
     eventos,
   };
 }

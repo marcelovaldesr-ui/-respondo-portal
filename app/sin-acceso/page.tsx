@@ -1,3 +1,4 @@
+import FormularioSalir from "@/components/pwa/FormularioSalir";
 export const dynamic = "force-dynamic";
 
 // El usuario se autenticó bien, pero su email no está habilitado en
@@ -21,11 +22,11 @@ export default function SinAcceso() {
           Tu sesión se inició correctamente, pero ese correo todavía no está asociado a
           ningún negocio en el portal. Escríbenos y lo activamos.
         </p>
-        <form action="/auth/salir" method="post">
+        <FormularioSalir>
           <button type="submit" className="btn-primario mt-5 w-full">
             Volver a entrar con otro correo
           </button>
-        </form>
+        </FormularioSalir>
       </div>
     </main>
   );

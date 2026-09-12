@@ -10,6 +10,7 @@ import { modoDe, setModo } from "@/lib/estadoChat";
 import { notificarHQ } from "@/lib/hqBridge";
 import { esAudioSinTexto } from "@/lib/marcadorAudio";
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { RESUMEN_AUDIO, RESUMEN_FALLO_CANAL, RESUMEN_FALLO_MODELO } from "@/lib/derivacionesCore";
 import {
   contextoAgenda,
   ejecutarAccionAgenda,
@@ -56,8 +57,7 @@ async function derivarPorFalloDeEnvio(
     .is("atendida_en", null)
     .limit(1)
     .maybeSingle();
-  const resumen =
-    "El asistente no pudo entregar su respuesta por un fallo del canal. La conversación quedó esperando a una persona.";
+  const resumen = RESUMEN_FALLO_CANAL;
   if (!pendiente) {
     await registrarEscalacion(supa, {
       clienteId: params.clienteId,
@@ -314,8 +314,7 @@ export async function responderSiBot(params: {
   if (ultimo?.rol === "cliente" && esAudioSinTexto(ultimo.texto)) {
     const supaAudio = db();
     await setModo(empleadoId, chatId, "humano", supaAudio);
-    const resumenAudio =
-      "El cliente mandó un audio. Tino todavía no puede escucharlos: la conversación quedó esperando a una persona.";
+    const resumenAudio = RESUMEN_AUDIO;
     await registrarEscalacion(supaAudio, {
       clienteId,
       empleadoId,
@@ -469,8 +468,7 @@ export async function responderSiBot(params: {
       });
     }
     await setModo(empleadoId, chatId, "humano", supaF);
-    const resumenFallo =
-      "El asistente no pudo responder por un problema técnico momentáneo. La conversación quedó esperando a una persona.";
+    const resumenFallo = RESUMEN_FALLO_MODELO;
     await registrarEscalacion(supaF, {
       clienteId,
       empleadoId,

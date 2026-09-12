@@ -70,91 +70,9 @@ const VACIO: ContadoresMenu = {
 export const DIAS_ACTIVIDAD = 14;
 
 /**
- * Las oportunidades abiertas, con nombre y lo último que dijeron.
- *
- * POR QUÉ NO ALCANZA CON EL CONTADOR
- * La portada mostraba "1 interesado · 8 cotizados" en dos cifras enormes. Es
- * información, pero no permite hacer nada: para saber A QUIÉN hay que insistir
- * había que ir al embudo y leerlo entero. Un panel que obliga a ir a otra
- * pantalla para actuar no ahorró nada.
- *
- * Con nombre, qué pidieron y hace cuánto, el dueño decide desde la portada.
- *
- * Barato: lee ed_contactos, que ya tiene el último mensaje mantenido por el
- * trigger de la 250. No toca ed_mensajes.
+ * (Fase 1) `oportunidadesAbiertas` se reemplazó por el panorama del estado
+ * comercial (lib/estadoComercial.ts), que usa las mismas reglas que la ficha.
  */
-export type Oportunidad = {
-  chatId: string;
-  contacto: string;
-  etapa: string;
-  ultimoMensaje: string;
-  ultimoEn: string | null;
-};
-
-export async function oportunidadesAbiertas(
-  clienteId: string,
-  limite = 4,
-  /**
-   * Solo lo que tuvo actividad en los últimos N días. Es el MISMO corte que
-   * usa el embudo (ver el comentario de cargarEmbudo) y por el mismo motivo:
-   * sin él salen conversaciones que ya terminaron —"ya muchas gracias",
-   * "recibido"— que quedaron marcadas como cotizadas y nunca se cerraron.
-   *
-   * Se comprobó con datos reales: de las 4 primeras oportunidades, dos eran
-   * despedidas. Una portada que te manda a insistirle a alguien que ya te
-   * agradeció y se fue es peor que no mostrar nada: te hace perder tiempo y te
-   * enseña a desconfiar del panel.
-   */
-  diasActividad = DIAS_ACTIVIDAD,
-): Promise<Oportunidad[]> {
-  try {
-    const corte = new Date(
-      Date.now() - diasActividad * 86400_000,
-    ).toISOString();
-    const { data } = await soloVivas(
-      db()
-        .from("ed_contactos")
-        .select(
-          "chat_id, nombre, etapa, ultimo_mensaje_texto, ultimo_mensaje_en",
-        )
-        .eq("cliente_id", clienteId)
-        .in("etapa", ["interesado", "cotizado"])
-        .gte("ultimo_mensaje_en", corte),
-    )
-      // Ascendente pone "cotizado" antes que "interesado" (c < i): primero lo
-      // que está más cerca de cerrarse.
-      .order("etapa", { ascending: true })
-      .order("ultimo_mensaje_en", { ascending: false, nullsFirst: false })
-      /**
-       * Límite EXPLÍCITO. Sin él, PostgREST igual corta en 1.000 pero sin que
-       * nadie lo sepa. Acá son las oportunidades que se muestran en pantalla:
-       * nadie revisa doscientas de una sentada, y el número real vive en el
-       * contador de arriba, que sí cuenta en la base.
-       */
-      .limit(200)
-      .limit(limite);
-
-    // La forma de la fila se declara acá para no perder el tipo hacia afuera.
-    type Fila = {
-      chat_id: string;
-      nombre: string | null;
-      etapa: string | null;
-      ultimo_mensaje_texto: string | null;
-      ultimo_mensaje_en: string | null;
-    };
-
-    return ((data ?? []) as Fila[]).map((c) => ({
-      chatId: c.chat_id,
-      contacto: c.nombre || `+${c.chat_id}`,
-      etapa: c.etapa ?? "interesado",
-      ultimoMensaje: c.ultimo_mensaje_texto ?? "",
-      ultimoEn: c.ultimo_mensaje_en,
-    }));
-  } catch {
-    return [];
-  }
-}
-
 /**
  * SE CUENTAN FILAS EN JS, NO CON `count: exact`.
  *

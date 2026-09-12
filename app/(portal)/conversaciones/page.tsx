@@ -12,6 +12,7 @@ import { ColumnaLista } from "@/components/inbox/ColumnaLista";
 import PrecargaInicial from "@/components/inbox/PrecargaInicial";
 import RefrescarLista from "@/components/RefrescarLista";
 import { metaEtiqueta } from "@/lib/etiquetas";
+import { tienePermiso } from "@/lib/permisos";
 
 export const dynamic = "force-dynamic";
 
@@ -116,7 +117,9 @@ export default async function Conversaciones({
 
   const seleccion =
     params.emp && params.chat
-      ? await obtenerConversacion(usuario.clienteId, params.emp, params.chat)
+      ? await obtenerConversacion(usuario.clienteId, params.emp, params.chat, {
+          puedeAprobarPagados: tienePermiso(usuario, "aprobar_mensajes_pagados"),
+        })
       : null;
 
 
@@ -300,7 +303,7 @@ export default async function Conversaciones({
       <PrecargaInicial
         filas={lista.map((c) => ({ empleadoId: c.empleadoId, chatId: c.chatId }))}
       />
-      <div className="mt-3 grid gap-3 lg:h-[calc(100vh-150px)] lg:grid-cols-[330px_minmax(0,1fr)] xl:grid-cols-[330px_minmax(0,1fr)_290px]">
+      <div className="mt-3 grid gap-3 lg:h-[calc(100vh-150px)] lg:grid-cols-[330px_minmax(0,1fr)] xl:grid-cols-[330px_minmax(0,1fr)_320px]">
         {/* Lista — en móvil se oculta cuando hay una conversación abierta,
             porque los dos paneles lado a lado no caben en un teléfono. */}
         <ColumnaLista>

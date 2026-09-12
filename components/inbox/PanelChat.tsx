@@ -5,11 +5,11 @@ import Link from "next/link";
 import InboxConversacion from "@/components/InboxConversacion";
 import EtiquetasEditor from "@/components/EtiquetasEditor";
 import { metaEmpleado } from "@/lib/empleados";
-import { ETIQUETA_RESULTADO, ETIQUETA_TRIGGER, type DetalleConversacion } from "@/lib/conversaciones";
-import { metaEtapa } from "@/lib/embudo";
+import { ETIQUETA_TRIGGER, type DetalleConversacion } from "@/lib/conversaciones";
 import { useSeleccionChat } from "./SeleccionChat";
 import { clave as claveDe, guardar, leer, olvidar, traer } from "./cacheDetalle";
 import { AvisarPedido, PagosCard } from "./PagosCard";
+import FichaLateral from "./FichaLateral";
 
 /**
  * LA COLUMNA DEL CHAT, DEL LADO DEL CLIENTE.
@@ -39,17 +39,6 @@ import { AvisarPedido, PagosCard } from "./PagosCard";
  *
  * El JSX es el MISMO que tenía la página. No se rediseñó nada acá: se movió.
  */
-
-function Rotulo({ children }: { children: React.ReactNode }) {
-  return (
-    <div
-      className="mb-2 font-semibold uppercase"
-      style={{ fontSize: "var(--t-micro)", letterSpacing: ".08em", color: "var(--muted-3)" }}
-    >
-      {children}
-    </div>
-  );
-}
 
 /**
  * ESQUELETO DE LOS MENSAJES.
@@ -111,17 +100,6 @@ function mostrarEscalacion(e: NonNullable<DetalleConversacion["escalacion"]>): b
   return Date.now() - Date.parse(e.creadoEn) < 24 * 3600_000;
 }
 
-function Dato({ etiqueta, children }: { etiqueta: string; children: React.ReactNode }) {
-  return (
-    <div className="flex items-baseline justify-between gap-3 py-1.5">
-      <span style={{ fontSize: "var(--t-mini)", color: "var(--muted-2)" }}>{etiqueta}</span>
-      <span className="text-right font-semibold" style={{ fontSize: "var(--t-mini)" }}>
-        {children}
-      </span>
-    </div>
-  );
-}
-
 export default function PanelChat({
   inicial,
   claveInicial,
@@ -168,6 +146,19 @@ export default function PanelChat({
   useEffect(() => {
     setContextoAbierto(false);
   }, [empleadoId, chatId]);
+  /**
+   * (Fase 1) Las acciones de la ficha actúan sobre el chat (enfocar el
+   * compositor, abrir el cobro, devolver al asistente). Bajo 1280 px la ficha
+   * es un cajón encima del chat: si no se cierra, la acción pasa DETRÁS.
+   */
+  useEffect(() => {
+    const cerrar = () => setContextoAbierto(false);
+    const eventos = ["respondo:enfocar-compositor", "respondo:abrir-cobro", "respondo:cambiar-modo"];
+    for (const e of eventos) window.addEventListener(e, cerrar);
+    return () => {
+      for (const e of eventos) window.removeEventListener(e, cerrar);
+    };
+  }, []);
   /** Evita que una respuesta lenta pise a un chat que ya se cambió. */
   const pedido = useRef(0);
 
@@ -591,140 +582,46 @@ export default function PanelChat({
         >
           Cerrar ✕
         </button>
-        <div className="tarjeta p-3.5">
-          <Rotulo>Quién atiende</Rotulo>
-          <div className="mt-2 flex items-center gap-2.5">
-            {meta && (
-              /* eslint-disable-next-line @next/next/no-img-element */
-              <img
-                src={meta.avatar}
-                alt=""
-                width={30}
-                height={30}
-                className="avatar h-[30px] w-[30px]"
-                style={{ ["--anillo" as string]: color }}
-              />
-            )}
-            <div className="min-w-0">
-              <div className="truncate font-semibold" style={{ fontSize: "var(--t-fila)" }}>
-                {empleadoVisible}
-              </div>
-              <div style={{ fontSize: "var(--t-micro)", color: "var(--muted-2)" }}>
-                {modoVisible === "humano"
-                  ? "en silencio · tú tienes el control"
-                  : modoVisible === "pausado"
-                    ? "pausado"
-                    : "respondiendo"}
-              </div>
-            </div>
-          </div>
-        </div>
-
         {!d ? (
           <EsqueletoContexto />
         ) : (
-        <>
-        <div className="tarjeta p-3.5">
-          <Rotulo>Etiquetas</Rotulo>
-          <EtiquetasEditor chatId={d.chatId} etiquetas={d.etiquetas} />
-        </div>
-
-        {/* Cobros del chat (migración 289). La tarjeta no se dibuja si no hay. */}
-        <PagosCard pagos={d.pagos} />
-
-        {/* Aviso de pedido listo: solo rubros que entregan (imprenta/tienda). */}
-        {d.puedeAvisarPedido && (
-          <AvisarPedido empleadoId={empleadoId!} chatId={d.chatId} />
-        )}
-
-        <div className="tarjeta p-3.5">
-          <Rotulo>Contexto</Rotulo>
-          <dl className="mt-2 space-y-1.5">
-            <Dato etiqueta="Etapa">
-              {(() => {
-                const e = metaEtapa(d.etapa);
-                return (
-                  <span className="pildora" style={{ background: e.fondo, color: e.color }}>
-                    {e.label}
-                  </span>
-                );
-              })()}
-            </Dato>
-            <Dato etiqueta="Mensajes">
-              <span className="cifra">{d.mensajesTotal}</span>
-            </Dato>
-            {/* Un contacto anterior al trigger de la 250 puede no tener
-                primer mensaje registrado. Se omite la fila en vez de
-                mostrar una fecha inventada o un guion sin explicación. */}
-            {d.clienteDesde && (
-              <Dato etiqueta="Cliente desde">
-                {/* Solo la fecha: la hora exacta en que alguien escribió por
-                    primera vez hace meses no le sirve a nadie. */}
-                <span className="cifra">
-                  {new Intl.DateTimeFormat("es-CL", {
-                    timeZone: "America/Santiago",
-                    day: "numeric",
-                    month: "short",
-                    year: "numeric",
-                  }).format(new Date(d.clienteDesde))}
-                </span>
-              </Dato>
-            )}
-            {/* Solo cuando la ventana EXISTE (Cloud). En WAHA decía «Cerrada». */}
-            {(d.ventana === "abierta" || d.ventana === "cerrada") && (
-              <Dato etiqueta="Ventana 24 h">
-                <span
-                  className="pildora"
-                  style={
-                    d.ventana === "abierta"
-                      ? { background: "var(--ok-suave)", color: "var(--ok)" }
-                      : { background: "var(--fondo-hundido)", color: "var(--muted)" }
-                  }
-                >
-                  {d.ventana === "abierta" ? "Abierta" : "Cerrada"}
-                </span>
-              </Dato>
-            )}
-          </dl>
-        </div>
-
-        {d.resultados.length > 0 && (
-          <div className="tarjeta p-3.5">
-            <Rotulo>Resultados</Rotulo>
-            <div className="mt-2 flex flex-wrap gap-1.5">
-              {d.resultados.map((r, i) => (
-                <span key={`${r}-${i}`} className="pildora-ok">
-                  {ETIQUETA_RESULTADO[r] ?? r}
-                </span>
-              ))}
-            </div>
-          </div>
-        )}
-
-        {d.notas && (
-          <div className="tarjeta p-3.5">
-            <Rotulo>Nota interna</Rotulo>
-            <p
-              className="mt-2 whitespace-pre-wrap"
-              style={{ fontSize: "var(--t-menor)", color: "var(--muted)" }}
-            >
-              {d.notas}
-            </p>
-            {/* Se dice explícito porque es la duda que aparece siempre: si
-                el cliente puede leer esto. */}
-            <p className="mt-2" style={{ fontSize: "var(--t-micro)", color: "var(--muted-3)" }}>
-              Solo la ve tu equipo. El cliente nunca la lee.
-            </p>
-          </div>
-        )}
-
-        <Link
-          href={`/clientes/${d.chatId}`}
-          className="btn-suave w-full justify-center"
-        >
-          Ver ficha completa →
-        </Link>
-        </>
+          /*
+            FICHA LATERAL (Fase 1): siguiente acción, estado comercial,
+            atención, cliente y actividad, del mismo núcleo que Inicio. Los
+            bloques que ya existían (cobros, pedido listo, etiquetas, nota)
+            siguen abajo como secciones de la misma tarjeta.
+          */
+          <FichaLateral
+            d={d}
+            empleadoId={empleadoId!}
+            extras={
+              <>
+                <PagosCard pagos={d.pagos} />
+                {d.puedeAvisarPedido && <AvisarPedido empleadoId={empleadoId!} chatId={d.chatId} />}
+                <section className="px-4 py-3.5">
+                  <h3 className="rotulo mb-2">Etiquetas</h3>
+                  <EtiquetasEditor chatId={d.chatId} etiquetas={d.etiquetas} />
+                </section>
+                {d.notas && (
+                  <section className="px-4 py-3.5">
+                    <h3 className="rotulo mb-2">Nota interna</h3>
+                    <p className="whitespace-pre-wrap" style={{ fontSize: "var(--t-menor)", color: "var(--muted)" }}>
+                      {d.notas}
+                    </p>
+                    {/* Se dice explícito porque es la duda que aparece siempre. */}
+                    <p className="mt-2" style={{ fontSize: "var(--t-meta)", color: "var(--muted-2)" }}>
+                      Solo la ve tu equipo. El cliente nunca la lee.
+                    </p>
+                  </section>
+                )}
+                <div className="px-4 py-3">
+                  <Link href={`/clientes/${d.chatId}`} className="btn-suave w-full justify-center">
+                    Ver ficha completa →
+                  </Link>
+                </div>
+              </>
+            }
+          />
         )}
       </aside>
     )}

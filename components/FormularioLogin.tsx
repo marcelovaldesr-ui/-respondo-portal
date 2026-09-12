@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { supabaseNavegador } from "@/lib/supabaseNavegador";
+import { origenParaEnlace } from "@/lib/origenes";
 
 const MENSAJES: Record<string, string> = {
   "enlace-invalido": "Ese enlace no es válido. Pide uno nuevo.",
@@ -27,7 +28,9 @@ export default function FormularioLogin({ error }: { error?: string }) {
         email: email.trim().toLowerCase(),
         // Flujo implicit → /auth/entrar (página cliente). Funciona desde
         // cualquier dispositivo, no solo el que pidió el enlace.
-        options: { emailRedirectTo: `${window.location.origin}/auth/entrar` },
+        // (Fase 1) Solo a un origen confiable: desde un preview o una copia
+        // del portal, el enlace vuelve al canónico y no a esa copia.
+        options: { emailRedirectTo: `${origenParaEnlace(window.location.origin)}/auth/entrar` },
       });
       if (err) throw err;
       setEstado("enviado");

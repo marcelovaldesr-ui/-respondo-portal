@@ -16,9 +16,11 @@ export async function cambiarEtapa(formData: FormData): Promise<{ ok: boolean; e
   const etapa = String(formData.get("etapa") ?? "") as Etapa;
   if (!chatId || !etapa) return { ok: false, error: "Faltan datos" };
 
-  const r = await moverEtapa(usuario.clienteId, chatId, etapa);
+  const motivo = etapa === "perdido" ? String(formData.get("motivo") ?? "") || null : null;
+  const r = await moverEtapa(usuario.clienteId, chatId, etapa, undefined, { motivo });
   revalidatePath("/embudo");
   revalidatePath("/conversaciones");
+  revalidatePath("/inicio");
   return r;
 }
 

@@ -125,6 +125,29 @@ export function validarCobro(s: SolicitudCobro): CobroValidado {
 }
 
 /**
+ * PAGO RECIBIDO SIN COBRO PREVIO (Fase 1).
+ *
+ * El cliente dice «ya transferí» y el detector deja «Pago por confirmar». Si el
+ * negocio nunca mandó un cobro desde el portal (transfirió a la cuenta de
+ * siempre), no había forma de CONFIRMAR ese pago: la etiqueta quedaba para
+ * siempre. Esto registra el pago ya confirmado. No envía nada al cliente, así
+ * que no hace falta enlace de pago; sí hace falta un monto real.
+ */
+export function validarPagoRecibido(s: {
+  monto: unknown;
+  concepto: unknown;
+}): { ok: true; monto: number; concepto: string } | { ok: false; error: string } {
+  const crudo = typeof s.monto === "string" ? s.monto.replace(/[.\s$]/g, "") : s.monto;
+  const monto = Math.round(Number(crudo));
+  if (!Number.isFinite(monto) || monto <= 0) return { ok: false, error: "Indica el monto que llegó." };
+  if (monto < MONTO_MIN) return { ok: false, error: `El monto mínimo es $${MONTO_MIN.toLocaleString("es-CL")}.` };
+  if (monto > MONTO_MAX) return { ok: false, error: `El monto supera el máximo de $${MONTO_MAX.toLocaleString("es-CL")}.` };
+  const concepto = String(s.concepto ?? "").trim().replace(/\s+/g, " ") || "Pago recibido";
+  if (concepto.length > 120) return { ok: false, error: "El detalle es muy largo (máximo 120 caracteres)." };
+  return { ok: true, monto, concepto };
+}
+
+/**
  * Referencia corta y legible del cobro: P-XXXXXX.
  *
  * Es lo que une el mensaje de WhatsApp, la fila en la base y —cuando el negocio

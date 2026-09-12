@@ -30,11 +30,18 @@ function armarMensaje(nombre: string, negocio: string, cotizado: string): string
 
 export function PropuestasLista({
   propuestas: iniciales,
-  soloLectura = false,
+  puedeAprobar = false,
+  puedeDescartar = false,
   negocio = "",
 }: {
   propuestas: PropuestaConContacto[];
-  soloLectura?: boolean;
+  /** Aprobar = autorizar un mensaje pagado: solo el dueño (Fase 0). */
+  puedeAprobar?: boolean;
+  /**
+   * Descartar no gasta ni escribe a nadie: el staff puede hacerlo, como dice
+   * lib/permisos.ts. Antes la UI le escondía también este botón (Fase 1).
+   */
+  puedeDescartar?: boolean;
   negocio?: string;
 }) {
   const [propuestas, setPropuestas] = useState(iniciales);
@@ -68,7 +75,7 @@ export function PropuestasLista({
             {error ?? aviso}
           </p>
         )}
-        {soloLectura
+        {!puedeAprobar && !puedeDescartar
           ? "Nada por acá todavía."
           : "No hay cotizaciones por retomar. Cuando el asistente encuentre alguna que quedó sin respuesta, aparecerá acá antes de que salga."}
       </div>
@@ -128,29 +135,28 @@ export function PropuestasLista({
           </div>
 
           <div className="mt-3 flex flex-wrap items-center gap-1.5">
-            {!soloLectura && (
-              <>
-                <button
-                  onClick={() => void decidir(p, "si")}
-                  disabled={ocupado === p.id}
-                  className="rounded px-3 py-1.5 text-[12.5px] font-semibold disabled:opacity-50"
-                  style={{ background: "#DCFCE7", color: "#166534" }}
-                >
-                  Retomar
-                </button>
-                <button
-                  onClick={() => void decidir(p, "no")}
-                  disabled={ocupado === p.id}
-                  className="rounded px-3 py-1.5 text-[12.5px] disabled:opacity-50"
-                  style={{ background: "#F3F4F6", color: "#6B7280" }}
-                >
-                  No
-                </button>
-              </>
+            {puedeAprobar && (
+              <button
+                onClick={() => void decidir(p, "si")}
+                disabled={ocupado === p.id}
+                className="btn-fila-azul disabled:opacity-50"
+              >
+                Retomar
+              </button>
+            )}
+            {puedeDescartar && (
+              <button onClick={() => void decidir(p, "no")} disabled={ocupado === p.id} className="btn-fila disabled:opacity-50">
+                Descartar
+              </button>
             )}
             <Link
-              href={`/conversaciones?chat=${encodeURIComponent(p.chat_id)}`}
-              className="btn-suave px-2.5 py-1.5 text-[12.5px]"
+              href={
+                p.empleadoId
+                  ? `/conversaciones?emp=${encodeURIComponent(p.empleadoId)}&chat=${encodeURIComponent(p.chat_id)}`
+                  : `/clientes/${encodeURIComponent(p.chat_id)}`
+              }
+              className="btn-texto"
+              style={{ fontSize: "var(--t-menor)" }}
             >
               Ver conversación →
             </Link>

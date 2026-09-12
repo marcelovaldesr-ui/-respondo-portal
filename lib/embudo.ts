@@ -2,6 +2,21 @@ import { db } from "@/lib/db";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { idsEmpleadosDeCliente } from "@/lib/empleadosCache";
 import { notificarConTope, notificarYEsperar } from "@/lib/puenteSalida";
+import {
+  DIAS_SILENCIO,
+  ETAPAS,
+  MOTIVO_SILENCIO,
+  ORDEN_ETAPA,
+  datosConPerdidaAnterior,
+  esMotivoPerdida,
+  metaEtapa,
+  motivoCierrePorSilencio,
+  type Etapa,
+} from "@/lib/etapasCore";
+
+// El catálogo vive en etapasCore (puro). Se re-exporta para no tocar imports.
+export { DIAS_SILENCIO, ETAPAS, MOTIVO_SILENCIO, ORDEN_ETAPA, metaEtapa };
+export type { Etapa };
 
 /**
  * EMBUDO — en qué va cada conversación.
@@ -20,52 +35,6 @@ import { notificarConTope, notificarYEsperar } from "@/lib/puenteSalida";
  * "cotizado", un mensaje nuevo no la devuelve a "nuevo".
  */
 
-export type Etapa = "nuevo" | "interesado" | "cotizado" | "ganado" | "perdido";
-
-export const ETAPAS: {
-  valor: Etapa;
-  label: string;
-  descripcion: string;
-  color: string;
-  fondo: string;
-}[] = [
-  {
-    valor: "nuevo",
-    label: "Nuevo",
-    descripcion: "Escribió; el asistente aún no detecta intención",
-    color: "#475569",
-    fondo: "#F1F5F9",
-  },
-  {
-    valor: "interesado",
-    label: "Interesado",
-    descripcion: "Muestra intención de compra",
-    color: "#9A3412",
-    fondo: "#FFF7ED",
-  },
-  {
-    valor: "cotizado",
-    label: "Cotizado",
-    descripcion: "Ya tiene precio o propuesta",
-    color: "#92400E",
-    fondo: "#FEF9C3",
-  },
-  {
-    valor: "ganado",
-    label: "Ganado",
-    descripcion: "Compró o agendó",
-    color: "#166534",
-    fondo: "#DCFCE7",
-  },
-  {
-    valor: "perdido",
-    label: "Perdido",
-    descripcion: "No prosperó",
-    color: "#7F1D1D",
-    fondo: "#FEE2E2",
-  },
-];
-
 /**
  * CIERRE POR SILENCIO — la salida que le faltaba al embudo.
  *
@@ -83,10 +52,6 @@ export const ETAPAS: {
  * Nunca toca lo que movió una persona (etapa_manual). El criterio del dueño
  * siempre gana, incluso contra el reloj.
  */
-export const DIAS_SILENCIO = 7;
-
-/** Motivo que se guarda en ed_contactos.etapa_motivo (migración 251). */
-export const MOTIVO_SILENCIO = "sin_respuesta";
 
 export function enSilencio(
   ultimoRol: string | null,
@@ -97,19 +62,6 @@ export function enSilencio(
   // Si habló el cliente al final, la pelota es del negocio: no es silencio.
   if ((ultimoRol ?? "cliente") === "cliente") return false;
   return Date.now() - new Date(ultimoEn).getTime() > dias * 86400_000;
-}
-
-/** Orden del embudo: se usa para no retroceder de etapa automáticamente. */
-export const ORDEN_ETAPA: Record<Etapa, number> = {
-  nuevo: 0,
-  interesado: 1,
-  cotizado: 2,
-  ganado: 3,
-  perdido: 3, // terminal, mismo nivel que ganado
-};
-
-export function metaEtapa(valor: string) {
-  return ETAPAS.find((e) => e.valor === valor) ?? ETAPAS[0];
 }
 
 /**
@@ -149,6 +101,12 @@ export type TarjetaEmbudo = {
   esperandoHumano: boolean;
   /** "sin_respuesta" si la cerró el reloj; null si fue una señal o una persona. */
   motivo: string | null;
+  /**
+   * Con quién abrir la conversación: el último empleado que habló (Fase 1).
+   * Antes el tablero enlazaba siempre con Tino y, en un negocio sin Tino o con
+   * el chat en Beto, el enlace no abría nada.
+   */
+  empleadoId: string | null;
 };
 
 /**
@@ -222,7 +180,7 @@ async function calcularEmbudo(
   let consultaContactos = supa
     .from("ed_contactos")
     .select(
-      "chat_id, nombre, etiquetas, etapa, etapa_manual, etapa_motivo, etapa_en, ultimo_mensaje_en, ultimo_mensaje_texto, ultimo_mensaje_rol",
+      "chat_id, nombre, etiquetas, etapa, etapa_manual, etapa_motivo, etapa_en, ultimo_mensaje_en, ultimo_mensaje_texto, ultimo_mensaje_rol, ultimo_empleado_id, datos",
     )
     .eq("cliente_id", clienteId);
   if (corteActividad) consultaContactos = consultaContactos.gte("ultimo_mensaje_en", corteActividad);
@@ -333,7 +291,9 @@ async function calcularEmbudo(
         enSilencio(ultimoRol, ultimoEn)
       ) {
         etapa = "perdido";
-        motivo = MOTIVO_SILENCIO;
+        // Una pérdida explícita previa (y sin mensajes nuevos) no se convierte
+        // en «sin respuesta»: Beto no debe retomar a quien dijo que no.
+        motivo = motivoCierrePorSilencio(c.datos, ultimoRol, ultimoEn);
         cambios.push({ chat_id: chatId, etapa, motivo });
       }
     }
@@ -348,6 +308,7 @@ async function calcularEmbudo(
       ultimoEn,
       esperandoHumano: esperando.has(chatId),
       motivo,
+      empleadoId: (c.ultimo_empleado_id as string | null) ?? null,
     });
   }
 
@@ -437,7 +398,8 @@ async function persistirEmbudo(clienteId: string, calc: CalculoEmbudo, supa: Sup
             canal: t.chatId.startsWith("ig:") ? "instagram" : "whatsapp",
             etapa: cambio.etapa,
             etapaManual: false, // por construcción: acá solo entran cambios automáticos
-            etapaMotivo: cambio.motivo,
+            // Solo motivos que Gestión ya conocía (ver moverEtapa).
+            etapaMotivo: cambio.motivo === MOTIVO_SILENCIO ? cambio.motivo : null,
             etapaEn: ahora,
             etiquetas: t.etiquetas,
             ultimoMensajeEn: t.ultimoEn,
@@ -462,12 +424,45 @@ export async function moverEtapa(
   chatId: string,
   etapa: Etapa,
   supaOpt?: SupabaseClient,
+  opts: { motivo?: string | null } = {},
 ): Promise<{ ok: boolean; error?: string }> {
   if (!ETAPAS.some((e) => e.valor === etapa)) return { ok: false, error: "Etapa no válida" };
   const supa = supaOpt ?? db();
+
+  /**
+   * MOTIVO DE PÉRDIDA (Fase 1). Mover a Perdido guarda POR QUÉ: «sin
+   * respuesta» sigue siendo retomable por Beto; «no le interesó», «eligió a
+   * otro», «no quiere que lo contacten» no se retoman nunca. Un motivo que no
+   * está en el catálogo se rechaza en vez de guardarse como texto libre.
+   */
+  const motivo = etapa === "perdido" ? (opts.motivo ?? null) : null;
+  if (motivo !== null && !esMotivoPerdida(motivo)) return { ok: false, error: "Motivo no válido" };
+
+  const { data: actual, error: errLeer } = await supa
+    .from("ed_contactos")
+    .select("etapa, etapa_motivo, etapa_en, etiquetas, datos")
+    .eq("cliente_id", clienteId) // barrera de acceso
+    .eq("chat_id", chatId)
+    .maybeSingle();
+  if (errLeer) return { ok: false, error: errLeer.message };
+  if (!actual) return { ok: false, error: "Conversación no encontrada" };
+
+  const ahora = new Date().toISOString();
+  const cambios: Record<string, unknown> = { etapa, etapa_manual: true, etapa_motivo: motivo, etapa_en: ahora };
+  // Sale de Perdido: se conserva por qué estaba perdido.
+  if (actual.etapa === "perdido" && etapa !== "perdido") {
+    cambios.datos = datosConPerdidaAnterior(actual.datos, actual.etapa_motivo as string | null, actual.etapa_en as string | null);
+  }
+  // «No quiere que lo contacten» se vuelve la etiqueta que TODO el producto ya
+  // respeta (Beto, seguimientos, reingreso, avisos de pedido).
+  if (motivo === "no_contactar") {
+    const etiquetas = (actual.etiquetas as string[] | null) ?? [];
+    if (!etiquetas.includes("no_contactar")) cambios.etiquetas = [...etiquetas, "no_contactar"];
+  }
+
   const { error } = await supa
     .from("ed_contactos")
-    .update({ etapa, etapa_manual: true, etapa_motivo: null, etapa_en: new Date().toISOString() })
+    .update(cambios)
     .eq("cliente_id", clienteId) // barrera de acceso
     .eq("chat_id", chatId);
   if (error) return { ok: false, error: error.message };
@@ -490,8 +485,10 @@ export async function moverEtapa(
       canal: chatId.startsWith("ig:") ? "instagram" : "whatsapp",
       etapa,
       etapaManual: true,
-      etapaMotivo: null,
-      etapaEn: new Date().toISOString(),
+      // Contrato con un sistema externo (Gestión): solo viajan motivos que ya
+      // conocía. Los motivos nuevos de pérdida se quedan en el portal.
+      etapaMotivo: motivo === MOTIVO_SILENCIO ? motivo : null,
+      etapaEn: ahora,
     },
     supa,
   });
@@ -518,7 +515,7 @@ export async function liberarEtapa(
   const [contactoR, empleadosR] = await Promise.all([
     supa
       .from("ed_contactos")
-      .select("etiquetas")
+      .select("etiquetas, etapa, etapa_motivo, etapa_en, datos")
       .eq("cliente_id", clienteId)
       .eq("chat_id", chatId)
       .maybeSingle(),
@@ -547,9 +544,25 @@ export async function liberarEtapa(
     tieneVenta,
   });
 
+  const cambios: Record<string, unknown> = {
+    etapa_manual: false,
+    etapa,
+    etapa_motivo: null,
+    etapa_en: new Date().toISOString(),
+  };
+  /**
+   * (Fase 1, revisión) Sale de Perdido: se guarda POR QUÉ estaba perdido. Sin
+   * esto, «no le interesó» se borraba y el cierre por silencio la volvía
+   * `sin_respuesta` — retomable por Beto. Ver motivoCierrePorSilencio.
+   */
+  const previo = contactoR.data;
+  if (previo?.etapa === "perdido" && etapa !== "perdido") {
+    cambios.datos = datosConPerdidaAnterior(previo.datos, previo.etapa_motivo as string | null, previo.etapa_en as string | null);
+  }
+
   const { error } = await supa
     .from("ed_contactos")
-    .update({ etapa_manual: false, etapa, etapa_motivo: null, etapa_en: new Date().toISOString() })
+    .update(cambios)
     .eq("cliente_id", clienteId)
     .eq("chat_id", chatId);
   return { ok: !error };

@@ -24,22 +24,56 @@ import { notificarYEsperar } from "@/lib/puenteSalida";
  * cambiar un id en la petición dejaría pausar el bot de otro negocio.
  */
 
-export async function cambiarModo(formData: FormData) {
+export async function cambiarModo(formData: FormData): Promise<ResultadoEnvio> {
   const usuario = await obtenerUsuarioConPermiso("operar_conversaciones");
-  if (!usuario) throw new Error("Sesión no válida");
+  if (!usuario) return { ok: false, error: "Sesión no válida" };
 
   const empleadoId = String(formData.get("empleadoId") ?? "");
   const chatId = String(formData.get("chatId") ?? "");
   const modo = String(formData.get("modo") ?? "") as Modo;
 
-  if (!empleadoId || !chatId || !MODOS.includes(modo)) return;
+  if (!empleadoId || !chatId || !MODOS.includes(modo)) return { ok: false, error: "Faltan datos" };
 
   // El trabajo real vive en lib/responderChat.ts, compartido con la ruta de
   // API que usa la app de gestión del cliente. Acá solo va la sesión.
-  await fijarModo({ clienteId: usuario.clienteId, empleadoId, chatId, modo });
+  // (Fase 1) Se devuelve el resultado: antes un fallo quedaba mudo y la barra
+  // mostraba un modo que el servidor no había aceptado.
+  const r = await fijarModo({ clienteId: usuario.clienteId, empleadoId, chatId, modo });
 
   revalidatePath("/conversaciones");
   revalidatePath("/inicio");
+  return r;
+}
+
+/**
+ * «YA LO ATENDÍ» (Fase 1). Cierra las derivaciones abiertas del chat sin
+ * escribirle al cliente ni cambiar quién atiende: el caso del pendiente que se
+ * resolvió por teléfono, o del que se perdió hace semanas y seguía contando en
+ * Inicio. Misma función de cierre que usa todo el producto.
+ */
+export async function marcarAtendida(formData: FormData): Promise<{ ok: boolean; error?: string }> {
+  const usuario = await obtenerUsuarioConPermiso("operar_conversaciones");
+  if (!usuario) return { ok: false, error: "Sesión no válida" };
+  const chatId = String(formData.get("chatId") ?? "");
+  if (!chatId) return { ok: false, error: "Faltan datos" };
+
+  const supa = db();
+  const { data: contacto } = await supa
+    .from("ed_contactos")
+    .select("chat_id")
+    .eq("cliente_id", usuario.clienteId)
+    .eq("chat_id", chatId)
+    .maybeSingle();
+  if (!contacto) return { ok: false, error: "Sin acceso a esta conversación" };
+
+  await cerrarEscalacionesPendientes(supa, {
+    empleadoIds: await idsEmpleadosDeCliente(usuario.clienteId),
+    chatId,
+    clienteId: usuario.clienteId,
+  });
+  revalidatePath("/conversaciones");
+  revalidatePath("/inicio");
+  return { ok: true };
 }
 
 /**

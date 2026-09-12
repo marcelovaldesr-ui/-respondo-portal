@@ -4,6 +4,8 @@ import { useEffect, useState } from "react";
 import { avisarPedidoListo, marcarPago } from "@/app/(portal)/conversaciones/accionesPagos";
 import { formatearMonto } from "@/lib/pagosCore";
 import type { Pago } from "@/lib/pagos";
+import { ESTADO_COBRO } from "@/lib/estadoComercialVista";
+import { Estado } from "@/components/estado/Estados";
 
 /**
  * TARJETAS DEL PANEL DE CONTEXTO: los cobros del chat y el aviso de pedido.
@@ -14,11 +16,6 @@ import type { Pago } from "@/lib/pagos";
  * este cliente llegó segundo, recibe el error y se le muestra.
  */
 
-const ETIQUETA: Record<Pago["estado"], { txt: string; color: string; fondo: string }> = {
-  pendiente: { txt: "pendiente", color: "#92400E", fondo: "#FEF3C7" },
-  pagado: { txt: "pagado", color: "#166534", fondo: "#DCFCE7" },
-  anulado: { txt: "anulado", color: "#6B7280", fondo: "#F3F4F6" },
-};
 
 export function PagosCard({ pagos: iniciales }: { pagos: Pago[] | undefined }) {
   /**
@@ -60,73 +57,67 @@ export function PagosCard({ pagos: iniciales }: { pagos: Pago[] | undefined }) {
     }
   };
 
+  /**
+   * (Fase 1) Sección plana dentro de la ficha lateral: sin tarjeta anidada,
+   * estados con el tono compartido (lib/estadoComercialVista.ts) y botones
+   * de 12,5 px con objetivo táctil real. El mapa de colores estaba copiado
+   * con los mismos hex acá y en CobrosLista.
+   */
   return (
-    <div className="tarjeta p-3.5">
-      <div
-        className="mb-2 font-semibold uppercase"
-        style={{ fontSize: "var(--t-micro)", letterSpacing: ".08em", color: "var(--muted-3)" }}
-      >
-        Cobros de este chat
-      </div>
-      <div className="space-y-2">
+    <section className="px-4 py-3.5">
+      <h3 className="rotulo mb-2">Cobros de este chat</h3>
+      <ul className="space-y-2">
         {pagos.map((p) => {
-          const e = ETIQUETA[p.estado];
+          const e = ESTADO_COBRO[p.estado] ?? ESTADO_COBRO.pendiente;
           return (
-            <div
-              key={p.id}
-              className="rounded-lg border p-2"
-              style={{ borderColor: "var(--borde)" }}
-            >
-              <div className="flex items-baseline justify-between gap-2">
-                <span className="cifra text-[13px] font-bold">{formatearMonto(p.monto)}</span>
-                <span
-                  className="rounded-full px-2 py-0.5 text-[10.5px] font-semibold"
-                  style={{ color: e.color, background: e.fondo }}
-                >
-                  {e.txt}
+            <li key={p.id} className="rounded-md border px-2.5 py-2" style={{ borderColor: "var(--borde)" }}>
+              <div className="flex items-center justify-between gap-2">
+                <span className="cifra font-semibold" style={{ fontSize: "var(--t-fila)" }}>
+                  {formatearMonto(p.monto)}
                 </span>
+                <Estado tono={e.tono}>{e.label}</Estado>
               </div>
-              <div className="truncate text-[12px]" style={{ color: "var(--muted)" }}>
+              <div className="truncate" style={{ fontSize: "var(--t-menor)", color: "var(--muted)" }}>
                 {p.concepto}
               </div>
-              <div className="mt-1 flex items-center justify-between">
-                <span className="cifra text-[10.5px]" style={{ color: "var(--muted-2)" }}>
+              <div className="mt-1 flex flex-wrap items-center justify-between gap-2">
+                <span className="cifra" style={{ fontSize: "var(--t-meta)", color: "var(--muted-2)" }}>
                   {/* El folio del negocio manda: es el que se le pidió al
                       cliente y con el que se encuentra el trabajo. La
                       referencia interna queda detrás, para conciliar. */}
                   {p.referenciaExterna ? `N° ${p.referenciaExterna} · ${p.referencia}` : p.referencia}
                 </span>
                 {p.estado === "pendiente" && (
-                  <span className="flex gap-1">
+                  <span className="flex gap-1.5">
                     <button
                       onClick={() => void cambiar(p, "pagado")}
                       disabled={ocupado === p.id}
-                      className="rounded px-2 py-0.5 text-[11px] font-semibold disabled:opacity-50"
-                      style={{ background: "#DCFCE7", color: "#166534" }}
+                      className="btn-fila disabled:opacity-50"
+                      style={{ minHeight: 28, fontSize: "var(--t-menor)", color: "var(--ok)" }}
                     >
                       Marcar pagado
                     </button>
                     <button
                       onClick={() => void cambiar(p, "anulado")}
                       disabled={ocupado === p.id}
-                      className="rounded px-2 py-0.5 text-[11px] disabled:opacity-50"
-                      style={{ background: "#F3F4F6", color: "#6B7280" }}
+                      className="btn-texto disabled:opacity-50"
+                      style={{ minHeight: 28, padding: "0 6px", fontSize: "var(--t-menor)" }}
                     >
                       Anular
                     </button>
                   </span>
                 )}
               </div>
-            </div>
+            </li>
           );
         })}
-      </div>
+      </ul>
       {error && (
-        <p className="mt-2 text-[12px]" style={{ color: "var(--alerta, #B91C1C)" }}>
+        <p className="mt-2" role="alert" style={{ fontSize: "var(--t-meta)", color: "var(--peligro)" }}>
           {error}
         </p>
       )}
-    </div>
+    </section>
   );
 }
 
@@ -174,15 +165,10 @@ export function AvisarPedido({
   };
 
   return (
-    <div className="tarjeta p-3.5">
-      <div
-        className="mb-2 font-semibold uppercase"
-        style={{ fontSize: "var(--t-micro)", letterSpacing: ".08em", color: "var(--muted-3)" }}
-      >
-        Pedido listo
-      </div>
+    <section className="px-4 py-3.5">
+      <h3 className="rotulo mb-2">Pedido listo</h3>
       {estado === "listo" ? (
-        <p className="text-[12.5px]" style={{ color: "var(--ok, #15803D)" }}>
+        <p style={{ fontSize: "var(--t-menor)", color: "var(--ok)" }}>
           ✓ Aviso programado. Sale en minutos dentro del horario hábil — si es de
           noche o fin de semana, parte a primera hora.
         </p>
@@ -193,22 +179,22 @@ export function AvisarPedido({
             onChange={(e) => setDetalle(e.target.value)}
             maxLength={80}
             placeholder="qué pedido (ej: 500 tarjetas)"
-            className="campo mb-2 w-full text-[12.5px]"
+            className="campo mb-2 w-full"
           />
           <button
             onClick={() => void avisar()}
             disabled={estado === "enviando"}
-            className="btn-suave w-full justify-center text-[12.5px] disabled:opacity-50"
+            className="btn-suave w-full justify-center disabled:opacity-50"
           >
             {estado === "enviando" ? "Programando…" : "Avisar que está listo para retirar"}
           </button>
           {error && (
-            <p className="mt-2 text-[12px]" style={{ color: "var(--alerta, #B91C1C)" }}>
+            <p className="mt-2" role="alert" style={{ fontSize: "var(--t-meta)", color: "var(--peligro)" }}>
               {error}
             </p>
           )}
         </>
       )}
-    </div>
+    </section>
   );
 }

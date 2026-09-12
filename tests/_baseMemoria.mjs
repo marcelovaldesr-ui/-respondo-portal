@@ -47,9 +47,39 @@ function cumple(fila, [op, col, a, b]) {
     case "contains":
       if (Array.isArray(a)) return Array.isArray(v) && a.every((x) => v.includes(x));
       return v && Object.entries(a).every(([k, x]) => v[k] === x);
+    case "overlaps":
+      return Array.isArray(v) && a.some((x) => v.includes(x));
+    case "or":
+      // Subconjunto de la sintaxis de PostgREST: "col.op.valor,col.op.valor"
+      // con op ∈ eq | in.(a,b) | cs.{a,b} | is. Suficiente para las consultas del portal.
+      return partirOr(col).some(([c, o, val]) => {
+        if (o === "in") return cumple(fila, ["in", c, val.replace(/^\(|\)$/g, "").split(",")]);
+        if (o === "cs") return cumple(fila, ["contains", c, val.replace(/^\{|\}$/g, "").split(",")]);
+        if (o === "is") return cumple(fila, ["is", c, val === "null" ? null : val]);
+        return cumple(fila, [o, c, val]);
+      });
     default:
       throw new Error(`filtro ${op} no emulado`);
   }
+}
+
+function partirOr(expr) {
+  const partes = [];
+  let actual = "";
+  let nivel = 0;
+  for (const ch of expr) {
+    if (ch === "(" || ch === "{") nivel++;
+    if (ch === ")" || ch === "}") nivel--;
+    if (ch === "," && nivel === 0) {
+      partes.push(actual);
+      actual = "";
+    } else actual += ch;
+  }
+  if (actual) partes.push(actual);
+  return partes.map((p) => {
+    const [c, o, ...resto] = p.split(".");
+    return [c, o, resto.join(".")];
+  });
 }
 
 /**
@@ -97,9 +127,10 @@ export function crearBaseMemoria(tablas = {}, esquema = {}) {
         return Promise.resolve().then(() => ejecutar(q)).then(res, rej);
       },
     };
-    for (const f of ["eq", "neq", "in", "is", "gte", "lte", "lt", "gt", "not", "contains"]) {
+    for (const f of ["eq", "neq", "in", "is", "gte", "lte", "lt", "gt", "not", "contains", "overlaps"]) {
       b[f] = (...args) => { q.filtros.push([f, ...args]); return b; };
     }
+    b.or = (expr) => { q.filtros.push(["or", expr]); return b; };
     return b;
   }
 

@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { obtenerUsuarioConPermiso } from "@/lib/auth";
 import { obtenerConversacion } from "@/lib/conversaciones";
+import { tienePermiso } from "@/lib/permisos";
 
 export const dynamic = "force-dynamic";
 
@@ -40,7 +41,9 @@ export async function GET(request: NextRequest) {
   // `obtenerConversacion` valida por dentro que el empleado sea del cliente
   // logueado y devuelve null si no lo es: la barrera de aislamiento es la misma
   // que en la página, no una copia nueva que pueda quedar desalineada.
-  const detalle = await obtenerConversacion(usuario.clienteId, emp, chat);
+  const detalle = await obtenerConversacion(usuario.clienteId, emp, chat, {
+    puedeAprobarPagados: tienePermiso(usuario, "aprobar_mensajes_pagados"),
+  });
   if (!detalle) return NextResponse.json({ error: "No encontrado" }, { status: 404 });
 
   return NextResponse.json(detalle, { headers: { "Cache-Control": "no-store" } });

@@ -50,7 +50,7 @@ function esIOS(): boolean {
   return /iPad|iPhone|iPod/.test(navigator.userAgent);
 }
 
-export default function Notificaciones() {
+export default function Notificaciones({ variante = "franja" }: { variante?: "franja" | "cabecera" } = {}) {
   const [estado, setEstado] = useState<Estado>("cargando");
   const [trabajando, setTrabajando] = useState(false);
 
@@ -90,17 +90,24 @@ export default function Notificaciones() {
       const sus = await reg.pushManager.getSubscription();
       if (sus) {
         /**
-         * Se vuelve a registrar con la SESIÓN ACTUAL (Fase 0). La suscripción
-         * es del navegador, no de la persona: si en este navegador se entra
-         * con otra cuenta (otro negocio, otra persona), sin esto seguían
-         * llegando acá los avisos de la cuenta anterior. El servidor la ata al
-         * negocio y correo de quien tiene la sesión ahora.
+         * RE-SINCRONIZACIÓN SIN TRASPASO (Fase 1).
+         *
+         * Fase 0 la volvía a registrar con la sesión actual para que los avisos
+         * de otra cuenta no siguieran llegando acá, pero eso los TRASPASABA a
+         * quien entró, sin que esa persona activara nada. Ahora el servidor
+         * solo refresca si la suscripción ya es de esta cuenta; si es de otra
+         * (o ya no existe) responde 409 y este navegador se da de baja.
          */
-        void fetch("/api/push/suscribir", {
+        const r = await fetch("/api/push/suscribir", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(sus.toJSON()),
-        }).catch(() => undefined);
+          body: JSON.stringify({ ...sus.toJSON(), sincronizar: true }),
+        }).catch(() => null);
+        if (r?.status === 409) {
+          await sus.unsubscribe().catch(() => undefined);
+          if (vivo) setEstado("apagado");
+          return;
+        }
       }
       if (vivo) setEstado(sus ? "encendido" : "apagado");
     })();
@@ -154,8 +161,11 @@ export default function Notificaciones() {
       const reg = await navigator.serviceWorker.ready;
       const sus = await reg.pushManager.getSubscription();
       if (sus) {
-        await fetch(`/api/push/suscribir?endpoint=${encodeURIComponent(sus.endpoint)}`, {
+        // (Fase 1) El endpoint en el cuerpo, no en la URL (quedaba en los logs).
+        await fetch("/api/push/suscribir", {
           method: "DELETE",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ endpoint: sus.endpoint }),
         }).catch(() => undefined);
         await sus.unsubscribe().catch(() => undefined);
       }
@@ -193,6 +203,28 @@ export default function Notificaciones() {
   }
 
   const encendido = estado === "encendido";
+
+  /**
+   * VARIANTE CABECERA (Fase 1, Inicio): una línea al costado del título en vez
+   * de una franja que ocupaba el primer renglón de la portada para siempre,
+   * incluso con los avisos ya activos.
+   */
+  if (variante === "cabecera") {
+    return (
+      <span className="inline-flex flex-wrap items-center gap-2" style={{ fontSize: "var(--t-menor)", color: "var(--muted)" }}>
+        {encendido ? "Avisos activos en este dispositivo" : "Activa los avisos para enterarte cuando un cliente te necesite"}
+        <button
+          onClick={encendido ? apagar : encender}
+          disabled={trabajando}
+          className={(encendido ? "btn-texto px-1.5 py-0.5" : "btn-fila-azul") + " disabled:opacity-50"}
+          style={{ fontSize: "var(--t-menor)" }}
+        >
+          {trabajando ? "…" : encendido ? "Desactivar" : "Activar avisos"}
+        </button>
+      </span>
+    );
+  }
+
   return (
     <div
       className={marco}

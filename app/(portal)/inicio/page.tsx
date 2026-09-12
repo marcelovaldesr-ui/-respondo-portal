@@ -1,221 +1,59 @@
-import Link from "next/link";
 import Notificaciones from "@/components/pwa/Notificaciones";
+import NecesitaAtencion from "@/components/inicio/NecesitaAtencion";
+import PorCerrarse from "@/components/inicio/PorCerrarse";
+import EquipoDigital from "@/components/inicio/EquipoDigital";
+import Resultados from "@/components/inicio/Resultados";
 import { exigirUsuarioPortal } from "@/lib/auth";
-import { metaEmpleado } from "@/lib/empleados";
-import {
-  resumenEmpleados,
-  metricasCliente,
-  esperandoHumano,
-  formatearDuracion,
-  formatearCLP,
-  nombreMes,
-  type ResumenEmpleado,
-} from "@/lib/resumen";
-import { ETIQUETA_TRIGGER } from "@/lib/conversaciones";
-import { contadoresMenu, oportunidadesAbiertas } from "@/lib/contadores";
+import { tienePermiso } from "@/lib/permisos";
+import { formatearCLP } from "@/lib/resumen";
 import { db } from "@/lib/db";
 import { estadoDeCupo, type EstadoCupo } from "@/lib/cupoConversaciones";
 import { resumenPagos } from "@/lib/pagos";
-import { formatearMonto } from "@/lib/pagosCore";
-import { metaEtapa } from "@/lib/embudo";
 import { contarConversacionesActivas } from "@/lib/metricas";
 import { inicioDeMesChile } from "@/lib/fechas";
-import { contarVivas } from "@/lib/propuestasSeguimiento";
-import {
-  resumenAhorro,
-  formatearDuracion as duracionMin,
-  formatearCLP as pesos,
-} from "@/lib/analitica";
+import { contextoNegocio, panoramaInicio } from "@/lib/estadoComercial";
+import { resultadosInicio, resumenEquipo } from "@/lib/inicio";
 
 export const dynamic = "force-dynamic";
 
 /**
- * PORTADA — rediseño del 31-jul.
+ * INICIO — «¿Qué está pasando en mi negocio y qué necesita de mí?» (Fase 1).
  *
- * Antes esta pantalla abría con "Bienvenido, <negocio>" y cuatro métricas del
- * mes. El problema no era estético: era que no servía para nada. El dueño entra
- * al portal entre un cliente y otro, mira cinco segundos y necesita saber qué
- * hacer. Un saludo y un número de conversaciones no le dicen qué hacer.
+ * Cuatro bloques, en el orden en que se decide:
  *
- * Ahora la portada responde tres preguntas, en el orden en que le importan:
+ *   A. Necesita tu atención  — lo que exige una decisión, agrupado por urgencia
+ *   B. Por cerrarse          — cobros, cotizaciones e interesados con datos reales
+ *   C. Tu equipo digital     — qué hace cada empleado y qué logró
+ *   D. ¿Está funcionando?    — tres o cuatro cifras defendibles
  *
- *   1. ¿Alguien me está esperando?   → lo urgente, con la acción al lado
- *   2. ¿Qué está por cerrarse?       → la plata que está en juego hoy
- *   3. ¿Está funcionando lo que pago? → la justificación de la mensualidad
+ * A y B salen del ESTADO COMERCIAL compartido (lib/estadoComercialCore.ts): la
+ * ficha de la conversación usa exactamente las mismas reglas, así que la
+ * portada y el chat no pueden contradecirse sobre un mismo cliente.
  *
- * Cada bloque termina en un enlace a la pantalla que profundiza. La portada no
- * intenta reemplazar a Conversaciones ni a Analítica: los ordena.
- *
- * Nada de esto usa datos nuevos. Son los mismos que ya existían, puestos en el
- * orden en que se necesitan.
+ * Qué salió respecto de la versión anterior y por qué (docs/FASE1_ESTADO_COMERCIAL.md):
+ *  · bloque mensual de `ed_metricas`: ningún proceso escribe esa tabla (solo
+ *    semillas de demo). Métrica zombie.
+ *  · «dinero ahorrado»: supuesto sobre supuesto; vive en Analítica.
+ *  · franja permanente de avisos: ahora es una línea en la cabecera.
+ *  · cifras de plata (cobrado, plan) para el staff: solo el dueño las ve.
  */
 
-/** "Jueves 31 de julio · 09:14" — en hora de Chile, no del servidor. */
-function fechaTitulo(): string {
-  const ahora = new Date();
+/** "Jueves 11 de septiembre · 09:14" — en hora de Chile, no del servidor. */
+function fechaTitulo(ahora: number): string {
+  const d = new Date(ahora);
   const dia = new Intl.DateTimeFormat("es-CL", {
     timeZone: "America/Santiago",
     weekday: "long",
     day: "numeric",
     month: "long",
-  }).format(ahora);
+  }).format(d);
   const hora = new Intl.DateTimeFormat("es-CL", {
     timeZone: "America/Santiago",
     hour: "2-digit",
     minute: "2-digit",
     hour12: false,
-  }).format(ahora);
+  }).format(d);
   return `${dia.charAt(0).toUpperCase()}${dia.slice(1)} · ${hora}`;
-}
-
-/** Cuánto lleva esperando, en palabras. "18 h", "2 d", "40 min". */
-function haceCuanto(iso: string | null): string | null {
-  if (!iso) return null;
-  const min = Math.floor((Date.now() - new Date(iso).getTime()) / 60000);
-  if (min < 1) return "recién";
-  if (min < 60) return `${min} min`;
-  const h = Math.floor(min / 60);
-  if (h < 24) return `${h} h`;
-  return `${Math.floor(h / 24)} d`;
-}
-
-/** Encabezado de bloque con su enlace a la pantalla completa. */
-function Bloque({
-  titulo,
-  nota,
-  href,
-  hrefLabel,
-  children,
-}: {
-  titulo: string;
-  nota?: string;
-  href?: string;
-  hrefLabel?: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <section className="mt-8">
-      <div className="mb-2.5 flex items-baseline justify-between gap-4">
-        <h2 className="h-seccion">
-          {titulo}
-          {nota && (
-            <span className="font-normal" style={{ color: "var(--muted-3)" }}>
-              {" · "}
-              {nota}
-            </span>
-          )}
-        </h2>
-        {href && (
-          <Link
-            href={href}
-            className="shrink-0 font-semibold hover:underline"
-            style={{ fontSize: "var(--t-menor)", color: "var(--indigo)" }}
-          >
-            {hrefLabel} →
-          </Link>
-        )}
-      </div>
-      {children}
-    </section>
-  );
-}
-
-/**
- * Qué números mostrar según el rol. Solo se muestra lo que el motor registra
- * de verdad en ed_resultados: si algo no ocurrió, va en 0, nunca estimado.
- */
-function statsDeEmpleado(
-  r: ResumenEmpleado,
-  extra: { propuestasPorRevisar: number | null },
-): { label: string; valor: string }[] {
-  const n = (t: keyof ResumenEmpleado["resultados"]) => String(r.resultados[t] ?? 0);
-
-  /**
-   * BETO Y VERA CON DATOS QUE EXISTEN (Fase 0, 11-sep-2026).
-   *
-   * Antes Beto mostraba «Cotizaciones retomadas», «Clientes reactivados» y
-   * «Ventas recuperadas», y Vera «Reseñas conseguidas». Ningún proceso escribe
-   * esos tipos en ed_resultados (solo las semillas de demo): eran ceros
-   * estructurales que se leían como "Beto no logra nada". Ahora se muestra lo
-   * que sí se registra: lo que salió de verdad (sin descartados), quién
-   * respondió y lo que espera aprobación.
-   */
-  if (r.rol === "rita") {
-    return [
-      { label: "Seguimientos enviados", valor: String(r.seguimientosEnviados) },
-      { label: "Respondieron", valor: String(r.seguimientosConRespuesta) },
-      ...(extra.propuestasPorRevisar
-        ? [{ label: "Por aprobar", valor: String(extra.propuestasPorRevisar) }]
-        : []),
-    ];
-  }
-  if (r.rol === "vera") {
-    return [
-      { label: "Encuestas enviadas", valor: String(r.seguimientosPorTipo.encuesta_postventa ?? 0) },
-      { label: "Encuestas respondidas", valor: n("encuesta_respondida") },
-      { label: "Clientes molestos", valor: n("cliente_molesto") },
-    ];
-  }
-  return [
-    { label: "Conversaciones", valor: String(r.conversaciones) },
-    { label: "Cotizaciones enviadas", valor: n("cotizacion_enviada") },
-    { label: "Agendamientos", valor: n("agendamiento") },
-  ];
-}
-
-/** Variación vs el período de comparación, con el signo que corresponde. */
-function Variacion({
-  actual,
-  previo,
-  mejorSiBaja = false,
-  etiqueta,
-}: {
-  actual: number | null;
-  previo: number | null;
-  mejorSiBaja?: boolean;
-  etiqueta: string;
-}) {
-  if (actual == null || previo == null || previo === 0) return null;
-  const cambio = ((actual - previo) / previo) * 100;
-  const mejora = mejorSiBaja ? cambio < 0 : cambio > 0;
-  const signo = cambio > 0 ? "+" : "";
-  return (
-    <div className="mt-2 flex items-center gap-1.5 text-[12px]">
-      <span
-        className="font-bold"
-        style={{ color: mejora ? "var(--ok)" : "var(--muted)" }}
-      >
-        {signo}
-        {Math.round(cambio)}%
-      </span>
-      <span style={{ color: "var(--muted-2)" }}>{etiqueta}</span>
-    </div>
-  );
-}
-
-function Metrica({
-  label,
-  valor,
-  children,
-  destacada = false,
-}: {
-  label: string;
-  valor: string;
-  children?: React.ReactNode;
-  destacada?: boolean;
-}) {
-  return (
-    <div className="tarjeta px-5 py-4">
-      <div style={{ fontSize: "var(--t-menor)", color: "var(--muted)" }}>{label}</div>
-      <div
-        className="h-cifra cifra mt-1.5"
-        style={{ color: destacada ? "var(--indigo)" : "var(--tinta)" }}
-      >
-        {valor}
-      </div>
-      {children}
-    </div>
-  );
 }
 
 /**
@@ -238,16 +76,16 @@ function ConsumoDelPlan({ estado }: { estado: EstadoCupo }) {
 
   const pasado = porcentaje >= 100;
   const cerca = porcentaje >= 80;
-  const color = pasado ? "var(--peligro)" : cerca ? "var(--coral)" : "var(--indigo)";
+  const color = pasado ? "var(--peligro)" : cerca ? "var(--alerta)" : "var(--azul)";
 
   return (
-    <div className="tarjeta mb-3 px-4 py-4">
+    <div className="tarjeta px-4 py-4">
       <div className="flex items-baseline justify-between gap-3">
         <span style={{ fontSize: "var(--t-menor)", color: "var(--muted)" }}>
-          Conversaciones del mes
+          Conversaciones del ciclo de facturación
         </span>
         {etiquetaPlan && (
-          <span className="pildora-indigo shrink-0" style={{ fontSize: "var(--t-micro)" }}>
+          <span className="estado shrink-0" style={{ background: "var(--azul-suave)", color: "var(--azul)" }}>
             {etiquetaPlan}
           </span>
         )}
@@ -276,7 +114,7 @@ function ConsumoDelPlan({ estado }: { estado: EstadoCupo }) {
         />
       </div>
 
-      <div className="mt-2" style={{ fontSize: "var(--t-micro)", color: "var(--muted-2)" }}>
+      <div className="mt-2" style={{ fontSize: "var(--t-meta)", color: "var(--muted-2)" }}>
         {pasado ? (
           <>
             Pasaste el cupo incluido. <strong>Tu asistente sigue atendiendo igual</strong>
@@ -308,444 +146,86 @@ function ConsumoDelPlan({ estado }: { estado: EstadoCupo }) {
 
 export default async function Inicio() {
   const usuario = await exigirUsuarioPortal();
-  const [empleados, metricas, esperando, ahorro, oportunidades, abiertas, cupo, pagos, conversacionesMesCanon, propuestasPorRevisar] =
-    await Promise.all([
-      resumenEmpleados(usuario.clienteId),
-      metricasCliente(usuario.clienteId),
-      esperandoHumano(usuario.clienteId),
-      resumenAhorro(usuario.clienteId, 30),
-      contadoresMenu(usuario.clienteId),
-      oportunidadesAbiertas(usuario.clienteId),
-      estadoDeCupo(usuario.clienteId, db()),      // Cobros del mes (migración 289). Si la tabla no existe: ceros, sin romper.
-      resumenPagos(usuario.clienteId).catch(() => ({ pendientes: 0, pagadosMes: 0, montoMes: 0 })),
-      contarConversacionesActivas(usuario.clienteId, inicioDeMesChile()).catch(() => null),
-      // Sin la migración 297 devuelve null y la fila no se muestra.
-      contarVivas(usuario.clienteId, "cotizacion_sin_respuesta").catch(() => null),
-    ]);
+  const esDueno = usuario.rol === "dueno";
+  const supa = db();
+  const ctx = await contextoNegocio(
+    usuario.clienteId,
+    { puedeAprobarPagados: tienePermiso(usuario, "aprobar_mensajes_pagados") },
+    supa,
+  );
 
   /**
-   * ed_metricas solo se muestra si es del MES EN CURSO (Fase 0). En producción
-   * hoy solo la llenan las semillas de demo; sin este filtro, en septiembre la
-   * portada mostraba el bloque de julio como si fuera la foto actual.
+   * UNA TANDA EN PARALELO. El panorama (A y B) hace sus dos viajes internos;
+   * el equipo espera al panorama solo para dos cifras que ya calculó (chats
+   * derivados y sugerencias vivas), así no se consultan dos veces.
    */
-  const mesActual = inicioDeMesChile().slice(0, 7);
-  const mesDe = (periodo: string) => String(periodo).slice(0, 7);
-  const actual =
-    metricas.actual && mesDe(metricas.actual.periodo) >= mesActual.slice(0, 7) ? metricas.actual : null;
-  const comparacion = actual ? metricas.comparacion : null;
-  const pendientes = esperando.total;
-  const antes = comparacion?.esBasal ? "vs antes de Respondo" : "vs mes anterior";
+  const panoramaP = panoramaInicio(usuario.clienteId, ctx, supa);
+  const conversacionesP = contarConversacionesActivas(usuario.clienteId, inicioDeMesChile(), supa).catch(() => null);
+  const resultadosP = conversacionesP.then((n) => resultadosInicio(usuario.clienteId, n));
 
-  /**
-   * "Por cerrarse" sale del EMBUDO, no de ed_resultados.
-   *
-   * En la primera versión lo armé sumando cotizacion_enviada / agendamiento /
-   * lead_capturado. Con datos reales quedó en cero y el bloque desapareció...
-   * mientras el menú, al lado, mostraba "Embudo 9". Dos números del mismo
-   * portal diciendo cosas distintas sobre lo mismo. Leyendo de la misma fuente
-   * que el contador del menú, ya no pueden contradecirse.
-   */
-  const porCerrarse = [
-    { label: "Interesados", valor: oportunidades.interesados },
-    { label: "Cotizados", valor: oportunidades.cotizados },
-  ].filter((x) => x.valor > 0);
-
-  /**
-   * CONVERSACIONES DEL MES = contactos con al menos un mensaje desde el día 1
-   * (hora de Chile). Misma definición que Isabel para su ventana de 30 días
-   * (lib/metricas.ts). Antes: ed_metricas si existía (aunque fuera de otro
-   * mes) o la SUMA por empleado de chats leídos sin paginar — un negocio con
-   * miles de mensajes veía ~100 cuando tenía ~380.
-   */
-  const conversacionesMes = conversacionesMesCanon ?? 0;
+  const [panorama, resultados, cupo, cobros] = await Promise.all([
+    panoramaP,
+    resultadosP,
+    esDueno ? estadoDeCupo(usuario.clienteId, supa) : Promise.resolve(null),
+    esDueno
+      ? resumenPagos(usuario.clienteId, supa).catch(() => ({ pendientes: 0, pagadosMes: 0, montoMes: 0 }))
+      : Promise.resolve(null),
+  ]);
+  const equipo = await resumenEquipo(
+    usuario.clienteId,
+    ctx,
+    {
+      derivadas: panorama.derivadas,
+      propuestasVivas: panorama.atencion.filter((f) => f.atencion.items.some((i) => i.motivo === "propuesta_beto")).length,
+      coberturaIA: resultados.coberturaIA,
+    },
+    supa,
+  );
 
   return (
-    <main className="mx-auto max-w-[1400px] px-5 py-6 sm:px-7 lg:px-8">
-      {/*
-        Registro del service worker y alta de notificaciones. Va en Inicio
-        porque es la primera pantalla y porque el permiso hay que pedirlo tras
-        un clic — nunca solo, o el navegador se gana un "Bloquear" reflejo que
-        es permanente.
-      */}
-      <div className="mb-4">
-        <Notificaciones />
-      </div>
-      {/* Título y contexto en la MISMA línea. "Inicio" dice dónde estás; la
-          fecha es contexto, no un subtítulo que merezca su propio renglón. */}
-      <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
-        <h1 className="h-pagina">Inicio</h1>
-        <span className="sub-titulo">
-          {fechaTitulo()}
-          {conversacionesMes > 0 && ` · ${conversacionesMes} conversaciones este mes`}
-        </span>
-      </div>
+    <main className="mx-auto max-w-[1320px] px-4 py-6 sm:px-7 lg:px-8">
+      <header className="flex flex-wrap items-baseline justify-between gap-x-6 gap-y-2">
+        <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+          <h1 className="h-pagina">Inicio</h1>
+          <span className="sub-titulo">{fechaTitulo(ctx.ahora)}</span>
+        </div>
+        {/* Registra el service worker y ofrece los avisos: el permiso se pide tras un clic. */}
+        <Notificaciones variante="cabecera" />
+      </header>
 
-      {/*
-        DOS COLUMNAS EN ESCRITORIO.
-
-        Apilado en una sola columna angosta, el 40% derecho de la pantalla
-        quedaba en blanco — que es exactamente la queja que originó el rediseño
-        de esta página. A la izquierda va lo que exige una decisión (quién
-        espera, qué está por cerrarse, si esto funciona); a la derecha, el
-        estado del equipo, que se consulta pero no se acciona.
-
-        En móvil vuelve a una sola columna y el equipo queda al final: primero
-        lo urgente.
-      */}
-      <div className="mt-1 grid items-start gap-x-6 lg:grid-cols-[minmax(0,1fr)_340px]">
-        <div>
-
-      {/* ── 1. ¿Alguien me está esperando? ───────────────────────────────────
-          Va primero siempre. Es lo único de la pantalla que se puede estar
-          rompiendo mientras el dueño la mira. */}
-      <Bloque
-        titulo="Te están esperando"
-        nota={pendientes > 0 ? String(pendientes) : undefined}
-        href={pendientes > 0 ? "/conversaciones" : undefined}
-        hrefLabel="Ver bandeja"
-      >
-        {pendientes === 0 ? (
-          <div className="tarjeta px-5 py-6">
-            <div className="flex items-center gap-2.5">
-              <span className="punto-vivo" aria-hidden="true" />
-              <span style={{ fontSize: "var(--t-cuerpo)" }}>
-                Nadie está esperando respuesta. Tu asistente va al día.
-              </span>
-            </div>
-          </div>
-        ) : (
-          <div className="tarjeta divide-y overflow-hidden" style={{ borderColor: "var(--borde)" }}>
-            {esperando.items.map((e) => (
-              <Link
-                key={`${e.empleadoId}-${e.chatId}`}
-                /* El parámetro es `emp`, no `empleado`: así lo lee
-                   /conversaciones. Con el nombre largo el enlace abría la
-                   bandeja sin seleccionar nada y el botón "Responder" no
-                   respondía nada. */
-                href={`/conversaciones?emp=${e.empleadoId}&chat=${encodeURIComponent(e.chatId)}`}
-                className="flex items-center gap-3 px-4 py-3 transition-colors hover:bg-[var(--fondo-fila)]"
-                style={{ borderColor: "var(--borde)" }}
-              >
-                <div className="min-w-0 flex-1">
-                  <div className="truncate font-semibold" style={{ fontSize: "var(--t-cuerpo)" }}>
-                    {e.contacto}
-                  </div>
-                  <div className="truncate" style={{ fontSize: "var(--t-menor)", color: "var(--muted)" }}>
-                    {ETIQUETA_TRIGGER[e.motivo] ?? e.resumen ?? "Necesita a una persona"}
-                  </div>
-                </div>
-                <span
-                  className="cifra shrink-0"
-                  style={{ fontSize: "var(--t-menor)", color: "var(--muted-2)" }}
-                >
-                  {haceCuanto(e.desde)}
-                </span>
-                <span className="btn-chico shrink-0">Responder</span>
-              </Link>
-            ))}
-            {pendientes > esperando.items.length && (
-              <div
-                className="px-4 py-2.5"
-                style={{ fontSize: "var(--t-menor)", color: "var(--muted-2)" }}
-              >
-                y {pendientes - esperando.items.length} más en la bandeja
-              </div>
-            )}
-          </div>
-        )}
-        {esperando.items.length > 0 && (
-          <p className="mt-2" style={{ fontSize: "var(--t-menor)", color: "var(--muted-2)" }}>
-            La más antigua lleva{" "}
-            <strong style={{ color: "var(--muted)" }}>{haceCuanto(esperando.items[0].desde)}</strong>{" "}
-            esperando.
-          </p>
-        )}
-      </Bloque>
-
-      {/* ── 2. ¿Qué está por cerrarse? ───────────────────────────────────────
-          Los conteos van como píldoras en el encabezado y el cuerpo es la
-          LISTA: a quién hay que insistir, qué pidió y hace cuánto. Un panel que
-          obliga a ir a otra pantalla para actuar no ahorró nada. */}
-      {oportunidades.porCerrar > 0 && (
-        <Bloque
-          titulo="Por cerrarse"
-          nota={porCerrarse.map((x) => `${x.label.toLowerCase()} ${x.valor}`).join(" · ")}
-          href="/embudo"
-          hrefLabel="Ver embudo"
-        >
-          <div className="tarjeta divide-y overflow-hidden" style={{ borderColor: "var(--borde)" }}>
-            {abiertas.map((o) => {
-              const et = metaEtapa(o.etapa);
-              return (
-                <Link
-                  key={o.chatId}
-                  href={`/embudo?chat=${encodeURIComponent(o.chatId)}`}
-                  className="flex items-center gap-3 px-4 py-2.5 transition-colors hover:bg-[var(--fondo-fila)]"
-                  style={{ borderColor: "var(--borde)" }}
-                >
-                  <div className="min-w-0 flex-1">
-                    <div className="truncate font-semibold" style={{ fontSize: "var(--t-fila)" }}>
-                      {o.contacto}
-                    </div>
-                    <div
-                      className="truncate"
-                      style={{ fontSize: "var(--t-menor)", color: "var(--muted)" }}
-                    >
-                      {o.ultimoMensaje || "Sin mensajes recientes"}
-                    </div>
-                  </div>
-                  <span
-                    className="pildora shrink-0"
-                    style={{ background: et.fondo, color: et.color }}
-                  >
-                    {et.label}
-                  </span>
-                  <span
-                    className="cifra shrink-0 text-right"
-                    style={{ fontSize: "var(--t-menor)", color: "var(--muted-2)", minWidth: 52 }}
-                  >
-                    {haceCuanto(o.ultimoEn)}
-                  </span>
-                </Link>
-              );
-            })}
-            {oportunidades.porCerrar > abiertas.length && (
-              <div
-                className="px-4 py-2"
-                style={{ fontSize: "var(--t-menor)", color: "var(--muted-2)" }}
-              >
-                y {oportunidades.porCerrar - abiertas.length} más en el embudo
-              </div>
-            )}
-          </div>
-        </Bloque>
+      {!panorama.completo && (
+        <p className="mt-3 rounded-md px-3 py-2" style={{ fontSize: "var(--t-menor)", background: "var(--alerta-suave)", color: "var(--alerta)" }}>
+          No se pudo leer toda la actividad. Las listas pueden estar incompletas; recarga en un momento.
+        </p>
       )}
 
-      {/* ── 3. ¿Está funcionando esto que pago? ─────────────────────────────
-          Los mismos tres números de Analítica, calculados con conteos en la
-          base (ver resumenAhorro) para no encarecer la página más visitada. */}
-      {/* Se muestra también con 0 respuestas del asistente si llegaron mensajes:
-          esconderlo justo cuando el asistente no respondió nada ocultaba el
-          problema que el bloque existe para mostrar (Fase 0). */}
-      {ahorro && (ahorro.enviadosIA > 0 || ahorro.recibidos > 0) && (
-        <Bloque
-          titulo="¿Está funcionando?"
-          nota="últimos 30 días"
-          href="/analitica"
-          hrefLabel="Ver analítica"
-        >
-          <div className="grid gap-3 sm:grid-cols-3">
-            <div className="tarjeta px-5 py-4">
-              <div className="h-cifra cifra">{duracionMin(ahorro.minutosAhorrados)}</div>
-              <div className="mt-1.5" style={{ fontSize: "var(--t-menor)", color: "var(--muted)" }}>
-                que tu equipo no gastó respondiendo
-              </div>
-            </div>
-            <div className="tarjeta px-5 py-4">
-              <div className="h-cifra cifra">{pesos(ahorro.dineroAhorradoCLP)}</div>
-              <div className="mt-1.5" style={{ fontSize: "var(--t-menor)", color: "var(--muted)" }}>
-                estimado sobre {ahorro.enviadosIA.toLocaleString("es-CL")} mensajes atendidos
-              </div>
-            </div>
-            {/* Los DOS números de cobertura. Ver el comentario de
-                ResumenAhorro.coberturaReciente: mostrar solo el promedio del
-                período engaña por omisión cuando el asistente lleva poco. */}
-            <div className="tarjeta px-5 py-4">
-              <div className="flex flex-wrap items-baseline gap-2">
-                <span className="h-cifra cifra" style={{ color: "var(--indigo)" }}>
-                  {ahorro.coberturaIA}%
-                </span>
-                {ahorro.coberturaReciente !== ahorro.coberturaIA && (
-                  <span
-                    className="pildora-indigo cifra"
-                    title="Los últimos 30 días incluyen conversaciones anteriores a tener el asistente conectado."
-                  >
-                    últimas 24 h: {ahorro.coberturaReciente}%
-                  </span>
-                )}
-              </div>
-              <div className="mt-1.5" style={{ fontSize: "var(--t-menor)", color: "var(--muted)" }}>
-                de las respuestas las escribió tu asistente
-              </div>
-            </div>
-          </div>
-        </Bloque>
-      )}
-
-      {/* Métricas del mes: se conservan, pero después de lo accionable. */}
-      {actual && (
-        <Bloque
-          titulo={nombreMes(actual.periodo)}
-          nota={comparacion ? antes.replace("vs ", "comparado con ") : undefined}
-        >
-          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-            <Metrica label="Conversaciones" valor={String(actual.conversaciones ?? "—")}>
-              <Variacion
-                actual={actual.conversaciones}
-                previo={comparacion?.conversaciones ?? null}
-                etiqueta={antes}
-              />
-            </Metrica>
-
-            <Metrica
-              label="Clientes potenciales"
-              valor={String(actual.leadsCapturados ?? "—")}
-            >
-              <Variacion
-                actual={actual.leadsCapturados}
-                previo={comparacion?.leadsCapturados ?? null}
-                etiqueta={antes}
-              />
-            </Metrica>
-
-            <Metrica
-              label="Tiempo de respuesta"
-              valor={formatearDuracion(actual.tiempoRespuestaSeg)}
-              destacada
-            >
-              {comparacion?.tiempoRespuestaSeg != null && (
-                <div className="mt-2" style={{ fontSize: "var(--t-micro)", color: "var(--muted-2)" }}>
-                  antes{" "}
-                  <strong style={{ color: "var(--muted)" }}>
-                    {formatearDuracion(comparacion.tiempoRespuestaSeg)}
-                  </strong>
-                </div>
-              )}
-            </Metrica>
-
-            <Metrica
-              label="Resuelto sin ti"
-              valor={
-                actual.resueltasSinHumanoPct != null
-                  ? `${Number(actual.resueltasSinHumanoPct)}%`
-                  : "—"
-              }
-            >
-              <div className="mt-3 h-1.5 w-full overflow-hidden rounded-full" style={{ background: "var(--borde)" }}>
-                <div
-                  className="h-full rounded-full"
-                  style={{
-                    width: `${Math.min(100, Number(actual.resueltasSinHumanoPct ?? 0))}%`,
-                    background: "var(--indigo)",
-                  }}
-                />
-              </div>
-            </Metrica>
-          </div>
-        </Bloque>
-      )}
+      <div className="mt-5 grid items-start gap-x-8 gap-y-8 lg:grid-cols-[minmax(0,1fr)_360px]">
+        <div className="min-w-0 space-y-8">
+          <NecesitaAtencion
+            filas={panorama.atencion}
+            conteo={panorama.conteoAtencion}
+            derivadas={panorama.derivadas}
+            ahora={ctx.ahora}
+          />
+          <PorCerrarse
+            filas={panorama.oportunidades}
+            conteo={panorama.conteoOportunidades}
+            ahora={ctx.ahora}
+            verMontos={esDueno}
+          />
         </div>
 
-        {/* ── Columna derecha: estado del equipo ───────────────────────────
-            Se consulta, no se acciona. Por eso va al costado y no arriba. */}
-        <aside className="mt-8 lg:mt-8">
-      {/*
-        COBROS DEL MES (27-ago-2026): el número que el dueño quiere ver primero.
-        Solo aparece si la función se usa — cero filas = cero tarjeta, para no
-        mostrar un $0 permanente a quien no cobra por acá.
-      */}
-      {(pagos.pagadosMes > 0 || pagos.pendientes > 0) && (
-        <>
-          <h2 className="h-seccion mb-2.5">Cobros por WhatsApp</h2>
-          <div className="tarjeta mb-6 p-4">
-            <div className="cifra text-[22px] font-bold">{formatearMonto(pagos.montoMes)}</div>
-            <div className="text-[12.5px]" style={{ color: "var(--muted)" }}>
-              cobrado este mes · {pagos.pagadosMes} pago{pagos.pagadosMes === 1 ? "" : "s"}
-            </div>
-            {pagos.pendientes > 0 && (
-              <div className="mt-1.5 text-[12.5px]" style={{ color: "#92400E" }}>
-                {pagos.pendientes} cobro{pagos.pendientes === 1 ? "" : "s"} esperando pago
-              </div>
-            )}
-          </div>
-        </>
-      )}
-
-      {cupo && cupo.cupo !== null && (
-        <>
-          <h2 className="h-seccion mb-2.5">Tu plan</h2>
-          <ConsumoDelPlan estado={cupo} />
-        </>
-      )}
-
-      <h2 className="h-seccion">
-        Tu equipo digital{" "}
-        <span style={{ fontSize: "var(--t-micro)", color: "var(--muted-2)", fontWeight: 400 }}>este mes</span>
-      </h2>
-      <div className="mt-2.5 grid gap-3 sm:grid-cols-2 lg:grid-cols-1">
-        {empleados.map((r) => {
-          const meta = metaEmpleado(r.rol);
-          return (
-            <div key={r.empleadoId} className="tarjeta overflow-hidden">
-              <div className="flex items-center gap-2.5 px-4 pb-3 pt-4">
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img
-                  src={meta.avatar}
-                  alt={r.nombrePublico}
-                  width={36}
-                  height={36}
-                  className="avatar h-9 w-9"
-                  style={{ ["--anillo" as string]: meta.color }}
-                />
-                <div className="min-w-0">
-                  <div className="h-seccion truncate">
-                    {r.nombrePublico || meta.nombrePorDefecto}
-                  </div>
-                  <div
-                    className="truncate font-semibold"
-                    style={{ fontSize: "var(--t-micro)", color: meta.color }}
-                  >
-                    {meta.funcion}
-                  </div>
-                </div>
-              </div>
-
-              <dl className="space-y-1.5 px-4 pb-4">
-                {statsDeEmpleado(r, { propuestasPorRevisar }).map((s) => (
-                  <div key={s.label} className="flex items-baseline justify-between gap-3">
-                    <dt style={{ fontSize: "var(--t-menor)", color: "var(--muted)" }}>
-                      {s.label}
-                    </dt>
-                    <dd className="cifra font-semibold" style={{ fontSize: "var(--t-fila)" }}>
-                      {s.valor}
-                    </dd>
-                  </div>
-                ))}
-              </dl>
-
-              {r.escalacionesPendientes > 0 && (
-                <div
-                  className="px-4 py-2 font-semibold"
-                  style={{
-                    fontSize: "var(--t-micro)",
-                    background: "var(--coral-medio)",
-                    color: "var(--peligro)",
-                  }}
-                >
-                  {r.escalacionesPendientes} esperando por ti
-                </div>
-              )}
-            </div>
-          );
-        })}
-      </div>
-
-      {empleados.length === 0 && (
-        <div
-          className="tarjeta-plana vacio mt-3 border-dashed"
-          style={{ borderColor: "var(--borde-fuerte)" }}
-        >
-          <div className="vacio-titulo">Todavía no tienes empleados activos</div>
-          <p className="vacio-texto">
-            Cuando actives uno, acá vas a ver lo que hizo cada día.
-          </p>
-        </div>
-      )}
-
-      <p className="mt-4" style={{ fontSize: "var(--t-micro)", color: "var(--muted-3)" }}>
-        Los números vienen de la actividad real de tus empleados y se actualizan solos.
-        {empleados.some((e) => !e.completo) && " Algunos datos no se pudieron leer completos: recarga en un momento."}
-      </p>
+        <aside className="min-w-0 space-y-8">
+          <EquipoDigital equipo={equipo} />
+          <Resultados r={resultados} cobros={cobros} />
+          {cupo && cupo.cupo !== null && (
+            <section aria-labelledby="t-plan">
+              <h2 id="t-plan" className="mb-2 font-semibold" style={{ fontSize: "var(--t-titulo)" }}>
+                Tu plan
+              </h2>
+              <ConsumoDelPlan estado={cupo} />
+            </section>
+          )}
         </aside>
       </div>
     </main>

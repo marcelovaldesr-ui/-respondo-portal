@@ -1,7 +1,8 @@
 import Link from "next/link";
 import { exigirUsuarioPortal } from "@/lib/auth";
 import { listarClientes } from "@/lib/clientes";
-import { ETAPAS, metaEtapa } from "@/lib/embudo";
+import { ETAPAS } from "@/lib/etapasCore";
+import { EtapaEstado } from "@/components/estado/Estados";
 import { metaEtiqueta } from "@/lib/etiquetas";
 
 export const dynamic = "force-dynamic";
@@ -211,7 +212,6 @@ export default async function Clientes({
             </thead>
             <tbody>
               {clientes.map((c) => {
-                const me = metaEtapa(c.etapa);
                 // Una sola etiqueta en la tabla. Con dos, la columna Cliente
                 // pasaba a tener más color que texto y el nombre —que es lo que
                 // se busca— dejaba de destacar.
@@ -263,9 +263,7 @@ export default async function Clientes({
                       </Link>
                     </td>
                     <td>
-                      <span className="pildora" style={{ background: me.fondo, color: me.color }}>
-                        {me.label}
-                      </span>
+                      <EtapaEstado etapa={c.etapa} />
                     </td>
                     <td
                       className="cifra hidden text-right sm:table-cell"
