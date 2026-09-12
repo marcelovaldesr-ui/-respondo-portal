@@ -12,7 +12,8 @@ import { Vacio } from "@/components/estado/Estados";
  * días queda plegado y contado: no desaparece, pero no tapa lo de hoy.
  */
 
-const VISIBLES = 8;
+/** Filas visibles POR GRUPO antes de plegar (ver el comentario más abajo). */
+const POR_GRUPO = 5;
 const ANTIGUOS_VISIBLES = 12;
 const MAS_VISIBLES = 20;
 
@@ -89,8 +90,21 @@ export default function NecesitaAtencion({
   const antiguosOrden = [...antiguos].sort(
     (a, b) => Date.parse(b.atencion.principal?.desde ?? "") - Date.parse(a.atencion.principal?.desde ?? "") || 0,
   );
-  const visibles = recientes.slice(0, VISIBLES);
+  /**
+   * CUÁNTAS FILAS POR GRUPO, NO EN TOTAL (12-sep, mirando Impresora en vivo).
+   *
+   * Con un tope global, «Para hoy» se comía las 8 filas y «Esta semana» y «Por
+   * decidir» quedaban enteros dentro del desplegable: el dueño veía un resumen
+   * que decía «Por decidir 4» y ni una sola de esas cuatro. Cada grupo muestra
+   * sus primeras filas y el resto se pliega abajo, en orden.
+   */
   const gruposVisibles = GRUPOS_ATENCION.filter((g) => g.valor !== "antiguo");
+  const visibles: FilaAtencion[] = [];
+  for (const g of gruposVisibles) {
+    visibles.push(...recientes.filter((f) => f.atencion.grupo === g.valor).slice(0, POR_GRUPO));
+  }
+  const mostrados = new Set(visibles.map((f) => f.chatId));
+  const resto = recientes.filter((f) => !mostrados.has(f.chatId));
 
   return (
     <section aria-labelledby="t-atencion">
@@ -157,7 +171,7 @@ export default function NecesitaAtencion({
           })
         )}
 
-        {recientes.length > VISIBLES && (
+        {resto.length > 0 && (
           /* Se despliegan acá mismo: la bandeja «Te esperan» solo muestra
              derivaciones y no tendría pagos ni sugerencias. */
           <details className="border-t" style={{ borderColor: "var(--borde)" }}>
@@ -167,20 +181,20 @@ export default function NecesitaAtencion({
             >
               <span>
                 <strong className="cifra" style={{ color: "var(--tinta)" }}>
-                  {recientes.length - VISIBLES}
+                  {resto.length}
                 </strong>{" "}
                 más por revisar
               </span>
               <span aria-hidden>▾</span>
             </summary>
             <ul className="lista-filas border-t" style={{ borderColor: "var(--borde)" }}>
-              {recientes.slice(VISIBLES, VISIBLES + MAS_VISIBLES).map((f) => (
+              {resto.slice(0, MAS_VISIBLES).map((f) => (
                 <Fila key={f.chatId} f={f} ahora={ahora} />
               ))}
             </ul>
-            {recientes.length > VISIBLES + MAS_VISIBLES && (
+            {resto.length > MAS_VISIBLES && (
               <div className="border-t px-4 py-2.5" style={{ fontSize: "var(--t-meta)", color: "var(--muted-2)", borderColor: "var(--borde)" }}>
-                y {recientes.length - VISIBLES - MAS_VISIBLES} más: ábrelos desde la bandeja
+                y {resto.length - MAS_VISIBLES} más: ábrelos desde la bandeja
               </div>
             )}
           </details>
