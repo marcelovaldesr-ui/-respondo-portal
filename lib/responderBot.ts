@@ -224,14 +224,15 @@ async function historial(empleadoId: string, chatId: string): Promise<FilaHistor
       .order("creado_en", { ascending: false })
       .limit(20);
 
-  let { data, error } = await pedir(COLS_HISTORIAL);
+  const primero = await pedir(COLS_HISTORIAL);
+  let data = primero.data;
   /**
    * Si `media_tipo` no existiera en este entorno, el select falla ENTERO y el
    * historial queda vacío: Tino contestaría sin contexto, que es peor que
    * contestar sin saber el tipo de adjunto. Por eso baja una capa, igual que
    * hace guardarMensaje al insertar.
    */
-  if (error && (error.code === "42703" || error.code === "PGRST204")) {
+  if (primero.error && (primero.error.code === "42703" || primero.error.code === "PGRST204")) {
     ({ data } = await pedir(COLS_HISTORIAL_MINIMO));
   }
 
