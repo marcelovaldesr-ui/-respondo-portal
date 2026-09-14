@@ -24,6 +24,12 @@ import { Ico } from "@/components/marketing/Iconos";
  * La columna derecha no explica cómo funciona el producto: dice qué se está
  * analizando. La explicación técnica vive en un desplegable al pie.
  */
+/**
+ * Los arranques por defecto. Se usan solo cuando la página no manda los suyos:
+ * desde la Fase 6 las sugerencias dependen de las SEÑALES del negocio, porque
+ * sugerir «¿qué campaña trae mejores clientes?» a quien no trae conversaciones
+ * es invitarlo a la única pregunta que no vamos a poder responder.
+ */
 const PROMPTS: { texto: string; icono: keyof typeof Ico }[] = [
   { texto: "Analiza los últimos 30 días", icono: "grafico" },
   { texto: "¿Dónde estoy perdiendo plata?", icono: "alerta" },
@@ -31,6 +37,17 @@ const PROMPTS: { texto: string; icono: keyof typeof Ico }[] = [
   { texto: "¿Qué creatividad debería repetir?", icono: "creatividades" },
   { texto: "Créame una campaña para vender más este mes", icono: "nueva" },
 ];
+
+/** Un ícono razonable para una sugerencia que viene del servidor. */
+function iconoDe(texto: string): keyof typeof Ico {
+  const t = texto.toLowerCase();
+  if (/plata|presupuesto|perdiendo/.test(t)) return "alerta";
+  if (/campa/.test(t)) return "campanas";
+  if (/creativ|anuncio/.test(t)) return "creatividades";
+  if (/dise|cre[aá]/.test(t)) return "nueva";
+  if (/busca|t[eé]rmino|palabra/.test(t)) return "copiloto";
+  return "grafico";
+}
 
 type Turno = { pregunta: string; respuesta: RespuestaCopiloto | null; error?: string; guardadoId?: string };
 
@@ -40,6 +57,7 @@ export default function ChatCopiloto({
   demo,
   herramientas,
   contexto,
+  sugerencias,
 }: {
   periodo: string;
   preguntaInicial?: string;
@@ -47,7 +65,12 @@ export default function ChatCopiloto({
   herramientas: { nombre: string; etiqueta: string; descripcion: string }[];
   /** Qué se está analizando: se muestra en vez de la documentación interna. */
   contexto: { etiqueta: string; valor: string }[];
+  /** Arranques según las señales del negocio. Sin esto, los de siempre. */
+  sugerencias?: string[];
 }) {
+  const prompts = sugerencias?.length
+    ? sugerencias.map((texto) => ({ texto, icono: iconoDe(texto) }))
+    : PROMPTS;
   const router = useRouter();
   const [turnos, setTurnos] = useState<Turno[]>([]);
   const [texto, setTexto] = useState("");
@@ -136,7 +159,7 @@ export default function ChatCopiloto({
             <div className="px-6 pb-6">
               <Entrada texto={texto} setTexto={setTexto} preguntar={preguntar} pendiente={pendiente} grande />
               <div className="mt-5 flex flex-wrap justify-center gap-2">
-                {PROMPTS.map((p) => (
+                {prompts.map((p) => (
                   <button key={p.texto} type="button" className="mk-prompt" onClick={() => preguntar(p.texto)}>
                     {Ico[p.icono]({ className: "h-4 w-4" })}
                     {p.texto}
@@ -261,7 +284,7 @@ export default function ChatCopiloto({
                 atajo que repite lo que acabas de leer no es un atajo. */}
             {(() => {
               const hechas = new Set(turnos.map((t) => t.pregunta));
-              const quedan = PROMPTS.filter((p) => !hechas.has(p.texto)).slice(0, 3);
+              const quedan = prompts.filter((p) => !hechas.has(p.texto)).slice(0, 3);
               if (!quedan.length) return null;
               return (
                 <div className="mt-4">
