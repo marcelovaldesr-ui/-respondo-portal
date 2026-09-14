@@ -13,6 +13,7 @@ import {
   cambiarEstado,
   reabrirCita as reabrirCitaDatos,
   reagendar as reagendarDatos,
+  resultadoCrearBloqueo,
 } from "@/lib/agenda";
 import {
   programarSeguimientosCita,
@@ -427,7 +428,9 @@ export async function desconectarGoogleOauth(formData: FormData) {
 // Bloqueos
 // ---------------------------------------------------------------------------
 
-export async function crearBloqueo(formData: FormData) {
+export async function crearBloqueo(
+  formData: FormData,
+): Promise<{ ok: boolean; error?: string } | void> {
   const clienteId = await clienteActual("operar_agenda");
   const desde = parsearLocalChile(texto(formData, "desde"));
   const hasta = parsearLocalChile(texto(formData, "hasta"));
@@ -450,21 +453,12 @@ export async function crearBloqueo(formData: FormData) {
     hasta: hasta.toISOString(),
     motivo: texto(formData, "motivo") || null,
   });
-  /**
-   * (Auditoría 13-sep-2026, migración 308) El trigger ed_bloqueos_verificar_cita
-   * rechaza el bloqueo si cae encima de una cita activa — antes se creaba en
-   * silencio y el dueño no se enteraba de que ya tenía gente agendada ahí. El
-   * formulario (FormularioAgregar) no tiene hoy cómo mostrar un error puntual;
-   * mientras eso no exista, se prefiere fallar en silencio (no crear el
-   * bloqueo) a tener éxito en silencio (crearlo e ignorar la cita). Se
-   * registra SIEMPRE que haya error —ED001 incluido— porque ED001 es
-   * justamente el caso que este comentario describe: sin este log, el rechazo
-   * no queda en ninguna parte y el dueño no tiene cómo saber qué pasó.
-   */
-  if (error) {
-    console.error("[agenda] crearBloqueo:", error.code, error.message);
-  }
   revalidatePath("/agenda", "layout"); // "layout" = también /agenda/configuracion
+
+  // Se registra SIEMPRE que haya error —ED001 incluido— para diagnóstico en
+  // el servidor; resultadoCrearBloqueo() decide qué ve el dueño.
+  if (error) console.error("[agenda] crearBloqueo:", error.code, error.message);
+  return resultadoCrearBloqueo(error);
 }
 
 export async function eliminarBloqueo(formData: FormData) {

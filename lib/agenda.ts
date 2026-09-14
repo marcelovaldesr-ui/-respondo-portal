@@ -98,6 +98,32 @@ const EXCLUSION_VIOLATION = "23P01";
  */
 const BLOQUEO_VIOLATION = "ED001";
 
+/**
+ * Traduce el resultado de un INSERT en ed_bloqueos (garantía INVERSA de la
+ * migración 308: una cita activa impide crear un bloqueo encima) al mensaje
+ * que ve el dueño en el portal (microfix 14-sep-2026, cierre Antigravity).
+ * BLOQUEO_VIOLATION es SIEMPRE ese choque puntual con una cita — se traduce a
+ * un mensaje concreto; cualquier OTRO error de base se traduce a uno
+ * genérico, porque no hay forma segura de mostrarle al dueño el texto crudo
+ * de un error inesperado.
+ *
+ * Función pura y sin `supa` a propósito: vive acá (no en acciones.ts, que
+ * arrastra sesión/Next.js/auditoría) para poder probarla directo, igual que
+ * el resto de este archivo — ver tests/agenda-bloqueo-feedback.test.mjs.
+ */
+export function resultadoCrearBloqueo(
+  error: { code?: string; message?: string } | null,
+): { ok: boolean; error?: string } {
+  if (!error) return { ok: true };
+  return {
+    ok: false,
+    error:
+      error.code === BLOQUEO_VIOLATION
+        ? "No se pudo bloquear este horario porque ya existe una cita agendada en ese rango."
+        : "No se pudo crear el bloqueo. Intenta de nuevo.",
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Lecturas
 // ---------------------------------------------------------------------------

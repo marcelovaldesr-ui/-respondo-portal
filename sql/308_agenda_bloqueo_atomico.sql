@@ -80,6 +80,16 @@
 -- para otra cosa, un ajuste manual ya conversado con el cliente).
 -- ─────────────────────────────────────────────────────────────────────────────
 
+-- TRANSACCIONAL (microfix 14-sep-2026, cierre Antigravity). Todo el DDL de
+-- abajo corre dentro de una sola transacción: si algo falla a mitad de
+-- camino (por ejemplo, un permiso que no existiera), Postgres deshace TODO
+-- —ninguna función o trigger a medio crear— en vez de dejar la migración a
+-- medio aplicar. No cambia funciones, locks, predicados, código de error,
+-- permisos ni comportamiento: solo envuelve el mismo DDL en BEGIN/COMMIT.
+-- Sigue siendo re-ejecutable las veces que haga falta gracias a
+-- CREATE OR REPLACE FUNCTION / DROP TRIGGER IF EXISTS / CREATE TRIGGER.
+begin;
+
 -- ── 1) Cita → no puede caer dentro de un bloqueo activo ────────────────────
 create or replace function public.ed_citas_verificar_bloqueo()
 returns trigger
@@ -152,3 +162,5 @@ create trigger trg_ed_bloqueos_verificar_cita
 -- ── permisos: el service_role es el único que escribe estas tablas ─────────
 grant execute on function public.ed_citas_verificar_bloqueo() to service_role;
 grant execute on function public.ed_bloqueos_verificar_cita() to service_role;
+
+commit;

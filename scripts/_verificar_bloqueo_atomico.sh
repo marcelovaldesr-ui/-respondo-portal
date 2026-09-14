@@ -152,11 +152,21 @@ echo
 echo "── Escenario 2/3: CON la migración 308 — bloqueo primero, cita después (interleaving de la auditoría) ──"
 su postgres -c "psql -v ON_ERROR_STOP=1 -c 'drop database if exists agenda_test_fix;' -c 'create database agenda_test_fix;'" >/dev/null
 su postgres -c "psql -d agenda_test_fix -v ON_ERROR_STOP=1 -f $WORKDIR/esquema.sql" >/dev/null
-# SIN ON_ERROR_STOP a propósito: 308 incluye REVOKE/GRANT a roles de Supabase
-# (anon, authenticated, service_role) que no existen en este Postgres local
-# desechable. Esos errores son esperados e inocuos — lo que importa es que
-# las funciones y los triggers (que sí corren en este cluster) se creen.
-su postgres -c "psql -d agenda_test_fix -f $RAIZ/sql/308_agenda_bloqueo_atomico.sql" 2>&1 | grep -v 'role .* does not exist' | grep -v 'skipping' || true
+# (microfix 14-sep-2026) 308 ahora corre dentro de BEGIN/COMMIT: si el REVOKE/
+# GRANT a los roles de Supabase (anon, authenticated, service_role) fallara
+# por no existir, Postgres deshace TODA la transacción —ya no basta con
+# ignorar ese error puntual como antes, se llevaría los triggers con él—. Se
+# crean esos roles (idempotente) en este cluster desechable para que la
+# migración corra EXACTAMENTE como en Supabase, de punta a punta, con
+# ON_ERROR_STOP para detectar cualquier fallo real de inmediato.
+su postgres -c "psql -v ON_ERROR_STOP=1 -c \"
+  do \\\$\\\$ begin
+    if not exists (select 1 from pg_roles where rolname = 'anon') then create role anon; end if;
+    if not exists (select 1 from pg_roles where rolname = 'authenticated') then create role authenticated; end if;
+    if not exists (select 1 from pg_roles where rolname = 'service_role') then create role service_role; end if;
+  end \\\$\\\$;
+\"" >/dev/null
+su postgres -c "psql -d agenda_test_fix -v ON_ERROR_STOP=1 -f $RAIZ/sql/308_agenda_bloqueo_atomico.sql" >/dev/null
 TRIGGERS=$(fila agenda_test_fix "select count(*) from pg_trigger where tgname in ('trg_ed_citas_verificar_bloqueo','trg_ed_bloqueos_verificar_cita');")
 if [ "$TRIGGERS" != "2" ]; then
   echo "✗ No se pudieron crear los dos triggers de la migración 308 (encontrados: $TRIGGERS/2)." >&2
