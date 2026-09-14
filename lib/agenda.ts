@@ -28,6 +28,10 @@ import { notificarHQ } from "@/lib/hqBridge";
  *  - La doble reserva NO se previene con "leer y luego insertar": la previene
  *    el constraint EXCLUDE de ed_citas. Aquí solo se traduce el error 23P01
  *    (exclusion_violation) a un resultado de negocio: 'cupo_tomado'.
+ *  - Lo mismo aplica a la carrera cita↔bloqueo (auditoría 13-sep-2026, ver
+ *    migración 308): un trigger en la base, no una lectura previa desde acá,
+ *    es lo que impide que una cita caiga dentro de un bloqueo creado a la vez.
+ *    Se traduce igual: código propio 'ED001' → 'cupo_tomado'.
  */
 
 export type Servicio = {
@@ -86,6 +90,13 @@ type FilaClase = { profesional_id: string | null; inicio: string; fin: string };
 
 /** Código Postgres de exclusion_violation (el EXCLUDE de ed_citas). */
 const EXCLUSION_VIOLATION = "23P01";
+/**
+ * Código propio (migración 308, auditoría 13-sep-2026): el trigger
+ * ed_citas_verificar_bloqueo rechazó el INSERT/UPDATE porque la cita cae
+ * dentro de un bloqueo activo. Mismo tratamiento que EXCLUSION_VIOLATION —
+ * para quien llama, ambos significan "ese cupo ya no está disponible".
+ */
+const BLOQUEO_VIOLATION = "ED001";
 
 // ---------------------------------------------------------------------------
 // Lecturas
@@ -474,7 +485,9 @@ export async function crearCita(
     .single();
 
   if (error) {
-    if (error.code === EXCLUSION_VIOLATION) return { ok: false, motivo: "cupo_tomado" };
+    if (error.code === EXCLUSION_VIOLATION || error.code === BLOQUEO_VIOLATION) {
+      return { ok: false, motivo: "cupo_tomado" };
+    }
     return { ok: false, motivo: "error", detalle: error.message };
   }
 
@@ -562,7 +575,9 @@ export async function reagendar(
     .single();
 
   if (error) {
-    if (error.code === EXCLUSION_VIOLATION) return { ok: false, motivo: "cupo_tomado" };
+    if (error.code === EXCLUSION_VIOLATION || error.code === BLOQUEO_VIOLATION) {
+      return { ok: false, motivo: "cupo_tomado" };
+    }
     return { ok: false, motivo: "error", detalle: error.message };
   }
 
@@ -733,8 +748,9 @@ export async function cambiarEstado(
  * quedan desincronizados en silencio — la cita reaparece en la agenda del
  * negocio pero el dueño no la ve en su calendario.
  *
- * Puede fallar si en el intertanto otra persona tomó ese cupo: en ese caso el
- * constraint de la base lo impide (23P01) y la cita se queda como está.
+ * Puede fallar si en el intertanto otra persona tomó ese cupo (23P01, EXCLUDE
+ * de ed_citas) o si el dueño bloqueó esa hora mientras tanto (ED001, ver
+ * migración 308) — en ambos casos la cita se queda como está.
  */
 export async function reabrirCita(
   clienteId: string,
@@ -749,7 +765,9 @@ export async function reabrirCita(
     .select("*")
     .maybeSingle();
   if (error) {
-    if (error.code === EXCLUSION_VIOLATION) return { ok: false, motivo: "cupo_tomado" };
+    if (error.code === EXCLUSION_VIOLATION || error.code === BLOQUEO_VIOLATION) {
+      return { ok: false, motivo: "cupo_tomado" };
+    }
     return { ok: false, error: error.message };
   }
   if (!data) return { ok: false, error: "cita no encontrada" };

@@ -13,6 +13,7 @@ import {
   yaProcesado,
   esEcoReciente,
   actualizarEstadoEnvio,
+  mensajeSinRespuesta,
 } from "@/lib/mensajes";
 import { modoDe, setModo, tocarVentanaEntrante } from "@/lib/estadoChat";
 import { conservaElTurno } from "@/lib/turnoTino";
@@ -210,7 +211,8 @@ export async function manejarEntranteMeta(
     // respondería DOS veces al mismo mensaje.
     if (m.waId && (await yaProcesado(supa, empleadoId, m.waId))) {
       /**
-       * RED DE SEGURIDAD DEL "DUPLICADO" (auditoría 3-sep-2026).
+       * RED DE SEGURIDAD DEL "DUPLICADO" (auditoría 3-sep-2026; canonicalizada
+       * en lib/mensajes.ts el 13-sep-2026 — MISMA función en WAHA e Instagram).
        *
        * Si la invocación original murió DESPUÉS de guardar el mensaje (timeout
        * de Vercel, excepción), el reintento de Meta o del cron llegaba acá,
@@ -454,38 +456,4 @@ export async function manejarEntranteMeta(
 
   if (resultados.length === 0) resultados.push({ accion: "ignorado" });
   return resultados;
-}
-
-
-/**
- * ¿Este mensaje del cliente quedó sin respuesta del negocio y ya nadie lo está
- * atendiendo? Verdadero solo si: es el último mensaje del chat, tiene más de
- * 90 s (la invocación que lo guardó ya no puede seguir viva), el chat está en
- * modo bot y no hay ningún mensaje del negocio posterior.
- */
-async function mensajeSinRespuesta(
-  supa: ReturnType<typeof db>,
-  empleadoId: string,
-  chatId: string,
-  waId: string,
-): Promise<boolean> {
-  const { data: original } = await supa
-    .from("ed_mensajes")
-    .select("creado_en")
-    .eq("empleado_id", empleadoId)
-    .eq("wa_message_id", waId)
-    .maybeSingle();
-  if (!original) return false;
-  const edadMs = Date.now() - new Date(original.creado_en as string).getTime();
-  if (edadMs < 90_000) return false;
-  if ((await modoDe(empleadoId, chatId, supa)) !== "bot") return false;
-  const { data: ultimo } = await supa
-    .from("ed_mensajes")
-    .select("wa_message_id, rol")
-    .eq("empleado_id", empleadoId)
-    .eq("chat_id", chatId)
-    .order("creado_en", { ascending: false })
-    .limit(1)
-    .maybeSingle();
-  return Boolean(ultimo && ultimo.rol === "cliente" && ultimo.wa_message_id === waId);
 }

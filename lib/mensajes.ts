@@ -1,4 +1,5 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { modoDe } from "@/lib/estadoChat";
 
 /**
  * Guarda un mensaje en ed_mensajes de forma robusta.
@@ -106,6 +107,65 @@ export async function yaProcesado(
     .maybeSingle();
   if (error) return false; // columna inexistente u otro → no bloquear el flujo
   return Boolean(data);
+}
+
+/**
+ * ¿ESTE MENSAJE DEL CLIENTE QUEDÓ SIN RESPUESTA Y YA NADIE LO ESTÁ ATENDIENDO?
+ * (auditoría externa 13-sep-2026, confirmada independientemente).
+ *
+ * RED DE SEGURIDAD DEL "DUPLICADO": si la invocación que guardó este mensaje
+ * murió DESPUÉS de persistirlo (timeout de Vercel, excepción) pero ANTES de
+ * responder, el reintento del proveedor (o del cron) llega a `yaProcesado`,
+ * dice "duplicado" y nadie responde nunca — el cliente queda mudo en modo
+ * bot, donde el vigilante (lib/reingresoTino.ts) no mira porque solo revisa
+ * chats en modo "humano".
+ *
+ * Nació en lib/inboundMeta.ts (3-sep-2026); esta es la versión canónica —
+ * MISMA función para Meta, WAHA e Instagram, sin copiarla tres veces (ver
+ * auditoría 13-sep-2026: WAHA e Instagram no la tenían).
+ *
+ * Verdadero SOLO si, LEÍDO DE NUEVO justo antes de reintentar: es el último
+ * mensaje del chat, tiene más de 90 s (la invocación que lo guardó ya no
+ * puede seguir viva — la función vive 60 s), el chat sigue en modo bot (si
+ * una persona tomó el control, NO se recupera — es turno de ella, no de
+ * Tino) y no hay ningún mensaje del negocio posterior.
+ *
+ * CONCURRENCIA: esta función es una LECTURA pura, sin efecto — la protección
+ * contra dos reintentos corriendo a la vez vive en la capa de arriba
+ * (ed_webhook_eventos / ed_reclamar_webhook, ver lib/webhookInbox.ts), que
+ * reclama el evento de forma atómica antes de llegar hasta acá. Dos entregas
+ * con exactamente el MISMO cuerpo (el caso común de un reintento real del
+ * proveedor) nunca corren manejarEntrante* en paralelo por eso. Si dos
+ * entregas llegaran con bytes distintos para el mismo mensaje (evento_id
+ * distinto), esta función por sí sola no lo serializa — riesgo residual,
+ * documentado, igual al que ya existía en el camino de Meta antes de esta
+ * auditoría.
+ */
+export async function mensajeSinRespuesta(
+  supa: SupabaseClient,
+  empleadoId: string,
+  chatId: string,
+  waId: string,
+): Promise<boolean> {
+  const { data: original } = await supa
+    .from("ed_mensajes")
+    .select("creado_en")
+    .eq("empleado_id", empleadoId)
+    .eq("wa_message_id", waId)
+    .maybeSingle();
+  if (!original) return false;
+  const edadMs = Date.now() - new Date(original.creado_en as string).getTime();
+  if (edadMs < 90_000) return false;
+  if ((await modoDe(empleadoId, chatId, supa)) !== "bot") return false;
+  const { data: ultimo } = await supa
+    .from("ed_mensajes")
+    .select("wa_message_id, rol")
+    .eq("empleado_id", empleadoId)
+    .eq("chat_id", chatId)
+    .order("creado_en", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  return Boolean(ultimo && ultimo.rol === "cliente" && ultimo.wa_message_id === waId);
 }
 
 /**

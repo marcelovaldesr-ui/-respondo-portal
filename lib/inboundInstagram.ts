@@ -8,7 +8,7 @@ import {
   type CuentaIg,
 } from "@/lib/instagram";
 import { tinoDe } from "@/lib/whatsapp";
-import { guardarMensaje, yaProcesado, esEcoReciente } from "@/lib/mensajes";
+import { guardarMensaje, yaProcesado, esEcoReciente, mensajeSinRespuesta } from "@/lib/mensajes";
 import { modoDe, setModo, tocarVentanaEntrante } from "@/lib/estadoChat";
 import { conservaElTurno } from "@/lib/turnoTino";
 import { ventanaDeEspera } from "@/lib/ritmoHumano";
@@ -83,9 +83,28 @@ export async function manejarEntranteInstagram(
       ctx.empleadoId;
 
     // Idempotencia: Meta reintenta las entregas que no respondieron a tiempo.
+    //
+    // RED DE SEGURIDAD DEL "DUPLICADO" (auditoría externa 13-sep-2026; misma
+    // protección que ya tenía lib/inboundMeta.ts desde el 3-sep-2026 — WAHA e
+    // Instagram no la tenían, y por eso un mensaje huérfano quedaba mudo para
+    // siempre. Ver lib/mensajes.ts::mensajeSinRespuesta para el detalle.
+    //
+    // Los ecos (esPropio) NO aplican: no son mensajes del cliente esperando
+    // respuesta, así que un duplicado de eco siempre es solo un duplicado.
+    let huerfano = false;
     if (ev.mid && (await yaProcesado(supa, empleadoId, ev.mid))) {
-      resultados.push({ accion: "duplicado" });
-      continue;
+      if (ev.esPropio) {
+        resultados.push({ accion: "duplicado" });
+        continue;
+      }
+      huerfano = await mensajeSinRespuesta(supa, empleadoId, chatId, ev.mid);
+      if (!huerfano) {
+        resultados.push({ accion: "duplicado" });
+        continue;
+      }
+      resultados.push({ accion: "duplicado_huerfano" });
+      // Sin continue: se reprocesa como mensaje de la persona sin volver a
+      // guardarlo (más abajo se salta guardarMensaje cuando huerfano === true).
     }
 
     // ── Mensaje del propio negocio ──────────────────────────────────────────
@@ -137,38 +156,43 @@ export async function manejarEntranteInstagram(
     }
 
     // ── Mensaje de la persona ───────────────────────────────────────────────
-    const guardado = await guardarMensaje(supa, {
-      empleadoId,
-      chatId,
-      rol: "cliente",
-      texto: ev.texto,
-      waId: ev.mid,
-      canal: "instagram",
-      /**
-       * (Fase 3) LA MEDIA SE GUARDA. Hasta ahora este camino era el único de
-       * los tres que no pasaba `media`: `parsearInstagram` extraía la URL del
-       * adjunto y acá se tiraba. Una foto por DM quedaba como el texto "[el
-       * cliente envió una imagen]" con media_tipo nulo, y el inbox no dibujaba
-       * nada. Es la misma brecha que ya se había corregido dos veces en los
-       * otros dos transportes.
-       *
-       * La URL de Instagram es temporal, igual que la de Meta: el archivador
-       * (lib/archivarMedia.ts) la baja al bucket privado dentro de su ventana.
-       */
-      media: ev.adjunto
-        ? {
-            url: ev.adjunto.url ?? null,
-            tipo: tipoMediaIg(ev.adjunto.tipo),
-            mime: null,
-            nombre: null,
-          }
-        : null,
-    });
-    // El índice único rechazó el insert → esta es una entrega duplicada y la
-    // otra ya está respondiendo. Retirarse evita la doble respuesta.
-    if (guardado.dup) {
-      resultados.push({ accion: "duplicado_carrera" });
-      continue;
+    // Si viene de la recuperación de huérfano (arriba), el mensaje YA está
+    // guardado — guardarlo de nuevo lo rechazaría por el índice único y esta
+    // invocación se retiraría creyendo que es una carrera.
+    if (!huerfano) {
+      const guardado = await guardarMensaje(supa, {
+        empleadoId,
+        chatId,
+        rol: "cliente",
+        texto: ev.texto,
+        waId: ev.mid,
+        canal: "instagram",
+        /**
+         * (Fase 3) LA MEDIA SE GUARDA. Hasta ahora este camino era el único de
+         * los tres que no pasaba `media`: `parsearInstagram` extraía la URL del
+         * adjunto y acá se tiraba. Una foto por DM quedaba como el texto "[el
+         * cliente envió una imagen]" con media_tipo nulo, y el inbox no dibujaba
+         * nada. Es la misma brecha que ya se había corregido dos veces en los
+         * otros dos transportes.
+         *
+         * La URL de Instagram es temporal, igual que la de Meta: el archivador
+         * (lib/archivarMedia.ts) la baja al bucket privado dentro de su ventana.
+         */
+        media: ev.adjunto
+          ? {
+              url: ev.adjunto.url ?? null,
+              tipo: tipoMediaIg(ev.adjunto.tipo),
+              mime: null,
+              nombre: null,
+            }
+          : null,
+      });
+      // El índice único rechazó el insert → esta es una entrega duplicada y la
+      // otra ya está respondiendo. Retirarse evita la doble respuesta.
+      if (guardado.dup) {
+        resultados.push({ accion: "duplicado_carrera" });
+        continue;
+      }
     }
 
     const { data: contactoGuardado } = await supa

@@ -443,13 +443,27 @@ export async function crearBloqueo(formData: FormData) {
       .maybeSingle();
     if (!propio) return;
   }
-  await supa.from("ed_bloqueos").insert({
+  const { error } = await supa.from("ed_bloqueos").insert({
     cliente_id: clienteId,
     profesional_id: profesional || null,
     desde: desde.toISOString(),
     hasta: hasta.toISOString(),
     motivo: texto(formData, "motivo") || null,
   });
+  /**
+   * (Auditoría 13-sep-2026, migración 308) El trigger ed_bloqueos_verificar_cita
+   * rechaza el bloqueo si cae encima de una cita activa — antes se creaba en
+   * silencio y el dueño no se enteraba de que ya tenía gente agendada ahí. El
+   * formulario (FormularioAgregar) no tiene hoy cómo mostrar un error puntual;
+   * mientras eso no exista, se prefiere fallar en silencio (no crear el
+   * bloqueo) a tener éxito en silencio (crearlo e ignorar la cita). Se
+   * registra SIEMPRE que haya error —ED001 incluido— porque ED001 es
+   * justamente el caso que este comentario describe: sin este log, el rechazo
+   * no queda en ninguna parte y el dueño no tiene cómo saber qué pasó.
+   */
+  if (error) {
+    console.error("[agenda] crearBloqueo:", error.code, error.message);
+  }
   revalidatePath("/agenda", "layout"); // "layout" = también /agenda/configuracion
 }
 

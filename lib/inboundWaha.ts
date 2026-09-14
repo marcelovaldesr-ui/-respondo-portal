@@ -14,6 +14,7 @@ import {
   esEcoReciente,
   actualizarEstadoEnvio,
   enviosUltimoMinuto,
+  mensajeSinRespuesta,
 } from "@/lib/mensajes";
 import { modoDe, setModo, tocarVentanaEntrante } from "@/lib/estadoChat";
 import { conservaElTurno } from "@/lib/turnoTino";
@@ -115,8 +116,21 @@ export async function manejarEntranteWaha(
   const empleadoId = (await empleadoParaEntrante(clienteId, chatId, tinoId, supa)) ?? tinoId;
 
   // 3) Idempotencia + eco de Tino.
+  //
+  // RED DE SEGURIDAD DEL "DUPLICADO" (auditoría externa 13-sep-2026; misma
+  // protección que ya tenía lib/inboundMeta.ts desde el 3-sep-2026 — WAHA e
+  // Instagram no la tenían, y por eso un mensaje huérfano quedaba mudo para
+  // siempre. Ver lib/mensajes.ts::mensajeSinRespuesta para el detalle.
+  //
+  // Los ecos (fromMe) NO aplican: no son mensajes del cliente esperando
+  // respuesta, así que un duplicado de eco siempre es solo un duplicado.
+  let huerfano = false;
   if (m.waId && (await yaProcesado(supa, empleadoId, m.waId))) {
-    return { accion: "duplicado" };
+    if (m.fromMe) return { accion: "duplicado" };
+    huerfano = await mensajeSinRespuesta(supa, empleadoId, chatId, m.waId);
+    if (!huerfano) return { accion: "duplicado" };
+    // Sin return/continue: se reprocesa como mensaje del cliente sin volver a
+    // guardarlo (más abajo, el paso "5" se salta cuando huerfano === true).
   }
 
   // 4) fromMe con id desconocido = mensaje humano → toma de control.
@@ -164,34 +178,38 @@ export async function manejarEntranteWaha(
     return { accion: "toma_humana" };
   }
 
-  // 5) Mensaje del cliente.
-  const guardado = await guardarMensaje(supa, {
-    empleadoId,
-    chatId,
-    rol: "cliente",
-    texto: m.texto,
-    waId: m.waId,
-    canal: "whatsapp",
-    // Adjunto (foto/PDF/audio): se persisten sus metadatos para que la persona
-    // pueda VERLO en el inbox (vía proxy autenticado), no solo leer "[imagen]".
-    // Best-effort: si la migración 270 no está, guardarMensaje lo omite solo.
-    media: m.adjunto
-      ? {
-          url: m.adjunto.url ?? null,
-          mime: m.adjunto.mime ?? null,
-          tipo: m.adjunto.tipo,
-          nombre: m.adjunto.nombre ?? null,
-        }
-      : null,
-  });
-  // ANTI-DOBLE-RESPUESTA (fix 24-jul): si el índice único (empleado_id,
-  // wa_message_id) rechazó el insert, este webhook es una ENTREGA DUPLICADA del
-  // mismo mensaje (WAHA a veces reenvía el evento, o el webhook quedó suscrito
-  // dos veces). La entrega que SÍ guardó el mensaje es la que responde; ésta se
-  // retira, para no disparar una segunda respuesta de Gemini. Cubre la carrera
-  // que la idempotencia por lectura (yaProcesado) no alcanza cuando ambas
-  // entregas llegan casi simultáneas.
-  if (guardado.dup) return { accion: "duplicado_carrera" };
+  // 5) Mensaje del cliente. Si viene de la recuperación de huérfano (arriba),
+  // el mensaje YA está guardado — guardarlo de nuevo lo rechazaría por el
+  // índice único y esta invocación se retiraría creyendo que es una carrera.
+  if (!huerfano) {
+    const guardado = await guardarMensaje(supa, {
+      empleadoId,
+      chatId,
+      rol: "cliente",
+      texto: m.texto,
+      waId: m.waId,
+      canal: "whatsapp",
+      // Adjunto (foto/PDF/audio): se persisten sus metadatos para que la persona
+      // pueda VERLO en el inbox (vía proxy autenticado), no solo leer "[imagen]".
+      // Best-effort: si la migración 270 no está, guardarMensaje lo omite solo.
+      media: m.adjunto
+        ? {
+            url: m.adjunto.url ?? null,
+            mime: m.adjunto.mime ?? null,
+            tipo: m.adjunto.tipo,
+            nombre: m.adjunto.nombre ?? null,
+          }
+        : null,
+    });
+    // ANTI-DOBLE-RESPUESTA (fix 24-jul): si el índice único (empleado_id,
+    // wa_message_id) rechazó el insert, este webhook es una ENTREGA DUPLICADA del
+    // mismo mensaje (WAHA a veces reenvía el evento, o el webhook quedó suscrito
+    // dos veces). La entrega que SÍ guardó el mensaje es la que responde; ésta se
+    // retira, para no disparar una segunda respuesta de Gemini. Cubre la carrera
+    // que la idempotencia por lectura (yaProcesado) no alcanza cuando ambas
+    // entregas llegan casi simultáneas.
+    if (guardado.dup) return { accion: "duplicado_carrera" };
+  }
 
   // Contacto: guardar con el número real + nombre visible (best-effort).
   const nombre = m.nombre ?? (await nombreDeContacto(m.jid));
