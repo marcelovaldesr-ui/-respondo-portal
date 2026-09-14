@@ -44,7 +44,17 @@ export type Proposito =
   /** Token de lectura de la cuenta publicitaria de Meta (Pauta). */
   | "ads-token"
   /** `state` firmado del OAuth de Pauta, para que el callback no sea falsificable. */
-  | "ads-estado";
+  | "ads-estado"
+  /**
+   * Refresh token de Google Ads (Marketing Fase 6). Propósito PROPIO y no
+   * `ads-token`: un refresh token de Google no vence nunca por sí solo, así que
+   * vale más que el de Meta, y la separación por propósito hace que un valor
+   * cifrado para uno no se pueda descifrar como el otro aunque compartan el
+   * secreto de origen. Además deja claro en el log qué integración se rompió.
+   */
+  | "ads-google-token"
+  /** `state` firmado del OAuth de Google Ads. */
+  | "ads-google-estado";
 
 function clave(proposito: Proposito): Buffer {
   const base = process.env.SUPABASE_SERVICE_ROLE_KEY;

@@ -44,30 +44,51 @@ const corto = (n: number, plata?: boolean) => {
 export default function GraficoTendencia({
   serie,
   metaConectada,
+  hayConversaciones = true,
+  hayIngresos = true,
   principalInicial,
   alto = 300,
 }: {
   serie: PuntoDiario[];
   metaConectada: boolean;
+  /** Señales del negocio: deciden qué series tiene sentido ofrecer (Fase 6). */
+  hayConversaciones?: boolean;
+  hayIngresos?: boolean;
   principalInicial?: keyof PuntoDiario;
   alto?: number;
 }) {
   const SERIES: Serie[] = useMemo(
     () => [
+      /**
+       * ⭐ FASE 6: una serie que este negocio no puede llenar NO se ofrece.
+       *
+       * Sin conversaciones en Respondo, las pestañas «Conversaciones ·
+       * Calificados · Ventas · Ingresos» dibujaban cuatro líneas planas en
+       * cero — que no es «no pasó nada», es «no medimos eso acá». `clics`
+       * ocupa su lugar: es lo que sí se mide con solo publicidad.
+       */
       { clave: "gasto", etiqueta: "Invertido", plata: true, disponible: metaConectada },
-      { clave: "conversaciones", etiqueta: "Conversaciones", disponible: true },
-      { clave: "calificados", etiqueta: "Calificados", disponible: true },
-      { clave: "ventas", etiqueta: "Ventas", disponible: true },
-      { clave: "cobrado", etiqueta: "Ingresos", plata: true, disponible: true },
+      { clave: "clics", etiqueta: "Clics", disponible: metaConectada && !hayConversaciones },
+      { clave: "conversaciones", etiqueta: "Conversaciones", disponible: hayConversaciones },
+      { clave: "calificados", etiqueta: "Calificados", disponible: hayConversaciones },
+      { clave: "ventas", etiqueta: "Ventas", disponible: hayConversaciones },
+      { clave: "cobrado", etiqueta: "Ingresos", plata: true, disponible: hayIngresos },
     ],
-    [metaConectada],
+    [metaConectada, hayConversaciones, hayIngresos],
   );
 
   const [principal, setPrincipal] = useState<keyof PuntoDiario>(
-    principalInicial ?? (metaConectada ? "gasto" : "conversaciones"),
+    principalInicial ?? (metaConectada ? "gasto" : hayConversaciones ? "conversaciones" : "clics"),
   );
+  /**
+   * ⚠️ La comparación tiene que arrancar en una serie DISPONIBLE. Arrancaba
+   * fija en «conversaciones» y, en un negocio que no las tiene, el selector
+   * mostraba «sin comparar» mientras el gráfico seguía dibujando una línea
+   * punteada de ceros con su leyenda. Un control diciendo una cosa y el dibujo
+   * mostrando otra.
+   */
   const [secundaria, setSecundaria] = useState<keyof PuntoDiario | null>(
-    metaConectada ? "conversaciones" : "ventas",
+    hayConversaciones ? (metaConectada ? "conversaciones" : "ventas") : null,
   );
   const [hover, setHover] = useState<number | null>(null);
 
@@ -143,14 +164,16 @@ export default function GraficoTendencia({
     <div>
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="mk-segmentos" role="group" aria-label="Serie principal">
-          {SERIES.map((s) => (
+          {/* Solo las series que este negocio puede llenar. Una pestaña
+              apagada permanentemente es una promesa que el producto no va a
+              cumplir mientras no cambie la configuración, y ocupa el mismo
+              lugar que las que sí sirven. */}
+          {SERIES.filter((s) => s.disponible).map((s) => (
             <button
               key={s.clave}
               type="button"
               className="mk-segmento"
               aria-pressed={s.clave === principal}
-              disabled={!s.disponible}
-              title={!s.disponible ? "Se ve cuando conectes la cuenta de Meta" : undefined}
               onClick={() => elegir(s.clave)}
             >
               {s.etiqueta}

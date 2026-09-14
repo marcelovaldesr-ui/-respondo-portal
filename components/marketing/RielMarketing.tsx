@@ -4,6 +4,9 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { Ico } from "@/components/marketing/Iconos";
 import ConmutadorDemo from "@/components/marketing/ConmutadorDemo";
+import { seccionesVisibles, type Senales, type Seccion } from "@/lib/ads/senales";
+import type { Proveedor } from "@/lib/ads/canal";
+import type { VarianteDemo } from "@/lib/marketing/demo";
 
 /**
  * EL RIEL DEL CENTRO DE MARKETING.
@@ -17,34 +20,52 @@ import ConmutadorDemo from "@/components/marketing/ConmutadorDemo";
  * tarjeta blanca) pero con más peso: Marketing es un módulo del producto, no
  * una herramienta incrustada, y el riel es lo primero que lo dice.
  */
-const GRUPOS: {
-  rotulo: string | null;
-  items: { href: string; label: string; icono: keyof typeof Ico; exacto?: boolean }[];
-}[] = [
-  { rotulo: null, items: [{ href: "/marketing", label: "Inicio", icono: "inicio", exacto: true }] },
+type Item = { href: string; label: string; icono: keyof typeof Ico; exacto?: boolean; seccion: Seccion };
+
+const GRUPOS: { rotulo: string | null; items: Item[] }[] = [
+  { rotulo: null, items: [{ href: "/marketing", label: "Inicio", icono: "inicio", exacto: true, seccion: "inicio" }] },
   {
     rotulo: "Analizar",
     items: [
-      { href: "/marketing/campanas", label: "Campañas", icono: "campanas" },
-      { href: "/marketing/atribucion", label: "Atribución", icono: "atribucion" },
-      { href: "/marketing/leads", label: "Personas", icono: "leads" },
+      { href: "/marketing/campanas", label: "Campañas", icono: "campanas", seccion: "campanas" },
+      { href: "/marketing/busqueda", label: "Búsqueda", icono: "buscar", seccion: "busqueda" },
+      { href: "/marketing/atribucion", label: "Atribución", icono: "atribucion", seccion: "atribucion" },
+      { href: "/marketing/leads", label: "Personas", icono: "leads", seccion: "personas" },
     ],
   },
   {
     rotulo: "Crear",
     items: [
-      { href: "/marketing/creatividades", label: "Estudio creativo", icono: "creatividades" },
-      { href: "/marketing/campanas/nueva", label: "Nueva campaña", icono: "nueva", exacto: true },
+      { href: "/marketing/arquitecto", label: "Diseñar campaña", icono: "nueva", exacto: true, seccion: "arquitecto" },
+      { href: "/marketing/creatividades", label: "Estudio creativo", icono: "creatividades", seccion: "creatividades" },
+      { href: "/marketing/campanas/nueva", label: "Armar a mano", icono: "campanas", exacto: true, seccion: "campanas" },
     ],
   },
   {
     rotulo: "Optimizar",
     items: [
-      { href: "/marketing/copiloto", label: "Copiloto", icono: "copiloto" },
-      { href: "/marketing/integraciones", label: "Integraciones", icono: "integraciones" },
+      { href: "/marketing/copiloto", label: "Copiloto", icono: "copiloto", seccion: "copiloto" },
+      { href: "/marketing/integraciones", label: "Integraciones", icono: "integraciones", seccion: "integraciones" },
     ],
   },
 ];
+
+/**
+ * ⭐ EL RIEL SE ARMA CON LAS SEÑALES DEL NEGOCIO (Fase 6).
+ *
+ * Una sección que no aplica NO se muestra vacía: se saca. Sin conversaciones,
+ * «Personas» no existe — no es una lista que se llenará sola, es una pantalla
+ * que nunca va a tener nada. `seccionesVisibles` es la única fuente de esa
+ * decisión, para que el riel de escritorio y la franja de móvil no puedan
+ * discrepar (que es exactamente lo que pasa cuando cada uno filtra por su
+ * cuenta).
+ */
+function gruposVisibles(senales: Senales, canales: Proveedor[]) {
+  const visibles = { ...seccionesVisibles(senales), busqueda: canales.includes("google") };
+  return GRUPOS.map((g) => ({ ...g, items: g.items.filter((i) => visibles[i.seccion]) })).filter(
+    (g) => g.items.length > 0,
+  );
+}
 
 function esActivo(ruta: string, href: string, exacto?: boolean) {
   if (exacto) return ruta === href;
@@ -55,11 +76,19 @@ function esActivo(ruta: string, href: string, exacto?: boolean) {
 export default function RielMarketing({
   clienteNombre,
   demo,
+  senales,
+  variante,
+  canales = [],
 }: {
   clienteNombre: string;
   demo: boolean;
+  senales: Senales;
+  variante?: VarianteDemo;
+  /** Canales conectados: «Búsqueda» solo existe con Google. */
+  canales?: Proveedor[];
 }) {
   const ruta = usePathname();
+  const grupos = gruposVisibles(senales, canales);
 
   return (
     <aside className="mk-riel">
@@ -83,7 +112,7 @@ export default function RielMarketing({
       </div>
 
       <nav className="flex-1 pb-4" aria-label="Secciones de Marketing">
-        {GRUPOS.map((g, i) => (
+        {grupos.map((g, i) => (
           <div key={i}>
             {g.rotulo && <div className="mk-riel-grupo">{g.rotulo}</div>}
             {g.items.map((it) => (
@@ -103,7 +132,7 @@ export default function RielMarketing({
 
       <div className="mk-riel-pie">
         <div className="mk-riel-demo" data-activo={demo}>
-          <ConmutadorDemo activo={demo} />
+          <ConmutadorDemo activo={demo} variante={variante} />
         </div>
       </div>
     </aside>
@@ -111,9 +140,17 @@ export default function RielMarketing({
 }
 
 /** La versión para pantallas angostas: una franja con las secciones. */
-export function FranjaMarketing({ demo }: { demo: boolean }) {
+export function FranjaMarketing({
+  demo,
+  senales,
+  canales = [],
+}: {
+  demo: boolean;
+  senales: Senales;
+  canales?: Proveedor[];
+}) {
   const ruta = usePathname();
-  const items = GRUPOS.flatMap((g) => g.items);
+  const items = gruposVisibles(senales, canales).flatMap((g) => g.items);
   return (
     <div className="lg:hidden" style={{ background: "var(--nav-bg)", borderBottom: "1px solid var(--nav-borde)" }}>
       <div className="flex items-center gap-3 px-4 pt-3">

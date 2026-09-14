@@ -9,9 +9,205 @@ día; el estudio creativo y el copiloto funcionan con la llave de Gemini que ya 
 Lo de abajo hace que se puedan **guardar** creatividades y campañas, agrega el **costo** y hace
 que **Meta aprenda** de tus resultados.
 
-**Estado al 10-sep-2026:** la 302 está aplicada, las tres variables de Meta están en Vercel y la
+**Estado al 14-sep-2026:** la 302 está aplicada, las tres variables de Meta están en Vercel y la
 cuenta «Cecilia Roa» está conectada en Estética Aurora. Lo que queda pendiente es lo marcado
 como P0 abajo (la 303) y los puntos 2 a 4.
+
+---
+
+## Fase 6 (14-sep-2026) — Google Ads como segundo canal
+
+Marketing ya no supone que el negocio tiene WhatsApp. **AyP Abogados puede usarlo desde el
+primer día con sólo Meta conectado**, y no le aparecen secciones vacías: el producto detecta
+qué señales hay y se adapta solo. Eso ya está andando y **no depende de nada de lo de abajo**.
+
+Lo de abajo es lo que hace falta para que **Google Ads** lea de verdad. Sin esto, la tarjeta de
+Google en `/marketing/integraciones` dice «Requiere configuración» —que es su estado real— y el
+resto de Marketing funciona igual.
+
+---
+
+### G1. Aplicar la migración `sql/309_ads_google_y_planes.sql`
+
+**Qué:** correr esa migración en Supabase.
+
+**Por qué:** agrega `cuenta_padre_id` (la cuenta administradora por la que hay que entrar para
+leer una cuenta que cuelga de un MCC) y las columnas `canal` y `plan` donde el Arquitecto guarda
+el plan de campaña. Sin ella, Google se conecta igual salvo cuentas bajo un MCC, y el Arquitecto
+arma y muestra el plan pero no lo puede guardar.
+
+**Dónde:** Supabase → SQL Editor → **pestaña nueva con el `+`** (si reusas una vieja puede estar
+apuntando al motor de logs y tira «Backend error»).
+
+**Qué valor copiar:** el contenido completo del archivo `sql/309_ads_google_y_planes.sql`.
+
+**Dónde pegarlo:** en esa pestaña del SQL Editor, y apretar Run.
+
+**Cómo verificar:** la consulta del final tiene que devolver `cuenta_padre = 1`, `datos = 1`,
+`plan = 1`, `canal = 1`. Después, en `/marketing/arquitecto`, diseña una campaña y apreta
+«Guardar plan»: tiene que abrirse su ficha sin aviso de migración faltante.
+
+**Es aditiva.** No modifica ninguna migración ya aplicada y conserva todos los estados viejos de
+`ed_mk_campanas`: ninguna fila existente queda inválida.
+
+---
+
+### G2. Crear el proyecto de Google Cloud y el cliente OAuth
+
+**Qué:** un proyecto nuevo en Google Cloud con un **ID de cliente OAuth de tipo aplicación web**.
+
+**Por qué —y por qué NO reusar el de la Agenda:** el proyecto que ya usa Respondo para Google
+Calendar está publicado y verificado. Agregarle el scope `https://www.googleapis.com/auth/adwords`
+**reabre su verificación**, y mientras Google la revisa la Agenda queda sin publicar. Son dos
+proyectos a propósito, no por descuido.
+
+**Dónde:** console.cloud.google.com → selector de proyecto arriba → **Proyecto nuevo** →
+nombre sugerido `Respondo Ads`. Después, dentro de ese proyecto:
+APIs y servicios → **Pantalla de consentimiento de OAuth** (tipo Externo, nombre «Respondo»,
+correo de asistencia el tuyo) → y luego **Credenciales** → Crear credenciales → **ID de cliente
+de OAuth** → tipo **Aplicación web**.
+
+**Qué valor copiar:** en «URI de redireccionamiento autorizados», agregar exactamente:
+
+```
+https://respondo-portal.vercel.app/api/ads/google/callback
+```
+
+⚠️ Sin barra final, y con `https`. Si además vas a probar en tu máquina, agrega una segunda
+línea con `http://localhost:3000/api/ads/google/callback`.
+
+**Dónde pegarlo:** en el campo «URI de redireccionamiento autorizados» de esa pantalla.
+
+**Cómo verificar:** al guardar, Google te muestra un **Id. de cliente** (termina en
+`.apps.googleusercontent.com`) y un **Secreto del cliente**. Los necesitas en G4.
+
+⚠️ En «Público» de la pantalla de consentimiento, **agrégate como usuario de prueba** con tu
+correo mientras la app esté en modo de prueba. Si no, Google te rechaza con «acceso bloqueado».
+
+---
+
+### G3. Subir el nivel de acceso del proyecto (esto reemplaza al «developer token»)
+
+**Qué:** pedirle a Google que tu proyecto de Cloud pueda leer **cuentas reales**.
+
+⚠️ **Ojo con lo que vas a encontrar buscando.** Hasta el **9 de septiembre de
+2026** esto se hacía pidiendo un «token de desarrollador» en el **Centro de API**
+de una cuenta administradora de Google Ads. **Google apagó ese sistema.** Casi
+todos los tutoriales que vas a encontrar —y varias librerías— siguen explicando
+el camino viejo. Si entras al Centro de API, la propia pantalla te dice que las
+solicitudes ya no se procesan.
+
+**Por qué:** ahora el nivel de acceso es una propiedad del **proyecto de Google
+Cloud** que creaste en G2. Un proyecto recién habilitado queda en nivel
+**Prueba**, que sólo responde cuentas de prueba: con ese nivel la conexión
+funciona pero la cuenta de Impresora devuelve vacío.
+
+**Dónde:** console.cloud.google.com → tu proyecto `Respondo Ads` → buscar
+**«Google Ads API»** en el buscador de arriba → **Habilitar** → y después, en la
+página **Descripción general (Overview)** de esa API, abrir la sección
+**«Upgrade access level» / «Subir nivel de acceso»**.
+
+**Qué valor copiar:** nada que copiar. Se aprieta **«Apply for access»** y se
+completa un formulario corto. Cuando pregunte para qué la vas a usar, algo así:
+
+> «Leemos el rendimiento de las cuentas publicitarias de nuestros clientes para
+> mostrarlo en nuestro portal. Sólo lectura: no creamos ni modificamos campañas.»
+
+**Dónde pegarlo:** en ese formulario de la consola de Cloud.
+
+**Qué nivel pedir:**
+
+| Nivel | Cuentas reales | Tope diario | Qué exige |
+|---|---|---|---|
+| Prueba | no | 15.000 | es lo que tienes al habilitar |
+| **Explorer** | **sí** | 2.880 | nada más — automático |
+| Basic | sí | 15.000 | verificación de marca (se aprueba en minutos) |
+| Standard | sí | sin tope | revisión manual, ~10 días hábiles |
+
+⭐ **Con Explorer te alcanza para partir.** 2.880 operaciones al día es muchísimo
+para leer una o dos cuentas. Pide **Basic** sólo cuando tengas varios clientes;
+lo único que agrega es la verificación de marca del proyecto, que se aprueba en
+minutos. **Standard no lo necesitas.**
+
+**Cómo verificar:** en esa misma página de Descripción general, el nivel de
+acceso del proyecto tiene que dejar de decir «Test». Y en Respondo, si conectas
+antes de tenerlo, la pantalla no miente: traduce el error de Google y te dice
+**«el proyecto de Google Cloud todavía tiene acceso de prueba»**, en vez de
+mandarte a revisar permisos que están bien.
+
+---
+
+### G4. Pegar las variables en Vercel
+
+**Qué:** dos variables obligatorias y una opcional.
+
+**Por qué:** son las credenciales que el código exige antes de siquiera mostrar
+el botón «Conectar Google Ads». Mientras falte alguna, la tarjeta dice su estado
+real.
+
+**Dónde:** Vercel → proyecto `respondo-portal` → **Settings** → **Environment Variables**.
+
+**Qué valor copiar y dónde pegarlo:**
+
+| Variable | Valor | De dónde sale | ¿Obligatoria? |
+|---|---|---|---|
+| `GOOGLE_ADS_CLIENT_ID` | el Id. de cliente | G2 | **sí** |
+| `GOOGLE_ADS_CLIENT_SECRET` | el Secreto del cliente | G2 | **sí** |
+| `GOOGLE_ADS_LOGIN_CUSTOMER_ID` | el número de tu cuenta administradora de Google Ads, **sólo dígitos** (`1234567890`, sin guiones) | ads.google.com, arriba a la derecha | sólo si las cuentas de tus clientes cuelgan de tu MCC |
+| `GOOGLE_ADS_DEVELOPER_TOKEN` | — | — | **no. No la pongas** |
+
+⚠️ **`GOOGLE_ADS_DEVELOPER_TOKEN` ya no hace falta.** El código la acepta si
+existe (y la manda, porque no cuesta nada), pero Google la ignora desde el
+9-sep-2026. No pierdas tiempo consiguiéndola.
+
+⚠️ **Ninguna** lleva el prefijo `NEXT_PUBLIC_`. Con ese prefijo se publicarían en
+el navegador de cualquiera que abra el portal.
+
+⚠️ Después de agregarlas hay que hacer **Redeploy**: las variables no se aplican
+al deploy que ya está corriendo.
+
+**Cómo verificar:** entra a `/marketing/integraciones`. La tarjeta de Google Ads
+tiene que dejar de decir «Requiere configuración» y mostrar el botón **Conectar
+Google Ads**.
+
+---
+
+### G5. Conectar la cuenta de Impresora Color
+
+**Qué:** apretar el botón y elegir la cuenta.
+
+**Por qué:** es el único paso que no puedo hacer yo, porque abre el diálogo de Google con tu
+sesión.
+
+**Dónde:** `/marketing/integraciones`, botón **Conectar Google Ads**, entrando como Impresora
+Color.
+
+**Qué valor copiar:** nada. Google te va a mostrar la lista de cuentas a las que tienes acceso.
+
+**Dónde pegarlo:** elige la cuenta de **Impresora Color**. ⚠️ **Las cuentas administradoras no
+aparecen en la lista** y es a propósito: un MCC no tiene campañas propias, y elegirlo es el error
+más común de esta integración.
+
+**Cómo verificar:** la tarjeta queda en verde con el nombre de la cuenta, y abajo aparece la
+**prueba de lectura real** (gasto y clics de los últimos días, traídos de Google en vivo). Si esa
+prueba falla, la tarjeta lo dice con el motivo; **nunca dice «conectado» sin haber leído**.
+
+Después, `/marketing/busqueda` se llena con los términos de búsqueda reales y `/marketing` empieza
+a mostrar las campañas de Google junto a las de Meta.
+
+---
+
+### Lo que NO necesitas hacer para Google
+
+- **Nada para AyP Abogados.** Sólo Meta, que ya está conectado. Google es para Impresora.
+- **No pidas `adwords` con acceso de escritura.** Respondo **no publica ni modifica** campañas en
+  Google, igual que no lo hace en Meta. Lee, analiza, recomienda y deja el plan listo para pegar.
+- **No hace falta verificación de la app de Google** mientras seas tú quien conecta las cuentas.
+  El día que un cliente distinto conecte la suya van a faltar el logo y la política de privacidad
+  publicada — lo mismo que ya está anotado para Meta.
+- **Nada para el Arquitecto de campañas ni para las recomendaciones.** Funcionan con la
+  `GEMINI_API_KEY` que ya está en Vercel, y el motor de recomendaciones **no usa modelo**: es
+  determinista.
 
 ---
 

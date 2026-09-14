@@ -2,6 +2,13 @@ import Link from "next/link";
 import { exigirPermisoPortal } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { conexionDe, metaAdsConfigurado, proveedorMeta } from "@/lib/ads/meta";
+import {
+  conexionGoogleDe,
+  cuentasDeGoogle,
+  formatearIdCuenta,
+  googleAdsConfigurado,
+  pruebaDeLecturaGoogle,
+} from "@/lib/ads/google";
 import { estadoDePauta, type EstadoItem } from "@/lib/ads/estado";
 import { formatearMonto, formatearNumero } from "@/lib/ads/moneda";
 import { resolverRango } from "@/lib/ads/periodos";
@@ -10,6 +17,7 @@ import { modoDemo } from "@/lib/marketing/modo";
 import Cabecera from "@/components/marketing/Cabecera";
 import FormularioDataset from "@/components/marketing/FormularioDataset";
 import SelectorCuenta from "@/components/marketing/SelectorCuenta";
+import SelectorCuentaGoogle from "@/components/marketing/SelectorCuentaGoogle";
 import { Pildora } from "@/components/marketing/Estado";
 import { Ico } from "@/components/marketing/Iconos";
 
@@ -18,6 +26,11 @@ export const dynamic = "force-dynamic";
 /** Mensajes de vuelta del OAuth. Cada uno dice qué pasó y qué hacer. */
 const AVISOS: Record<string, { texto: string; tono: "ok" | "error" }> = {
   "1": { texto: "Cuenta publicitaria conectada.", tono: "ok" },
+  google: { texto: "Cuenta de Google Ads conectada.", tono: "ok" },
+  elegir_google: {
+    texto: "Google autorizó el acceso. Elige cuál de tus cuentas de Google Ads es la de este negocio.",
+    tono: "ok",
+  },
   elegir: { texto: "Meta autorizó el acceso. Elige cuál de tus cuentas publicitarias es la de este negocio.", tono: "ok" },
   cancelado: { texto: "Se canceló la autorización en Meta. No se guardó nada.", tono: "error" },
   sin_cuentas: { texto: "La cuenta de Meta con la que entraste no administra ninguna cuenta publicitaria. Entra con la cuenta que sí las administra.", tono: "error" },
@@ -57,10 +70,11 @@ export default async function Integraciones({ searchParams }: { searchParams: Pr
   const params = await searchParams;
   const aviso = AVISOS[params.ok ?? ""] ?? AVISOS[params.e ?? ""];
 
-  const [estado, conexion, clienteRow] = await Promise.all([
+  const [estado, conexion, clienteRow, conexionGoogle] = await Promise.all([
     estadoDePauta(usuario.clienteId),
     conexionDe(usuario.clienteId),
     db().from("ed_clientes").select("ads_dataset_id, waba_id, pago_link_base").eq("id", usuario.clienteId).maybeSingle(),
+    googleAdsConfigurado() ? conexionGoogleDe(usuario.clienteId) : Promise.resolve(null),
   ]);
 
   let dataset = String(clienteRow.data?.ads_dataset_id ?? "");
@@ -81,6 +95,20 @@ export default async function Integraciones({ searchParams }: { searchParams: Pr
   const leido = prueba?.ok
     ? prueba.datos.reduce((acc, r) => ({ anuncios: acc.anuncios + 1, gasto: acc.gasto + r.gasto.valor }), { anuncios: 0, gasto: 0 })
     : null;
+
+  /**
+   * Google, con el MISMO criterio que Meta: la lista de cuentas solo se pide
+   * cuando falta elegir, y la prueba de lectura solo cuando ya hay una cuenta.
+   * Preguntar las dos cosas siempre serían dos viajes a Google en cada carga de
+   * una pantalla que casi siempre se abre para mirar, no para configurar.
+   */
+  const googleNecesitaElegir = Boolean(conexionGoogle && !conexionGoogle.cuentaId);
+  const [cuentasGoogle, pruebaGoogle] = await Promise.all([
+    googleNecesitaElegir && conexionGoogle ? cuentasDeGoogle(conexionGoogle.refreshToken) : Promise.resolve(null),
+    conexionGoogle && conexionGoogle.cuentaId
+      ? pruebaDeLecturaGoogle(usuario.clienteId, resolverRango("30d"))
+      : Promise.resolve(null),
+  ]);
 
   let cola = { pendientes: 0, enviados: 0, descartados: 0, fallidos: 0 };
   try {
@@ -114,7 +142,9 @@ export default async function Integraciones({ searchParams }: { searchParams: Pr
             {/* El contador cuenta TARJETAS, no chequeos internos: decir «0/5»
                 arriba de cuatro tarjetas manda a buscar una quinta. */}
             <span className="cifra" style={{ color: "var(--tinta)" }}>
-              {[iAtrib, iMeta, iCapi, iPago].filter((i) => i?.estado === "ok").length}/4
+              {[iAtrib, iMeta, iCapi, iPago].filter((i) => i?.estado === "ok").length +
+                (conexionGoogle && conexionGoogle.cuentaId ? 1 : 0)}
+              /{googleAdsConfigurado() ? 5 : 4}
             </span>
             integraciones listas
           </span>
@@ -253,7 +283,118 @@ export default async function Integraciones({ searchParams }: { searchParams: Pr
           }
         />
 
-        {/* ── 3. API de conversiones ────────────────────────────────────── */}
+        {/* ── 3. Google Ads ─────────────────────────────────────────────── */}
+        <Tarjeta
+          logo="indigo"
+          icono={Ico.grafico({ className: "h-5 w-5" })}
+          titulo="Google Ads"
+          descripcion="Campañas, grupos, anuncios, palabras clave y términos de búsqueda. Solo lectura: Respondo no crea, pausa ni cambia pujas."
+          estado={
+            !googleAdsConfigurado()
+              ? "manual"
+              : conexionGoogle && conexionGoogle.cuentaId
+                ? "ok"
+                : conexionGoogle
+                  ? "atencion"
+                  : "falta"
+          }
+          hechos={
+            conexionGoogle && conexionGoogle.cuentaId
+              ? [
+                  { etiqueta: "Cuenta", valor: conexionGoogle.cuentaNombre || formatearIdCuenta(conexionGoogle.cuentaId) },
+                  { etiqueta: "Identificador", valor: formatearIdCuenta(conexionGoogle.cuentaId) },
+                  { etiqueta: "Factura en", valor: conexionGoogle.moneda },
+                  {
+                    etiqueta: "Última lectura",
+                    valor:
+                      pruebaGoogle?.ok
+                        ? `${formatearNumero(pruebaGoogle.datos.campanas)} campañas · 30 días`
+                        : "—",
+                  },
+                ]
+              : []
+          }
+          pie={
+            !googleAdsConfigurado() ? (
+              <span style={{ fontSize: "12.5px", color: "var(--alerta)" }}>Todavía no está activada.</span>
+            ) : !conexionGoogle ? (
+              <a href="/api/ads/google/conectar" className="btn-primario">
+                Conectar Google Ads
+              </a>
+            ) : googleNecesitaElegir ? (
+              <span style={{ fontSize: "12.5px", color: "var(--alerta)" }}>Falta elegir la cuenta.</span>
+            ) : (
+              <>
+                <a href="/api/ads/google/conectar" className="btn-chico">
+                  Reconectar
+                </a>
+                <SelectorCuentaGoogle cuentas={[]} soloDesconectar />
+              </>
+            )
+          }
+          detalles={
+            <>
+              {googleNecesitaElegir &&
+                (cuentasGoogle?.ok ? (
+                  <div className="mb-4">
+                    <SelectorCuentaGoogle
+                      cuentas={cuentasGoogle.datos.map((c) => ({
+                        id: c.id,
+                        nombre: c.nombre,
+                        moneda: c.moneda,
+                        administradora: c.administradora,
+                        idLegible: formatearIdCuenta(c.id),
+                      }))}
+                    />
+                  </div>
+                ) : (
+                  <p style={{ fontSize: "12.5px", color: "var(--alerta)" }}>{cuentasGoogle?.error.mensaje}</p>
+                ))}
+
+              {pruebaGoogle && (
+                <div className="mk-hundido px-4 py-3" style={{ fontSize: "12.5px" }}>
+                  {pruebaGoogle.ok ? (
+                    pruebaGoogle.datos.campanas > 0 ? (
+                      <>
+                        <strong style={{ color: "var(--ok)" }}>Leyendo bien.</strong> Últimos 30 días:{" "}
+                        {formatearNumero(pruebaGoogle.datos.campanas)}{" "}
+                        {pruebaGoogle.datos.campanas === 1 ? "campaña" : "campañas"} con actividad y{" "}
+                        <strong>
+                          {formatearMonto(pruebaGoogle.datos.gasto, { monedaDelNegocio: "CLP" })}
+                        </strong>{" "}
+                        invertidos. Tiene que cuadrar con tu cuenta de Google Ads.
+                      </>
+                    ) : (
+                      <>
+                        <strong>La conexión funciona</strong>, pero esta cuenta no tuvo campañas con actividad en los
+                        últimos 30 días.
+                      </>
+                    )
+                  ) : (
+                    <span style={{ color: "var(--alerta)" }}>{pruebaGoogle.error.mensaje}</span>
+                  )}
+                </div>
+              )}
+
+              {conexionGoogle?.cuentaPadreId && (
+                <p className="mt-3" style={{ fontSize: "11.5px", color: "var(--muted-2)" }}>
+                  Se entra por la cuenta administradora {formatearIdCuenta(conexionGoogle.cuentaPadreId)}.
+                </p>
+              )}
+              {conexionGoogle?.ultimoError && (
+                <p className="mt-3" style={{ fontSize: "11.5px", color: "var(--alerta)" }}>
+                  Último problema: {conexionGoogle.ultimoError}
+                </p>
+              )}
+              <p className="mt-3" style={{ fontSize: "11.5px", color: "var(--muted-2)" }}>
+                Respondo lee tu cuenta de Google Ads pero no la modifica: no crea campañas, no pausa palabras clave ni
+                agrega negativas. Los cambios propuestos se muestran para que los apliques tú.
+              </p>
+            </>
+          }
+        />
+
+        {/* ── 4. API de conversiones ────────────────────────────────────── */}
         <Tarjeta
           logo="indigo"
           icono={Ico.atribucion({ className: "h-5 w-5" })}

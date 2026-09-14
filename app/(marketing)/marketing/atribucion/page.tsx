@@ -3,7 +3,7 @@ import { exigirPermisoPortal } from "@/lib/auth";
 import { resolverRango } from "@/lib/ads/periodos";
 import { formatearMonto, formatearNumero, formatearPorcentaje } from "@/lib/ads/moneda";
 import { cargarMarketing } from "@/lib/marketing/datos";
-import { modoDemo } from "@/lib/marketing/modo";
+import { opcionesDemo } from "@/lib/marketing/modo";
 import Cabecera from "@/components/marketing/Cabecera";
 import Embudo from "@/components/marketing/Embudo";
 import TablaAnuncios from "@/components/marketing/TablaAnuncios";
@@ -31,9 +31,9 @@ export const dynamic = "force-dynamic";
  */
 export default async function Atribucion({ searchParams }: { searchParams: Promise<{ p?: string }> }) {
   const usuario = await exigirPermisoPortal("generar_insights");
-  const demo = await modoDemo();
+  const { demo, variante } = await opcionesDemo();
   const rango = resolverRango((await searchParams).p);
-  const p = await cargarMarketing(usuario.clienteId, rango, { demo });
+  const p = await cargarMarketing(usuario.clienteId, rango, { demo, variante });
 
   const reales = p.campanas.filter((c) => c.origen !== "borrador");
   const totalVentas = reales.reduce((a, c) => a + c.ventas, 0);

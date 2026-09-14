@@ -4,6 +4,8 @@ import Link from "next/link";
 import { useMemo, useState } from "react";
 import { formatearMonto, formatearNumero } from "@/lib/ads/moneda";
 import { textoObjetivo, type FilaCampana } from "@/lib/marketing/tipos";
+import { ETIQUETA_RESULTADO, NOMBRE_PROVEEDOR, type Proveedor } from "@/lib/ads/canal";
+import type { Senales } from "@/lib/ads/senales";
 import { EstadoDeCampana, PieSinPublicidad } from "@/components/marketing/Estado";
 import { Ico } from "@/components/marketing/Iconos";
 
@@ -27,7 +29,7 @@ import { Ico } from "@/components/marketing/Iconos";
 /** Filas por tramo. Ordenadas por ingresos, lo de arriba es lo que importa. */
 const PAGINA = 50;
 
-type Clave = "nombre" | "gasto" | "conversaciones" | "calificados" | "ventas" | "cobrado" | "cpl" | "roas";
+type Clave = "nombre" | "gasto" | "conversaciones" | "calificados" | "ventas" | "cobrado" | "cpl" | "roas" | "resultados" | "costoPorResultado";
 
 const FILTROS: { clave: string; texto: string; f: (c: FilaCampana) => boolean }[] = [
   { clave: "todas", texto: "Todas", f: () => true },
@@ -44,6 +46,8 @@ export default function TablaCampanas({
   puedeConectarMeta,
   motivoSinPublicidad,
   series,
+  senales,
+  canales = [],
 }: {
   filas: FilaCampana[];
   monedaNegocio: string;
@@ -55,19 +59,45 @@ export default function TablaCampanas({
   motivoSinPublicidad: string;
   /** Conversaciones por día de cada campaña, para la chispa. */
   series?: Record<string, number[]>;
+  /**
+   * ⭐ QUÉ COLUMNAS TIENEN SENTIDO (Fase 6).
+   *
+   * Sin conversaciones, «Conv. · Calif. · Ventas · Ingresos · CPL · ROAS» son
+   * seis columnas de ceros: ocupan la tabla entera y no dicen nada cierto. En
+   * su lugar van las que la plataforma sí mide —resultados y su costo—, con el
+   * TIPO de resultado en el encabezado, porque «12 formularios» y «12
+   * conversaciones» no son la misma cosa y no deben leerse igual.
+   */
+  senales: Senales;
+  /** Canales conectados. Con más de uno aparece la columna y el filtro. */
+  canales?: Proveedor[];
 }) {
   const [busqueda, setBusqueda] = useState("");
   const [filtro, setFiltro] = useState("todas");
+  const [canal, setCanal] = useState<Proveedor | "todos">("todos");
   const [orden, setOrden] = useState<{ clave: Clave; desc: boolean }>({ clave: "cobrado", desc: true });
   /** Una pyme tiene decenas, no cientos; pero si las tiene, no se pintan todas. */
   const [tope, setTope] = useState(PAGINA);
 
   const cpl = (c: FilaCampana) => (c.gasto !== null && c.calificados ? c.gasto / c.calificados : null);
 
+  /**
+   * El encabezado de resultados dice QUÉ se está contando. Con dos tipos
+   * distintos en la misma tabla dice «Resultados» y cada fila se lee con su
+   * propio tipo: sumarlos sería comparar formularios con compras.
+   */
+  const tipos = new Set(filas.map((c) => c.tipoResultado).filter(Boolean));
+  const etiquetaResultados = tipos.size === 1 ? ETIQUETA_RESULTADO[[...tipos][0]!] : "Resultados";
+
   const visibles = useMemo(() => {
     const q = busqueda.trim().toLowerCase();
     const f = FILTROS.find((x) => x.clave === filtro)?.f ?? (() => true);
-    const out = filas.filter((c) => f(c) && (!q || c.nombre.toLowerCase().includes(q)));
+    const out = filas.filter(
+      (c) =>
+        f(c) &&
+        (!q || c.nombre.toLowerCase().includes(q)) &&
+        (canal === "todos" || c.proveedor === canal),
+    );
     const valor = (c: FilaCampana): number | string => {
       if (orden.clave === "nombre") return c.nombre;
       if (orden.clave === "cpl") return cpl(c) ?? -Infinity;
@@ -83,7 +113,7 @@ export default function TablaCampanas({
       return (va - vb) * (orden.desc ? -1 : 1);
     });
     return out;
-  }, [filas, busqueda, filtro, orden]);
+  }, [filas, busqueda, filtro, orden, canal]);
 
   const maxConv = Math.max(...filas.map((c) => c.conversaciones), 1);
   const cambiarOrden = (clave: Clave) =>
@@ -107,6 +137,32 @@ export default function TablaCampanas({
             </button>
           ))}
         </div>
+
+        {/* ⭐ El filtro por canal aparece SOLO con más de uno conectado: con un
+            único canal sería un control que no cambia nada. */}
+        {canales.length > 1 && (
+          <div className="mk-segmentos" role="group" aria-label="Canal">
+            <button type="button" className="mk-segmento" aria-pressed={canal === "todos"} onClick={() => { setTope(PAGINA); setCanal("todos"); }}>
+              Todos
+            </button>
+            {canales.map((cn) => (
+              <button
+                key={cn}
+                type="button"
+                className="mk-segmento"
+                aria-pressed={canal === cn}
+                onClick={() => {
+                  setTope(PAGINA);
+                  setCanal(cn);
+                }}
+              >
+                {NOMBRE_PROVEEDOR[cn]}
+                <span className="mk-conteo">{filas.filter((c) => c.proveedor === cn).length}</span>
+              </button>
+            ))}
+          </div>
+        )}
+
         <label className="relative flex items-center">
           <span className="pointer-events-none absolute left-3" style={{ color: "var(--muted-3)" }}>
             {Ico.buscar({ className: "h-4 w-4" })}
@@ -142,13 +198,25 @@ export default function TablaCampanas({
               <tr>
                 {th("nombre", "Campaña")}
                 {th("gasto", "Gasto", true, "Lo que cobró tu cuenta publicitaria en el período.")}
-                {th("conversaciones", "Conv.", true, "Personas que escribieron por WhatsApp desde esta campaña.")}
-                {th("calificados", "Calif.", true, "Avanzaron a interesado o más, o cotizaron, reservaron o compraron.")}
-                {th("ventas", "Ventas", true)}
-                {th("cobrado", "Ingresos", true, "Solo lo pagado por enlace de pago. El total real puede ser mayor.")}
-                {th("cpl", "CPL", true, "Costo por lead calificado = invertido ÷ calificados.")}
-                {th("roas", "ROAS", true, "Ingresos ÷ invertido. Como solo contamos lo pagado por enlace, el retorno real puede ser mayor.")}
-                <th className="num solo-ancho" data-tip="Conversaciones por día en la última semana">7 días</th>
+                {senales.conversiones &&
+                  th("resultados", etiquetaResultados, true, "Lo que la plataforma cuenta como resultado, con la medición configurada en la cuenta.")}
+                {senales.conversiones &&
+                  th("costoPorResultado", "Costo/result.", true, "Inversión ÷ resultados de la plataforma.")}
+                {senales.conversaciones &&
+                  th("conversaciones", "Conv.", true, "Personas que escribieron por WhatsApp desde esta campaña.")}
+                {senales.conversaciones &&
+                  th("calificados", "Calif.", true, "Avanzaron a interesado o más, o cotizaron, reservaron o compraron.")}
+                {senales.conversaciones && th("ventas", "Ventas", true)}
+                {senales.ingresos &&
+                  th("cobrado", "Ingresos", true, "Solo lo pagado por enlace de pago. El total real puede ser mayor.")}
+                {senales.conversaciones && th("cpl", "CPL", true, "Costo por lead calificado = invertido ÷ calificados.")}
+                {senales.ingresos &&
+                  th("roas", "ROAS", true, "Ingresos ÷ invertido. Como solo contamos lo pagado por enlace, el retorno real puede ser mayor.")}
+                {senales.conversaciones && (
+                  <th className="num solo-ancho" data-tip="Conversaciones por día en la última semana">
+                    7 días
+                  </th>
+                )}
               </tr>
             </thead>
             <tbody>
@@ -171,6 +239,9 @@ export default function TablaCampanas({
                         className="mt-1.5 flex items-center gap-2 overflow-hidden whitespace-nowrap"
                         style={{ fontSize: "11.5px", color: "var(--muted-2)" }}
                       >
+                        {canales.length > 1 && c.proveedor && (
+                          <span className="mk-pildora shrink-0">{NOMBRE_PROVEEDOR[c.proveedor]}</span>
+                        )}
                         <EstadoDeCampana estado={c.estado} />
                         {c.objetivo && <span className="truncate">{textoObjetivo(c.objetivo)}</span>}
                         {!borrador && (
@@ -184,22 +255,42 @@ export default function TablaCampanas({
                       </div>
                     </td>
                     <td className="num cifra">{borrador ? raya : plata(c.gasto, c.moneda)}</td>
-                    <td className="num cifra">
-                      {borrador ? (
-                        raya
-                      ) : (
-                        <span className="inline-flex items-center gap-2">
-                          <span className="mk-barra" style={{ width: Math.max(3, (c.conversaciones / maxConv) * 44) }} />
-                          {formatearNumero(c.conversaciones)}
-                        </span>
-                      )}
-                    </td>
-                    <td className="num cifra">{borrador ? raya : formatearNumero(c.calificados)}</td>
-                    <td className="num cifra fuerte">{borrador ? raya : formatearNumero(c.ventas)}</td>
-                    <td className="num cifra plata">{borrador || c.cobrado <= 0 ? raya : formatearMonto({ valor: c.cobrado, moneda: monedaNegocio })}</td>
-                    <td className="num cifra">{borrador ? raya : plata(cpl(c), c.moneda)}</td>
-                    <td className="num cifra fuerte">{c.roas === null ? raya : `${c.roas.toLocaleString("es-CL", { minimumFractionDigits: 1, maximumFractionDigits: 1 })}×`}</td>
-                    <td className="num solo-ancho">{series?.[c.id]?.some((v) => v) ? <MiniSerie datos={series[c.id]} /> : raya}</td>
+                    {senales.conversiones && (
+                      <td className="num cifra fuerte">
+                        {borrador || c.resultados === null || c.resultados === undefined ? raya : formatearNumero(c.resultados)}
+                      </td>
+                    )}
+                    {senales.conversiones && (
+                      <td className="num cifra">{borrador ? raya : plata(c.costoPorResultado ?? null, c.moneda)}</td>
+                    )}
+                    {senales.conversaciones && (
+                      <td className="num cifra">
+                        {borrador ? (
+                          raya
+                        ) : (
+                          <span className="inline-flex items-center gap-2">
+                            <span className="mk-barra" style={{ width: Math.max(3, (c.conversaciones / maxConv) * 44) }} />
+                            {formatearNumero(c.conversaciones)}
+                          </span>
+                        )}
+                      </td>
+                    )}
+                    {senales.conversaciones && <td className="num cifra">{borrador ? raya : formatearNumero(c.calificados)}</td>}
+                    {senales.conversaciones && <td className="num cifra fuerte">{borrador ? raya : formatearNumero(c.ventas)}</td>}
+                    {senales.ingresos && (
+                      <td className="num cifra plata">
+                        {borrador || c.cobrado <= 0 ? raya : formatearMonto({ valor: c.cobrado, moneda: monedaNegocio })}
+                      </td>
+                    )}
+                    {senales.conversaciones && <td className="num cifra">{borrador ? raya : plata(cpl(c), c.moneda)}</td>}
+                    {senales.ingresos && (
+                      <td className="num cifra fuerte">
+                        {c.roas === null ? raya : `${c.roas.toLocaleString("es-CL", { minimumFractionDigits: 1, maximumFractionDigits: 1 })}×`}
+                      </td>
+                    )}
+                    {senales.conversaciones && (
+                      <td className="num solo-ancho">{series?.[c.id]?.some((v) => v) ? <MiniSerie datos={series[c.id]} /> : raya}</td>
+                    )}
                   </tr>
                 );
               })}

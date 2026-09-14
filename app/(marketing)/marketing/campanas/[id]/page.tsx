@@ -5,7 +5,7 @@ import { resolverRango } from "@/lib/ads/periodos";
 import { formatearMonto, formatearNumero, formatearPorcentaje } from "@/lib/ads/moneda";
 import { cargarMarketing } from "@/lib/marketing/datos";
 import { armarEmbudo } from "@/lib/marketing/demo";
-import { modoDemo } from "@/lib/marketing/modo";
+import { opcionesDemo } from "@/lib/marketing/modo";
 import { serieDeLeads } from "@/lib/marketing/series";
 import { textoObjetivo } from "@/lib/marketing/tipos";
 import Cabecera from "@/components/marketing/Cabecera";
@@ -49,13 +49,13 @@ export default async function DetalleCampana({
   searchParams: Promise<{ p?: string; t?: string; f?: string }>;
 }) {
   const usuario = await exigirPermisoPortal("generar_insights");
-  const demo = await modoDemo();
+  const { demo, variante } = await opcionesDemo();
   const { id } = await params;
   const sp = await searchParams;
   const rango = resolverRango(sp.p);
   const pestana: Pestana = PESTANAS.some((x) => x.clave === sp.t) ? (sp.t as Pestana) : "resumen";
 
-  const p = await cargarMarketing(usuario.clienteId, rango, { demo });
+  const p = await cargarMarketing(usuario.clienteId, rango, { demo, variante });
   const campana = p.campanas.find((c) => c.id === id);
   if (!campana) notFound();
   if (campana.origen === "borrador") redirect(`/marketing/campanas/nueva?id=${encodeURIComponent(id)}`);

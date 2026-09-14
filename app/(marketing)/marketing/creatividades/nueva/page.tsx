@@ -2,8 +2,9 @@ import { exigirPermisoPortal } from "@/lib/auth";
 import { contextoDeMarca } from "@/lib/marketing/contextoMarca";
 import { obtenerBorrador } from "@/lib/marketing/campanas";
 import { listarCreatividades, obtenerCreatividad } from "@/lib/marketing/creatividades";
-import { plantillaPorClave } from "@/lib/marketing/plantillasCreativas";
+import { plantillaPorClave, type PlantillaCreativa } from "@/lib/marketing/plantillasCreativas";
 import { modoDemo } from "@/lib/marketing/modo";
+import { briefDesdeAngulo } from "@/lib/marketing/arquitecto";
 import Cabecera from "@/components/marketing/Cabecera";
 import GeneradorAnuncio from "@/components/marketing/GeneradorAnuncio";
 import AvisoMigracion from "@/components/marketing/AvisoMigracion";
@@ -19,7 +20,7 @@ export const dynamic = "force-dynamic";
 export default async function NuevaCreatividad({
   searchParams,
 }: {
-  searchParams: Promise<{ campana?: string; variarDe?: string; plantilla?: string }>;
+  searchParams: Promise<{ campana?: string; variarDe?: string; plantilla?: string; angulo?: string }>;
 }) {
   const usuario = await exigirPermisoPortal("generar_insights");
   const demo = await modoDemo();
@@ -30,7 +31,38 @@ export default async function NuevaCreatividad({
     sp.variarDe ? obtenerCreatividad(usuario.clienteId, sp.variarDe, demo) : null,
     listarCreatividades(usuario.clienteId, demo),
   ]);
-  const plantilla = plantillaPorClave(sp.plantilla);
+  /**
+   * ⭐ LA INTEGRACIÓN REAL CON EL ARQUITECTO (Fase 6).
+   *
+   * `?campana=<id>&angulo=<n>` abre el estudio con el brief del ángulo YA
+   * cargado. No es copiar y pegar: el plan vive en el borrador de campaña y
+   * acá se lee de ahí, así que el estudio no necesita saber que el Arquitecto
+   * existe y el Arquitecto no necesita saber cómo se generan las imágenes. El
+   * estado compartido es el borrador, que es el objeto que los dos editan.
+   *
+   * Si el plan no está guardado (migración 309 sin aplicar), simplemente no hay
+   * ángulo que precargar y el estudio abre en blanco: se pierde comodidad, no
+   * trabajo.
+   */
+  const indice = Number(sp.angulo);
+  const anguloPlan =
+    campana?.plan && Number.isInteger(indice) && indice >= 0 ? campana.plan.angulos[indice] : undefined;
+
+  const plantilla: PlantillaCreativa | null = anguloPlan
+    ? (() => {
+        const brief = briefDesdeAngulo(campana!.plan!, anguloPlan);
+        return {
+          clave: `angulo-${indice}`,
+          titulo: `Ángulo: ${anguloPlan.nombre}`,
+          texto: anguloPlan.gancho,
+          icono: "historia",
+          objetivo: brief.objetivo,
+          formato: brief.formato as PlantillaCreativa["formato"],
+          plataforma: brief.plataforma as PlantillaCreativa["plataforma"],
+          indicaciones: brief.indicaciones,
+        };
+      })()
+    : plantillaPorClave(sp.plantilla);
 
   return (
     <main className="mk-pagina">

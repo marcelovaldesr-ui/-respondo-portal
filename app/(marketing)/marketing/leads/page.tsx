@@ -2,7 +2,7 @@ import { exigirPermisoPortal } from "@/lib/auth";
 import { resolverRango } from "@/lib/ads/periodos";
 import { formatearMonto, formatearNumero } from "@/lib/ads/moneda";
 import { cargarMarketing } from "@/lib/marketing/datos";
-import { modoDemo } from "@/lib/marketing/modo";
+import { opcionesDemo } from "@/lib/marketing/modo";
 import Cabecera from "@/components/marketing/Cabecera";
 import TablaLeads from "@/components/marketing/TablaLeads";
 
@@ -16,10 +16,10 @@ export const dynamic = "force-dynamic";
  */
 export default async function Leads({ searchParams }: { searchParams: Promise<{ p?: string; f?: string; a?: string }> }) {
   const usuario = await exigirPermisoPortal("generar_insights");
-  const demo = await modoDemo();
+  const { demo, variante } = await opcionesDemo();
   const sp = await searchParams;
   const rango = resolverRango(sp.p);
-  const p = await cargarMarketing(usuario.clienteId, rango, { demo });
+  const p = await cargarMarketing(usuario.clienteId, rango, { demo, variante });
 
   const anuncio = sp.a ? p.anuncios.find((a) => a.id === sp.a) : null;
   const leads = anuncio ? p.leads.filter((l) => l.anuncioId === anuncio.id) : p.leads;

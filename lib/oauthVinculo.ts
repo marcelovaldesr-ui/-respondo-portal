@@ -22,7 +22,7 @@ export function huellaEstado(state: string): string {
   return createHash("sha256").update(`oauth-vinculo:${state}`).digest("hex");
 }
 
-export function nombreCookieVinculo(proveedor: "google" | "instagram" | "ads"): string {
+export function nombreCookieVinculo(proveedor: "google" | "instagram" | "ads" | "ads-google"): string {
   return `rp_oauth_${proveedor}`;
 }
 

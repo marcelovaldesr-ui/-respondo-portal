@@ -3,9 +3,12 @@ import { exigirPermisoPortal } from "@/lib/auth";
 import { resolverRango } from "@/lib/ads/periodos";
 import { formatearMonto, formatearNumero } from "@/lib/ads/moneda";
 import type { Metrica } from "@/lib/ads/metricas";
+import { agregar, ETIQUETA_RESULTADO } from "@/lib/ads/canal";
+import { tituloEmbudo } from "@/lib/marketing/embudoAdaptativo";
+import Recomendaciones from "@/components/marketing/Recomendaciones";
 import { cargarMarketing } from "@/lib/marketing/datos";
-import { modoDemo } from "@/lib/marketing/modo";
-import { PREGUNTAS_SUGERIDAS } from "@/lib/marketing/copilotoCore";
+import { opcionesDemo } from "@/lib/marketing/modo";
+import { preguntasPara } from "@/lib/marketing/copilotoCore";
 import Cabecera from "@/components/marketing/Cabecera";
 import FranjaKpis, { type Kpi } from "@/components/marketing/FranjaKpis";
 import GraficoTendencia from "@/components/marketing/GraficoTendencia";
@@ -36,9 +39,9 @@ export const dynamic = "force-dynamic";
  */
 export default async function InicioMarketing({ searchParams }: { searchParams: Promise<{ p?: string }> }) {
   const usuario = await exigirPermisoPortal("generar_insights");
-  const demo = await modoDemo();
+  const { demo, variante } = await opcionesDemo();
   const rango = resolverRango((await searchParams).p);
-  const p = await cargarMarketing(usuario.clienteId, rango, { demo });
+  const p = await cargarMarketing(usuario.clienteId, rango, { demo, variante });
 
   const metrica = (clave: string): Metrica | undefined => p.metricas.flatMap((g) => g.metricas).find((m) => m.clave === clave);
   const calificados = p.leads.filter((l) => l.calificado).length;
@@ -50,14 +53,76 @@ export default async function InicioMarketing({ searchParams }: { searchParams: 
     certeza: "medida",
     ayuda: "Conversaciones que avanzaron a interesado o más, o que cotizaron, reservaron o compraron.",
   };
-  const kpis: Kpi[] = [
-    { m: metrica("gasto")!, etiqueta: "Invertido", serie: p.serie.map((d) => d.gasto) },
-    { m: metrica("conversaciones")!, etiqueta: "Conversaciones", serie: p.serie.map((d) => d.conversaciones) },
-    { m: mCalificados, etiqueta: "Calificados", serie: p.serie.map((d) => d.calificados) },
-    { m: metrica("ventas")!, etiqueta: "Ventas", serie: p.serie.map((d) => d.ventas), destacada: true },
-    { m: metrica("cobrado")!, etiqueta: "Ingresos", serie: p.serie.map((d) => d.cobrado), destacada: true },
-    { m: metrica("roas")!, etiqueta: "Retorno (ROAS)" },
-  ].filter((k) => k.m) as Kpi[];
+  /**
+   * ⭐ LOS KPI SE ELIGEN POR LA PROFUNDIDAD DE SEÑAL (Fase 6).
+   *
+   * Seis KPI fijos funcionaban cuando todos los negocios eran iguales. Hoy no:
+   * a un negocio que no trae conversaciones, «Conversaciones · Calificados ·
+   * Ventas · Ingresos · ROAS» le dejan cinco de seis cifras en cero o en «—»,
+   * y una franja así no informa: desanima y además miente por omisión, porque
+   * esas conversaciones existen —pasan por otro lado—.
+   *
+   * La regla: **nunca más de seis, y solo las que este negocio puede llenar.**
+   * Cuando hay publicidad pero no conversaciones, la franja se arma con lo que
+   * la plataforma sí mide: inversión, clics, CTR, resultados y su costo.
+   */
+  const totalesAds = agregar(p.filasAds.filter((f) => f.nivel === "campana"));
+  const resultadosAds = totalesAds.resultados;
+  const costoResultado =
+    totalesAds.gasto && resultadosAds && resultadosAds.cantidad > 0
+      ? totalesAds.gasto.valor / resultadosAds.cantidad
+      : null;
+
+  const kpiClics: Metrica = {
+    clave: "clics_plataforma",
+    etiqueta: "Clics",
+    valor: p.senales.ads ? totalesAds.clics : null,
+    certeza: p.senales.ads ? "medida" : "no_disponible",
+    ayuda: "Personas que apretaron un anuncio. Lo reporta la plataforma.",
+  };
+  const kpiCtr: Metrica = {
+    clave: "ctr_plataforma",
+    etiqueta: "CTR",
+    valor: p.senales.ads && totalesAds.impresiones > 0 ? (totalesAds.clics / totalesAds.impresiones) * 100 : null,
+    certeza: "derivada",
+    ayuda: "De cada 100 veces que se mostró, cuántas terminaron en clic.",
+  };
+  const kpiResultados: Metrica = {
+    clave: "resultados_plataforma",
+    etiqueta: resultadosAds ? ETIQUETA_RESULTADO[resultadosAds.tipo] : "Resultados",
+    valor: resultadosAds?.cantidad ?? null,
+    certeza: resultadosAds ? "medida" : "no_disponible",
+    ayuda: "Lo que la plataforma cuenta como resultado de la campaña, con la medición configurada en la cuenta.",
+    motivo: resultadosAds ? undefined : "Tu cuenta publicitaria no reportó conversiones en este período.",
+  };
+  const kpiCostoResultado: Metrica = {
+    clave: "costo_resultado",
+    etiqueta: "Costo por resultado",
+    valor: costoResultado,
+    monto: costoResultado === null ? null : { valor: costoResultado, moneda: totalesAds.gasto?.moneda ?? p.monedaNegocio },
+    certeza: costoResultado === null ? "no_disponible" : "derivada",
+    ayuda: "Cuánto costó cada resultado que reporta la plataforma.",
+    menosEsMejor: true,
+  };
+
+  const kpis: Kpi[] = (
+    p.senales.conversaciones
+      ? [
+          { m: metrica("gasto")!, etiqueta: "Invertido", serie: p.serie.map((d) => d.gasto) },
+          { m: metrica("conversaciones")!, etiqueta: "Conversaciones", serie: p.serie.map((d) => d.conversaciones) },
+          { m: mCalificados, etiqueta: "Calificados", serie: p.serie.map((d) => d.calificados) },
+          { m: metrica("ventas")!, etiqueta: "Ventas", serie: p.serie.map((d) => d.ventas), destacada: true },
+          { m: metrica("cobrado")!, etiqueta: "Ingresos", serie: p.serie.map((d) => d.cobrado), destacada: true },
+          { m: metrica("roas")!, etiqueta: "Retorno (ROAS)" },
+        ]
+      : [
+          { m: metrica("gasto")!, etiqueta: "Invertido", serie: p.serie.map((d) => d.gasto) },
+          { m: kpiClics, etiqueta: "Clics", serie: p.serie.map((d) => d.clics) },
+          { m: kpiCtr, etiqueta: "CTR" },
+          { m: kpiResultados, etiqueta: kpiResultados.etiqueta, destacada: true },
+          { m: kpiCostoResultado, etiqueta: "Costo por resultado", destacada: true },
+        ]
+  ).filter((k) => k.m) as Kpi[];
 
   const conDatos = p.campanas.filter((c) => c.origen !== "borrador");
   const destacadas = conDatos.slice(0, 5);
@@ -81,7 +146,7 @@ export default async function InicioMarketing({ searchParams }: { searchParams: 
    * En demostración nunca se oculta: la demo existe para mostrar el producto
    * completo.
    */
-  const hayQueMostrar = p.demo || p.leads.length > 0 || p.metaConectada || conDatos.length > 0;
+  const hayQueMostrar = p.demo || p.leads.length > 0 || p.senales.ads || conDatos.length > 0;
 
   const enlacesEmbudo = {
     conversaciones: `/marketing/leads?p=${rango.clave}`,
@@ -122,6 +187,10 @@ export default async function InicioMarketing({ searchParams }: { searchParams: 
         </section>
       )}
 
+      {(p.analisis.recomendaciones.length > 0 || p.analisis.insuficientes.length > 0) && (
+        <Recomendaciones analisis={p.analisis} max={3} />
+      )}
+
       {hayQueMostrar && (
         <section className="mk-panel mt-7">
           <div className="mk-panel-cabecera">
@@ -129,7 +198,12 @@ export default async function InicioMarketing({ searchParams }: { searchParams: 
             <span className="mk-meta">{p.serie.length} días · hora de Chile</span>
           </div>
           <div className="mk-panel-cuerpo">
-            <GraficoTendencia serie={p.serie} metaConectada={p.metaConectada} />
+            <GraficoTendencia
+              serie={p.serie}
+              metaConectada={p.metaConectada}
+              hayConversaciones={p.senales.conversaciones}
+              hayIngresos={p.senales.ingresos}
+            />
           </div>
         </section>
       )}
@@ -138,15 +212,23 @@ export default async function InicioMarketing({ searchParams }: { searchParams: 
       <section className="mk-panel mt-7">
         <div className="mk-panel-cabecera">
           <div>
-            <h2 className="mk-h2">Del anuncio a la venta</h2>
-            <p className="mk-meta mt-0.5">Tu cuenta publicitaria mide el anuncio. Respondo sigue a cada persona hasta la venta.</p>
+            <h2 className="mk-h2">{p.senales.conversaciones ? "Del anuncio a la venta" : "Del anuncio al resultado"}</h2>
+            <p className="mk-meta mt-0.5">{tituloEmbudo(p.senales).bajada}</p>
           </div>
           <Link href={`/marketing/atribucion?p=${rango.clave}`} className="mk-enlace">
             Ver atribución {Ico.flecha({ className: "h-3.5 w-3.5" })}
           </Link>
         </div>
         <div className="mk-panel-cuerpo" style={{ paddingTop: 34 }}>
-          <Embudo escalones={p.embudo} enlaces={enlacesEmbudo} />
+          <Embudo
+            escalones={p.embudo}
+            enlaces={p.senales.conversaciones ? enlacesEmbudo : undefined}
+            rotuloPlataforma={
+              p.canales.filter((c) => c.conectado).length === 1
+                ? (p.canales.find((c) => c.conectado)?.nombre.toUpperCase() ?? "PLATAFORMA")
+                : "PLATAFORMA"
+            }
+          />
         </div>
       </section>
       )}
@@ -173,7 +255,9 @@ export default async function InicioMarketing({ searchParams }: { searchParams: 
             <div className="vacio">
               <div className="vacio-titulo">Todavía no hay campañas con datos</div>
               <p className="vacio-texto">
-                Cuando alguien entre a WhatsApp desde un anuncio, su campaña aparece acá con lo que costó y lo que trajo.
+                {p.senales.conversaciones
+                  ? "Cuando alguien entre a WhatsApp desde un anuncio, su campaña aparece acá con lo que costó y lo que trajo."
+                  : "Cuando tu cuenta publicitaria reporte campañas con actividad, aparecen acá con lo que costaron y lo que consiguieron."}
               </p>
               <div className="mt-5 flex flex-wrap justify-center gap-2">
                 <Link href="/marketing/campanas/nueva" className="btn-primario mk-btn-lg">
@@ -249,7 +333,7 @@ export default async function InicioMarketing({ searchParams }: { searchParams: 
               Lee las cifras de este período antes de opinar, y dice en qué se basa. Nunca inventa un número.
             </p>
             <div className="mt-4 flex flex-col gap-2">
-              {PREGUNTAS_SUGERIDAS.slice(0, 4).map((q) => (
+              {preguntasPara(p).slice(0, 4).map((q) => (
                 <Link key={q} href={`/marketing/copiloto?q=${encodeURIComponent(q)}&p=${rango.clave}`} className="mk-prompt">
                   {Ico.rayo({ className: "h-4 w-4" })}
                   <span className="min-w-0">{q}</span>

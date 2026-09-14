@@ -48,7 +48,8 @@ export type Kpi = {
 function valorLegible(m: Metrica, monedaNegocio: string): string {
   if (m.certeza === "no_disponible" || m.valor === null) return "—";
   if (m.monto) return formatearMonto(m.monto, { monedaDelNegocio: monedaNegocio });
-  if (m.clave === "ctr" || m.clave === "conversion") return formatearPorcentaje(m.valor);
+  // `ctr_plataforma` es el CTR de la franja adaptativa (Fase 6): mismo formato.
+  if (m.clave === "ctr" || m.clave === "ctr_plataforma" || m.clave === "conversion") return formatearPorcentaje(m.valor);
   if (m.clave === "roas") return `${m.valor.toLocaleString("es-CL", { minimumFractionDigits: 1, maximumFractionDigits: 1 })}×`;
   return formatearNumero(m.valor);
 }

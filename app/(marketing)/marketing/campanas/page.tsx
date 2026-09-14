@@ -3,7 +3,7 @@ import { exigirPermisoPortal } from "@/lib/auth";
 import { diaChile, resolverRango, sumarDias } from "@/lib/ads/periodos";
 import { formatearMonto, formatearNumero } from "@/lib/ads/moneda";
 import { cargarMarketing } from "@/lib/marketing/datos";
-import { modoDemo } from "@/lib/marketing/modo";
+import { opcionesDemo } from "@/lib/marketing/modo";
 import Cabecera from "@/components/marketing/Cabecera";
 import TablaCampanas from "@/components/marketing/TablaCampanas";
 import AvisoMigracion from "@/components/marketing/AvisoMigracion";
@@ -26,9 +26,9 @@ export const dynamic = "force-dynamic";
  */
 export default async function Campanas({ searchParams }: { searchParams: Promise<{ p?: string }> }) {
   const usuario = await exigirPermisoPortal("generar_insights");
-  const demo = await modoDemo();
+  const { demo, variante } = await opcionesDemo();
   const rango = resolverRango((await searchParams).p);
-  const p = await cargarMarketing(usuario.clienteId, rango, { demo });
+  const p = await cargarMarketing(usuario.clienteId, rango, { demo, variante });
 
   const reales = p.campanas.filter((c) => c.origen !== "borrador");
   const activas = reales.filter((c) => c.estado === "activa" || c.estado === "publicada").length;
@@ -102,6 +102,8 @@ export default async function Campanas({ searchParams }: { searchParams: Promise
           puedeConectarMeta={p.capacidades.puedeConectarMeta}
           motivoSinPublicidad={motivoSinPublicidad(p.capacidades, p.errorPublicidad)}
         series={series}
+        senales={p.senales}
+        canales={p.canales.filter((c) => c.conectado).map((c) => c.proveedor)}
       />
     </main>
   );

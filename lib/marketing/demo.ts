@@ -1,6 +1,10 @@
 import { armarMetricas, type DatosPropios } from "@/lib/ads/metricas";
 import { hallazgos } from "@/lib/ads/insights";
 import { capacidadesDemo } from "@/lib/marketing/capacidades";
+import { analizarAds } from "@/lib/ads/analisis";
+import { detectarSenales, profundidadDe, type Senales } from "@/lib/ads/senales";
+import { armarEmbudoAdaptativo } from "@/lib/marketing/embudoAdaptativo";
+import type { FilaRendimiento } from "@/lib/ads/canal";
 import type { FilaPauta, ResumenPauta } from "@/lib/ads/atribucionCore";
 import { diasEntre, sumarDias, type Rango } from "@/lib/ads/periodos";
 import type {
@@ -582,7 +586,90 @@ function borradoresDemo(hoy: string): BorradorCampana[] {
 
 /* ── El panorama completo ─────────────────────────────────────────────────── */
 
-export function panoramaDemo(rango: Rango): Panorama {
+/**
+ * LAS TRES DEMOSTRACIONES, QUE SON LOS TRES CLIENTES REALES.
+ *
+ * ⭐ No es una demo con interruptores de adorno: cada variante reproduce un
+ * negocio que existe y que va a usar esto.
+ *   · `meta`     — pauta en Meta y NO trae la conversación (un estudio jurídico).
+ *   · `google`   — pauta en Búsqueda, con términos y palabras clave.
+ *   · `completo` — las dos cosas más el circuito cerrado de Respondo.
+ *
+ * Las tres pasan por los MISMOS componentes y el MISMO dominio. Esa es la regla
+ * que hace que la demo sirva para evaluar el producto: si una variante se viera
+ * bien solo porque la demo dibuja campos que producción no puede llenar, la
+ * demo estaría mintiendo sobre el producto, que es peor que no tenerla.
+ */
+export type VarianteDemo = "completo" | "meta" | "google";
+
+/** Campañas de Meta en el vocabulario multicanal, deterministas. */
+function filasMetaDemo(campanas: FilaCampana[], factor = 1): FilaRendimiento[] {
+  return campanas
+    .filter((c) => c.origen !== "borrador")
+    .map((c, i) => ({
+      proveedor: "meta" as const,
+      nivel: "campana" as const,
+      id: c.id,
+      nombre: c.nombre,
+      estado: (i === 3 ? "pausada" : "activa") as "activa" | "pausada",
+      objetivo: i % 2 === 0 ? "Mensajes" : "Ventas",
+      presupuestoDiario: { valor: 6000 + i * 1500, moneda: "CLP" },
+      impresiones: Math.round((c.impresiones ?? 0) * factor),
+      clics: Math.round((c.clics ?? 0) * factor),
+      gasto: { valor: Math.round((c.gasto ?? 0) * factor), moneda: "CLP" },
+      alcance: Math.round(((c.impresiones ?? 0) / 2.4) * factor),
+      frecuencia: i === 0 ? 3.4 : 1.6 + i * 0.2,
+      resultados: { cantidad: Math.max(1, Math.round(c.conversaciones * factor)), tipo: "mensajes" as const },
+      valorResultados: null,
+    }));
+}
+
+/**
+ * Google en la demo: una cuenta de Búsqueda con su jerarquía completa.
+ *
+ * Los términos incluyen a propósito un caso que el motor NO debe recomendar
+ * excluir —uno que choca con una palabra clave activa— porque esa verificación
+ * es la lección más cara que dejó la cuenta real de Impresora Color.
+ */
+function filasGoogleDemo(factor = 1): FilaRendimiento[] {
+  const clp = (valor: number) => ({ valor: Math.round(valor * factor), moneda: "CLP" });
+  const n = (x: number) => Math.round(x * factor);
+  const campanas: FilaRendimiento[] = [
+    {
+      proveedor: "google", nivel: "campana", id: "g-1", nombre: "Búsqueda · Imprenta Chillán",
+      estado: "activa", objetivo: "Búsqueda", presupuestoDiario: { valor: 4000, moneda: "CLP" },
+      impresiones: n(18420), clics: n(742), gasto: clp(96800),
+      resultados: { cantidad: n(48), tipo: "conversiones_web" }, valorResultados: null,
+      extra: { tipoCrudo: "SEARCH" },
+    },
+    {
+      proveedor: "google", nivel: "campana", id: "g-2", nombre: "Máximo rendimiento · Estampados",
+      estado: "activa", objetivo: "Máximo rendimiento", presupuestoDiario: { valor: 3000, moneda: "CLP" },
+      impresiones: n(52100), clics: n(410), gasto: clp(58400),
+      resultados: { cantidad: n(6), tipo: "conversiones_web" }, valorResultados: null,
+      extra: { tipoCrudo: "PERFORMANCE_MAX" },
+    },
+  ];
+  const grupos: FilaRendimiento[] = [
+    { proveedor: "google", nivel: "grupo", id: "gg-1", nombre: "Tarjetas y flyers", campanaId: "g-1", campanaNombre: campanas[0].nombre, estado: "activa", objetivo: "Búsqueda", impresiones: n(9800), clics: n(451), gasto: clp(52300), resultados: { cantidad: n(34), tipo: "conversiones_web" } },
+    { proveedor: "google", nivel: "grupo", id: "gg-2", nombre: "Pendones y gigantografía", campanaId: "g-1", campanaNombre: campanas[0].nombre, estado: "activa", objetivo: "Búsqueda", impresiones: n(8620), clics: n(291), gasto: clp(44500), resultados: { cantidad: n(14), tipo: "conversiones_web" } },
+  ];
+  const palabras: FilaRendimiento[] = [
+    { proveedor: "google", nivel: "palabra", id: "kw-1", nombre: "imprenta chillan", campanaId: "g-1", campanaNombre: campanas[0].nombre, grupoId: "gg-1", grupoNombre: grupos[0].nombre, estado: "activa", impresiones: n(4100), clics: n(232), gasto: clp(24800), resultados: { cantidad: n(22), tipo: "conversiones_web" }, extra: { concordancia: "PHRASE" } },
+    { proveedor: "google", nivel: "palabra", id: "kw-2", nombre: "tarjetas de presentacion", campanaId: "g-1", campanaNombre: campanas[0].nombre, grupoId: "gg-1", grupoNombre: grupos[0].nombre, estado: "activa", impresiones: n(3200), clics: n(140), gasto: clp(15600), resultados: { cantidad: n(9), tipo: "conversiones_web" }, extra: { concordancia: "BROAD" } },
+    { proveedor: "google", nivel: "palabra", id: "kw-3", nombre: "impresion de planos", campanaId: "g-1", campanaNombre: campanas[0].nombre, grupoId: "gg-2", grupoNombre: grupos[1].nombre, estado: "activa", impresiones: n(2600), clics: n(96), gasto: clp(18900), resultados: null, extra: { concordancia: "BROAD" } },
+  ];
+  const terminos: FilaRendimiento[] = [
+    { proveedor: "google", nivel: "termino", id: "imprenta chillan precios", nombre: "imprenta chillan precios", campanaId: "g-1", campanaNombre: campanas[0].nombre, grupoId: "gg-1", grupoNombre: grupos[0].nombre, estado: "desconocido", impresiones: n(820), clics: n(74), gasto: clp(7900), resultados: { cantidad: n(8), tipo: "conversiones_web" }, extra: { estadoTermino: "NONE", palabraQueLoDisparo: "imprenta chillan", concordancia: "PHRASE" } },
+    { proveedor: "google", nivel: "termino", id: "trabajos de imprenta sueldo", nombre: "trabajos de imprenta sueldo", campanaId: "g-1", campanaNombre: campanas[0].nombre, grupoId: "gg-1", grupoNombre: grupos[0].nombre, estado: "desconocido", impresiones: n(640), clics: n(38), gasto: clp(16400), resultados: null, extra: { estadoTermino: "NONE", palabraQueLoDisparo: "imprenta chillan", concordancia: "BROAD" } },
+    // ⚠️ Este término CONTIENE una palabra clave activa: el motor no debe
+    // proponer excluirlo, tiene que decir por qué no.
+    { proveedor: "google", nivel: "termino", id: "impresion de planos a1", nombre: "impresion de planos a1", campanaId: "g-1", campanaNombre: campanas[0].nombre, grupoId: "gg-2", grupoNombre: grupos[1].nombre, estado: "desconocido", impresiones: n(410), clics: n(29), gasto: clp(12200), resultados: null, extra: { estadoTermino: "NONE", palabraQueLoDisparo: "impresion de planos", concordancia: "BROAD" } },
+  ];
+  return [...campanas, ...grupos, ...palabras, ...terminos];
+}
+
+export function panoramaDemo(rango: Rango, variante: VarianteDemo = "completo"): Panorama {
   const actual = construir(rango);
 
   // Período anterior del mismo largo, por el mismo generador, para comparar.
@@ -683,15 +770,13 @@ export function panoramaDemo(rango: Rango): Panorama {
     periodo: rango.etiqueta.toLowerCase(),
   });
 
-  const embudo: EscalonEmbudo[] = armarEmbudo({
-    impresiones: t.impresiones,
-    clics: t.clics,
-    conversaciones: t.conversaciones,
-    calificados: t.calificados,
-    avanzados,
-    ventas: t.ventas,
-  });
-
+  /**
+   * ⚠️ El embudo de la demo se arma MÁS ABAJO con `armarEmbudoAdaptativo`, ya
+   * conociendo la variante: el de seis escalones fijos que había acá quedaba
+   * con cuatro en cero en las variantes sin conversaciones, que es exactamente
+   * la pantalla que esta fase vino a eliminar. `armarEmbudo` se conserva
+   * exportado porque es aritmética probada y la usan los tests de la Fase 4.
+   */
   const hoy = rango.hasta;
   const creatividades: Creatividad[] = CREATIVIDADES_DEMO.map((c, i) => {
     const anuncio = actual.anuncios.find((a) => a.imagenUrl === c.imagenUrl);
@@ -738,22 +823,117 @@ export function panoramaDemo(rango: Rango): Panorama {
     })),
   ];
 
+  /* ── La variante ──────────────────────────────────────────────────────────
+   *
+   * Se arma al final, sobre el panorama completo, y SACANDO lo que ese negocio
+   * no tendría. Restar es lo correcto y no sumar: si cada variante se
+   * construyera aparte, la de Meta podría quedar con un campo que la real no
+   * puede llenar, y la demo dejaría de ser una prueba honesta del producto.
+   */
+  const filasMeta = variante === "google" ? [] : filasMetaDemo(actual.campanas);
+  const filasGoogle = variante === "meta" ? [] : filasGoogleDemo();
+  const filasAds = [...filasMeta, ...filasGoogle];
+  const filasAntes = [
+    ...(variante === "google" ? [] : filasMetaDemo(previo.campanas, 0.82)),
+    ...(variante === "meta" ? [] : filasGoogleDemo(0.78)),
+  ];
+
+  const conConversaciones = variante === "completo";
+  const senalesDemo: Senales = detectarSenales({
+    hayCuentaPublicitaria: filasAds.length > 0,
+    plataformaReportaResultados: filasAds.some((f) => f.resultados && f.resultados.cantidad > 0),
+    hayConversacionesAtribuidas: conConversaciones,
+    hayIngresosAtribuidos: conConversaciones,
+  });
+
+  const filasCampana = filasAds.filter((f) => f.nivel === "campana");
+  const embudoDemo = armarEmbudoAdaptativo(
+    {
+      impresiones: filasCampana.reduce((a, f) => a + f.impresiones, 0),
+      clics: filasCampana.reduce((a, f) => a + f.clics, 0),
+      resultados: filasCampana.reduce((a, f) => a + (f.resultados?.cantidad ?? 0), 0) || null,
+      tipoResultado: filasCampana[0]?.resultados?.tipo ?? null,
+      conversaciones: conConversaciones ? t.conversaciones : 0,
+      calificados: conConversaciones ? t.calificados : 0,
+      avanzados: conConversaciones ? avanzados : 0,
+      ventas: conConversaciones ? t.ventas : 0,
+    },
+    senalesDemo,
+  );
+
+  const capacidades = capacidadesDemo(variante);
+  const canalesDemo = capacidades.canales
+    .map((c) => ({
+      ...c,
+      conectado:
+        c.proveedor === "meta" ? variante !== "google" : variante !== "meta",
+    }))
+    .filter((c) => c.conectado || variante === "completo");
+
+  const campanasDeLaVariante = campanas.filter((c) => {
+    if (c.origen === "borrador") return true;
+    if (variante === "meta") return c.proveedor !== "google";
+    if (variante === "google") return false;
+    return true;
+  });
+  const campanasGoogle: FilaCampana[] = filasGoogle
+    .filter((f) => f.nivel === "campana")
+    .map((f) => ({
+      id: f.id,
+      nombre: f.nombre,
+      origen: "google" as const,
+      proveedor: "google" as const,
+      estado: "activa" as const,
+      objetivo: f.objetivo ?? null,
+      gasto: f.gasto.valor,
+      moneda: f.gasto.moneda,
+      impresiones: f.impresiones,
+      clics: f.clics,
+      conversaciones: 0,
+      calificados: 0,
+      avanzados: 0,
+      ventas: 0,
+      cobrado: 0,
+      costoPorConversacion: null,
+      costoPorVenta: null,
+      roas: null,
+      anuncios: 0,
+      desde: null,
+      hasta: null,
+      resultados: f.resultados?.cantidad ?? null,
+      tipoResultado: f.resultados?.tipo ?? null,
+      costoPorResultado: f.resultados?.cantidad ? f.gasto.valor / f.resultados.cantidad : null,
+    }));
+
   return {
     rango,
     demo: true,
     monedaNegocio: "CLP",
-    capacidades: capacidadesDemo(),
-    metaConectada: true,
+    capacidades: { ...capacidades, canales: canalesDemo },
+    metaConectada: variante !== "google",
     errorPublicidad: null,
     metricas,
     serie: actual.serie,
-    embudo,
-    campanas,
-    anuncios: actual.anuncios.sort((a, b) => b.cobrado - a.cobrado || b.conversaciones - a.conversaciones),
-    leads: actual.leads.sort((a, b) => (a.llegoEn < b.llegoEn ? 1 : -1)),
+    embudo: embudoDemo,
+    campanas: [...campanasDeLaVariante, ...campanasGoogle],
+    anuncios: conConversaciones
+      ? actual.anuncios.sort((a, b) => b.cobrado - a.cobrado || b.conversaciones - a.conversaciones)
+      : [],
+    leads: conConversaciones ? actual.leads.sort((a, b) => (a.llegoEn < b.llegoEn ? 1 : -1)) : [],
     creatividades,
     borradores,
-    hallazgos: senales,
+    hallazgos: conConversaciones ? senales : [],
+    senales: senalesDemo,
+    profundidad: profundidadDe(senalesDemo),
+    canales: canalesDemo,
+    fallasCanales: [],
+    filasAds,
+    analisis: analizarAds({
+      filas: filasAds,
+      filasAntes,
+      periodo: rango.etiqueta.toLowerCase(),
+      dias: largo,
+    }),
     estado: {
       items: [
         { titulo: "WhatsApp conectado", estado: "ok", detalle: "Las conversaciones entran y se atribuyen solas." },
@@ -766,7 +946,7 @@ export function panoramaDemo(rango: Rango): Panorama {
       total: 5,
       hayAtribucion: true,
     },
-    sinAnuncio: 41,
+    sinAnuncio: conConversaciones ? 41 : 0,
     almacenListo: true,
   };
 }

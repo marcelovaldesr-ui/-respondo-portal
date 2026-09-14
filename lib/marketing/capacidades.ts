@@ -1,5 +1,9 @@
 import { metaAdsConfigurado, conexionDe } from "@/lib/ads/meta";
+import { googleAdsConfigurado } from "@/lib/ads/google";
+import { estadoDeCanales } from "@/lib/ads/canales";
 import { ERRORES, type CodigoErrorAds } from "@/lib/ads/proveedor";
+import type { EstadoCanalPanorama } from "@/lib/marketing/tipos";
+import type { VarianteDemo } from "@/lib/marketing/demo";
 import { db } from "@/lib/db";
 
 /**
@@ -45,6 +49,23 @@ export type Capacidades = {
   puedeGuardar: boolean;
   /** Respondo puede publicar campañas en Meta por API. Hoy: no, a propósito. */
   puedePublicarEnMeta: boolean;
+
+  /* ── Fase 6: el segundo canal ─────────────────────────────────────────── */
+  /** La instalación tiene credenciales de Google Ads (proyecto Cloud propio). */
+  puedeConectarGoogle: boolean;
+  /** Este negocio ya tiene una cuenta de Google Ads leyendo. */
+  googleConectada: boolean;
+  /**
+   * El estado de TODOS los canales, que es lo que miran las pantallas.
+   *
+   * Existe para que ninguna pantalla vuelva a preguntar «¿y Google?» con un
+   * `if` propio: fue exactamente el problema que resolvió esta misma clase en
+   * la Fase 4 cuando el único canal era Meta, y agregar el segundo con `if`
+   * sueltos lo habría reabierto multiplicado por dos.
+   */
+  canales: EstadoCanalPanorama[];
+  /** ¿Hay al menos una plataforma publicitaria leyendo? */
+  hayCanalConectado: boolean;
 };
 
 /**
@@ -63,19 +84,37 @@ export function iaConfigurada(): boolean {
   return Boolean(process.env.GEMINI_API_KEY);
 }
 
-/** Capacidades de la demostración: todo encendido menos publicar. */
-export function capacidadesDemo(): Capacidades {
+/**
+ * Capacidades de la demostración, SEGÚN LA VARIANTE.
+ *
+ * ⚠️ Antes devolvía todo encendido, y eso hacía que la demo mintiera sobre el
+ * producto: en la variante «solo Meta» —un estudio jurídico sin bot— el
+ * Arquitecto ofrecía WhatsApp como destino, que es justamente lo que ese
+ * negocio NO tiene. Lo encontró la navegación real, no el typecheck.
+ *
+ * La regla de la demo es que muestre lo que producción puede mostrar; una
+ * capacidad de más es tan falsa como una cifra de más.
+ */
+export function capacidadesDemo(variante: VarianteDemo = "completo"): Capacidades {
+  const completo = variante === "completo";
   return {
     puedeConectarMeta: true,
-    metaConectada: true,
+    metaConectada: variante !== "google",
     metaFaltaElegirCuenta: false,
     monedaPublicidad: "CLP",
-    whatsappConectado: true,
-    puedeDevolverVentas: true,
-    cobroPorEnlace: true,
+    whatsappConectado: completo,
+    puedeDevolverVentas: completo,
+    cobroPorEnlace: completo,
     puedeGenerarConIa: iaConfigurada(),
     puedeGuardar: true,
     puedePublicarEnMeta: PUEDE_PUBLICAR_EN_META,
+    puedeConectarGoogle: true,
+    googleConectada: variante !== "meta",
+    canales: [
+      { proveedor: "meta", nombre: "Meta", disponible: true, conectado: true, faltaElegirCuenta: false, cuentaNombre: "Gráfica Andina", moneda: "CLP" },
+      { proveedor: "google", nombre: "Google Ads", disponible: true, conectado: true, faltaElegirCuenta: false, cuentaNombre: "Gráfica Andina", moneda: "CLP" },
+    ],
+    hayCanalConectado: true,
   };
 }
 
@@ -91,12 +130,14 @@ export function capacidadesDemo(): Capacidades {
 export async function capacidadesDe(clienteId: string): Promise<Capacidades> {
   const puedeConectarMeta = metaAdsConfigurado();
 
-  const [conexion, cliente] = await Promise.all([
+  const [conexion, cliente, canales] = await Promise.all([
     puedeConectarMeta ? conexionDe(clienteId) : Promise.resolve(null),
     leerCliente(clienteId),
+    estadoDeCanales(clienteId),
   ]);
 
   const metaConectada = Boolean(conexion && conexion.cuentaId && conexion.estado === "conectada");
+  const google = canales.find((c) => c.proveedor === "google");
 
   return {
     puedeConectarMeta,
@@ -109,6 +150,18 @@ export async function capacidadesDe(clienteId: string): Promise<Capacidades> {
     puedeGenerarConIa: iaConfigurada(),
     puedeGuardar: true, // lo ajusta `cargarMarketing` según existan las tablas
     puedePublicarEnMeta: PUEDE_PUBLICAR_EN_META,
+    puedeConectarGoogle: googleAdsConfigurado(),
+    googleConectada: Boolean(google?.conectado),
+    canales: canales.map((c) => ({
+      proveedor: c.proveedor,
+      nombre: c.nombre,
+      disponible: c.disponible,
+      conectado: c.conectado,
+      faltaElegirCuenta: c.faltaElegirCuenta,
+      cuentaNombre: c.cuentaNombre,
+      moneda: c.moneda,
+    })),
+    hayCanalConectado: canales.some((c) => c.conectado),
   };
 }
 

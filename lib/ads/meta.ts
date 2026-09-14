@@ -7,6 +7,14 @@ import {
   type RendimientoAnuncio,
   type ResultadoAds,
 } from "@/lib/ads/proveedor";
+import type {
+  EstadoEntidad,
+  FilaRendimiento,
+  Nivel,
+  Resultado,
+  TipoResultado,
+} from "@/lib/ads/canal";
+import type { Monto } from "@/lib/ads/moneda";
 
 /**
  * META COMO PROVEEDOR DE ANUNCIOS — el único archivo que sabe de la Graph API.
@@ -413,4 +421,219 @@ export async function intercambiarCodigoAds(codigo: string): Promise<ResultadoAd
   } finally {
     clearTimeout(timer);
   }
+}
+
+/* ── Marketing Fase 6: Meta en el vocabulario multicanal ─────────────────────
+ *
+ * Lo de arriba (`proveedorMeta.rendimiento`) sigue igual y sigue siendo lo que
+ * alimenta la atribución: filas por ANUNCIO con gasto, impresiones y clics.
+ * Lo de acá abajo agrega lo que faltaba para poder ANALIZAR Meta por sí sola,
+ * sin conversaciones de por medio: alcance, frecuencia, el resultado que la
+ * campaña declara y la jerarquía con estado y objetivo.
+ *
+ * Se agregó sin tocar lo anterior a propósito: la atribución es el camino
+ * probado de tres clientes y no se toca para construir uno nuevo.
+ * ─────────────────────────────────────────────────────────────────────────── */
+
+/**
+ * ⭐⭐ QUÉ CUENTA COMO «RESULTADO» EN META, Y POR QUÉ ESTA LISTA ES CORTA.
+ *
+ * `actions` de Meta trae entre veinte y cuarenta tipos por anuncio: vistas de
+ * página, clics en el enlace, reproducciones de video de 3 segundos, «me
+ * gusta», guardados, y las de verdad. Volcarlas todas a la pantalla es la sopa
+ * de métricas que nadie lee; peor, elegir «la primera» produce un número que
+ * cambia de significado entre dos campañas.
+ *
+ * Se normalizan SOLO las que sabemos definir sin ambigüedad, y el orden de esta
+ * lista ES la prioridad: si una campaña reporta compras y además mensajes, el
+ * resultado principal es la compra. Todo lo demás se ignora a propósito.
+ *
+ * Nombres verificados contra la Graph API v21 (campos de `actions[].action_type`).
+ */
+const RESULTADOS_META: { accion: string; tipo: TipoResultado }[] = [
+  { accion: "offsite_conversion.fb_pixel_purchase", tipo: "compras" },
+  { accion: "purchase", tipo: "compras" },
+  { accion: "onsite_conversion.purchase", tipo: "compras" },
+  { accion: "offsite_conversion.fb_pixel_lead", tipo: "leads" },
+  { accion: "lead", tipo: "leads" },
+  { accion: "onsite_conversion.lead_grouped", tipo: "leads" },
+  { accion: "onsite_conversion.messaging_conversation_started_7d", tipo: "mensajes" },
+  { accion: "onsite_conversion.total_messaging_connection", tipo: "mensajes" },
+  { accion: "onsite_conversion.messaging_first_reply", tipo: "mensajes" },
+  { accion: "offsite_conversion.fb_pixel_complete_registration", tipo: "conversiones_web" },
+  { accion: "onsite_conversion.flow_complete", tipo: "conversiones_web" },
+  { accion: "call_confirm", tipo: "llamadas" },
+  { accion: "click_to_call_call_confirm", tipo: "llamadas" },
+];
+
+/** Extrae el resultado principal de `actions`, con su tipo. null si no hay. */
+export function resultadoDeAcciones(acciones: unknown): Resultado | null {
+  if (!Array.isArray(acciones)) return null;
+  const porTipo = new Map<string, number>();
+  for (const a of acciones as Record<string, unknown>[]) {
+    const tipo = String(a?.action_type ?? "");
+    const valor = Number(a?.value ?? 0);
+    if (!tipo || !Number.isFinite(valor)) continue;
+    porTipo.set(tipo, (porTipo.get(tipo) ?? 0) + valor);
+  }
+  for (const { accion, tipo } of RESULTADOS_META) {
+    const cantidad = porTipo.get(accion);
+    if (cantidad && cantidad > 0) return { cantidad, tipo };
+  }
+  return null;
+}
+
+/** Suma el valor declarado (`action_values`) de las acciones de compra. */
+export function valorDeAcciones(valores: unknown, moneda: string): Monto | null {
+  if (!Array.isArray(valores)) return null;
+  let total = 0;
+  for (const a of valores as Record<string, unknown>[]) {
+    const tipo = String(a?.action_type ?? "");
+    if (!/purchase/i.test(tipo)) continue;
+    const v = Number(a?.value ?? 0);
+    if (Number.isFinite(v)) total += v;
+  }
+  return total > 0 ? { valor: total, moneda } : null;
+}
+
+/** El objetivo de Meta, en palabras del dueño. */
+const OBJETIVO_META: Record<string, string> = {
+  OUTCOME_ENGAGEMENT: "Interacción",
+  OUTCOME_LEADS: "Clientes potenciales",
+  OUTCOME_SALES: "Ventas",
+  OUTCOME_TRAFFIC: "Tráfico",
+  OUTCOME_AWARENESS: "Reconocimiento",
+  OUTCOME_APP_PROMOTION: "Promoción de app",
+  MESSAGES: "Mensajes",
+  CONVERSIONS: "Conversiones",
+  LINK_CLICKS: "Clics en el enlace",
+  LEAD_GENERATION: "Clientes potenciales",
+};
+
+export function objetivoMetaLegible(v: unknown): string | null {
+  const s = String(v ?? "").toUpperCase();
+  if (!s) return null;
+  return OBJETIVO_META[s] ?? s.replace(/^OUTCOME_/, "").toLowerCase().replace(/_/g, " ");
+}
+
+function estadoMeta(v: unknown): EstadoEntidad {
+  const s = String(v ?? "").toUpperCase();
+  if (s === "ACTIVE") return "activa";
+  if (s === "PAUSED") return "pausada";
+  if (s === "DELETED" || s === "ARCHIVED" || s === "CAMPAIGN_PAUSED" || s === "ADSET_PAUSED") return "terminada";
+  return "desconocido";
+}
+
+const NIVEL_META: Record<string, "campaign" | "adset" | "ad"> = {
+  campana: "campaign",
+  conjunto: "adset",
+  anuncio: "ad",
+};
+
+/**
+ * Rendimiento de Meta en el vocabulario común, por nivel.
+ *
+ * UNA consulta de insights por nivel pedido (en paralelo), más UNA consulta de
+ * entidades de campaña para traer estado, objetivo y presupuesto —que insights
+ * no entrega—. Con tres niveles son cuatro viajes, no uno por campaña.
+ */
+export async function rendimientoMetaMulti(
+  clienteId: string,
+  rango: { desde: string; hasta: string },
+  niveles: Nivel[] = ["campana"],
+): Promise<ResultadoAds<FilaRendimiento[]>> {
+  if (!metaAdsConfigurado()) return fallo("no_configurado");
+  const con = await conexionDe(clienteId);
+  if (!con) return fallo("sin_conexion");
+  if (!con.cuentaId) return fallo("cuenta_invalida", "no hay cuenta elegida");
+
+  const pedidos = niveles.filter((n) => NIVEL_META[n]);
+  if (!pedidos.length) return { ok: true, datos: [] };
+
+  const campos = [
+    "ad_id", "ad_name", "adset_id", "adset_name", "campaign_id", "campaign_name",
+    "impressions", "clicks", "spend", "reach", "frequency", "actions", "action_values", "objective",
+  ].join(",");
+
+  const consultas = pedidos.map(async (nivel) => {
+    const params = new URLSearchParams({
+      level: NIVEL_META[nivel],
+      limit: "200",
+      time_increment: "all_days",
+      time_range: JSON.stringify({ since: rango.desde, until: rango.hasta }),
+      fields: campos,
+    });
+    return { nivel, r: await pedirTodo(`${GRAPH}/${con.cuentaId}/insights?${params}`, con.token) };
+  });
+
+  /**
+   * Los datos de la entidad (estado, objetivo, presupuesto) NO vienen en
+   * insights: una campaña pausada ayer aparece igual que una activa. Y
+   * recomendar «pausa esta campaña» sobre una que ya está pausada es la forma
+   * más rápida de que el dueño deje de leer las recomendaciones.
+   */
+  const entidades = pedirTodo(
+    `${GRAPH}/${con.cuentaId}/campaigns?limit=200&fields=` +
+      encodeURIComponent("id,name,status,effective_status,objective,daily_budget,lifetime_budget"),
+    con.token,
+  );
+
+  const [resultados, campanas] = await Promise.all([Promise.all(consultas), entidades]);
+
+  const meta = new Map<string, { estado: EstadoEntidad; objetivo: string | null; presupuesto: Monto | null }>();
+  if (campanas.ok) {
+    for (const c of campanas.datos) {
+      const diario = Number(c.daily_budget ?? 0);
+      meta.set(String(c.id), {
+        estado: estadoMeta(c.effective_status ?? c.status),
+        objetivo: objetivoMetaLegible(c.objective),
+        // Meta entrega el presupuesto en centavos de la moneda de la cuenta.
+        presupuesto: diario > 0 ? { valor: diario / 100, moneda: con.moneda } : null,
+      });
+    }
+  }
+
+  const filas: FilaRendimiento[] = [];
+  let primerError: ResultadoAds<FilaRendimiento[]> | null = null;
+
+  for (const { nivel, r } of resultados) {
+    if (!r.ok) {
+      if (!primerError) primerError = { ok: false, error: r.error };
+      continue;
+    }
+    for (const f of r.datos) {
+      const campanaId = String(f.campaign_id ?? "");
+      const datosCampana = meta.get(campanaId);
+      const id =
+        nivel === "campana" ? campanaId : nivel === "conjunto" ? String(f.adset_id ?? "") : String(f.ad_id ?? "");
+      if (!id) continue;
+
+      const frecuencia = Number(f.frequency ?? 0);
+      filas.push({
+        proveedor: "meta",
+        nivel,
+        id,
+        nombre: String(
+          nivel === "campana" ? f.campaign_name : nivel === "conjunto" ? f.adset_name : f.ad_name,
+        ) || "Sin nombre",
+        campanaId: campanaId || undefined,
+        campanaNombre: f.campaign_name ? String(f.campaign_name) : undefined,
+        grupoId: f.adset_id ? String(f.adset_id) : undefined,
+        grupoNombre: f.adset_name ? String(f.adset_name) : undefined,
+        estado: nivel === "campana" ? (datosCampana?.estado ?? "desconocido") : "desconocido",
+        objetivo: datosCampana?.objetivo ?? objetivoMetaLegible(f.objective),
+        presupuestoDiario: nivel === "campana" ? (datosCampana?.presupuesto ?? null) : null,
+        impresiones: numero(f.impressions),
+        clics: numero(f.clicks),
+        gasto: { valor: numero(f.spend), moneda: con.moneda },
+        alcance: f.reach === undefined ? null : numero(f.reach),
+        frecuencia: Number.isFinite(frecuencia) && frecuencia > 0 ? frecuencia : null,
+        resultados: resultadoDeAcciones(f.actions),
+        valorResultados: valorDeAcciones(f.action_values, con.moneda),
+      });
+    }
+  }
+
+  if (!filas.length && primerError) return primerError;
+  return { ok: true, datos: filas };
 }

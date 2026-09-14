@@ -3,7 +3,7 @@ import { exigirPermisoPortal } from "@/lib/auth";
 import { contextoDeMarca } from "@/lib/marketing/contextoMarca";
 import { obtenerBorrador } from "@/lib/marketing/campanas";
 import { listarCreatividades } from "@/lib/marketing/creatividades";
-import { modoDemo } from "@/lib/marketing/modo";
+import { opcionesDemo } from "@/lib/marketing/modo";
 import Cabecera from "@/components/marketing/Cabecera";
 import AvisoMigracion from "@/components/marketing/AvisoMigracion";
 import AsistenteCampana from "@/components/marketing/AsistenteCampana";
@@ -17,7 +17,7 @@ export const dynamic = "force-dynamic";
  */
 export default async function NuevaCampana({ searchParams }: { searchParams: Promise<{ id?: string; creatividad?: string }> }) {
   const usuario = await exigirPermisoPortal("generar_insights");
-  const demo = await modoDemo();
+  const { demo, variante } = await opcionesDemo();
   const sp = await searchParams;
   /**
    * Las capacidades salen de UN solo lugar. Antes esta página calculaba
@@ -29,7 +29,7 @@ export default async function NuevaCampana({ searchParams }: { searchParams: Pro
     contextoDeMarca(usuario.clienteId, demo),
     listarCreatividades(usuario.clienteId, demo),
     sp.id ? obtenerBorrador(usuario.clienteId, sp.id, demo) : null,
-    demo ? Promise.resolve(capacidadesDemo()) : capacidadesDe(usuario.clienteId),
+    demo ? Promise.resolve(capacidadesDemo(variante)) : capacidadesDe(usuario.clienteId),
   ]);
   /**
    * Un `?id=` que no existe abría el asistente EN BLANCO, con el id todavía en

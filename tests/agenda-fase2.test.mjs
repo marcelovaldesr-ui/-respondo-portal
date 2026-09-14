@@ -382,7 +382,18 @@ test("mover por el enlace usa el horizonte del negocio, no un plazo propio", asy
   // El negocio abre 60 días; el cliente debe poder mover dentro de esos 60.
   const { cuposParaReagendar } = await import("../lib/autogestionDatos.ts");
   const token = "c".repeat(36);
-  const inicio = new Date(AHORA + 2 * 86_400_000).toISOString();
+  /**
+   * ⚠️ La cita se ancla al RELOJ REAL, no a `AHORA`. Dos motivos, los dos
+   * encontrados con el test en rojo (14-sep):
+   *   1. `AHORA` es un Date: `AHORA + 2 * 86_400_000` CONCATENA (string), no
+   *      suma. V8 parsea igual la parte inicial e ignora la basura del final,
+   *      así que la cita quedaba a la hora de `AHORA` en vez de dos días
+   *      después — sin error visible.
+   *   2. `cuposParaReagendar` valida los permisos contra el reloj real, y las
+   *      aserciones de más abajo miden contra `Date.now()`. Con la fecha
+   *      congelada el test se ponía rojo solo por el paso del tiempo.
+   */
+  const inicio = new Date(Date.now() + 2 * 86_400_000).toISOString();
   const supa = crearBaseMemoria({
     ed_citas: [
       {
@@ -394,7 +405,7 @@ test("mover por el enlace usa el horizonte del negocio, no un plazo propio", asy
         gestion_token: token,
         nombre_contacto: "Ana",
         inicio,
-        fin: new Date(AHORA + 2 * 86_400_000 + 3600_000).toISOString(),
+        fin: new Date(Date.now() + 2 * 86_400_000 + 3600_000).toISOString(),
         estado: "confirmada",
       },
     ],

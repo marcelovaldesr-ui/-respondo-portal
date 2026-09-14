@@ -1,5 +1,10 @@
 import type { Capacidades } from "@/lib/marketing/capacidades";
 import type { CodigoErrorAds } from "@/lib/ads/proveedor";
+import type { FilaRendimiento, Proveedor, TipoResultado } from "@/lib/ads/canal";
+import type { Analisis } from "@/lib/ads/analisis";
+import type { FallaCanal } from "@/lib/ads/canales";
+import type { Profundidad, Senales } from "@/lib/ads/senales";
+import type { Destino, PlanCampana } from "@/lib/marketing/arquitectoCore";
 import type { GrupoMetricas } from "@/lib/ads/metricas";
 import type { Hallazgo } from "@/lib/ads/insights";
 import type { Rango } from "@/lib/ads/periodos";
@@ -40,7 +45,14 @@ export type PuntoDiario = {
  * venta. Es la etapa que el propio negocio mueve con la mano cuando quiere.
  */
 export type EscalonEmbudo = {
-  clave: "impresiones" | "clics" | "conversaciones" | "calificados" | "avanzados" | "ventas";
+  /**
+   * `resultados` (Fase 6) es el escalón que reporta la PLATAFORMA: conversiones
+   * del sitio, formularios, compras. Existe para los negocios que no traen la
+   * conversación a Respondo: sin él, su embudo terminaba en «clics» y las tres
+   * etapas siguientes quedaban en cero, que es exactamente la pantalla vacía
+   * que esta fase vino a eliminar.
+   */
+  clave: "impresiones" | "clics" | "resultados" | "conversaciones" | "calificados" | "avanzados" | "ventas";
   etiqueta: string;
   valor: number | null;
   /** % respecto del escalón anterior. null si no se puede calcular. */
@@ -62,8 +74,13 @@ export type EstadoCampana =
 export type FilaCampana = {
   id: string;
   nombre: string;
-  /** De dónde sale: Meta (con conexión), la atribución propia o un borrador nuestro. */
-  origen: "meta" | "atribucion" | "borrador";
+  /** De dónde sale: una plataforma, la atribución propia o un borrador nuestro. */
+  origen: "meta" | "google" | "atribucion" | "borrador";
+  /**
+   * Qué plataforma la publica. `null` en las de solo atribución (sabemos que
+   * alguien llegó por un anuncio, no de qué cuenta salió) y en los borradores.
+   */
+  proveedor?: Proveedor | null;
   estado: EstadoCampana;
   objetivo: string | null;
   gasto: number | null;
@@ -89,6 +106,16 @@ export type FilaCampana = {
   anuncios: number;
   desde: string | null;
   hasta: string | null;
+  /**
+   * El resultado que declara la plataforma, CON su tipo. Dos campañas con
+   * tipos distintos no se comparan ni se suman: ver `sonComparables` en
+   * `lib/ads/canal.ts`.
+   */
+  resultados?: number | null;
+  tipoResultado?: TipoResultado | null;
+  costoPorResultado?: number | null;
+  /** Solo Meta. Sirve para explicar un CTR que cae. */
+  frecuencia?: number | null;
 };
 
 export type FilaAnuncio = {
@@ -188,7 +215,20 @@ export type BorradorCampana = {
   presupuestoDiario: number | null;
   presupuestoTotal: number | null;
   moneda: string;
-  destino: "whatsapp";
+  /**
+   * A dónde manda el clic. Era el literal `"whatsapp"` —el supuesto de toda la
+   * sección escrito en el tipo—: un estudio jurídico que manda a su sitio no
+   * podía guardarse. Ver `lib/marketing/arquitectoCore.ts`.
+   */
+  destino: Destino;
+  /** Qué plataformas contempla: meta · google · ambos. */
+  canal?: string;
+  /**
+   * El plan completo del Arquitecto, cuando la campaña nació ahí. Es el estado
+   * COMPARTIDO entre Arquitecto, Estudio creativo y asistente: los tres leen y
+   * escriben el mismo borrador en vez de tener cada uno el suyo.
+   */
+  plan?: PlanCampana | null;
   creatividadIds: string[];
   copies: { titular: string; texto: string; cta: string }[];
   estado: EstadoCampana;
@@ -230,6 +270,23 @@ export type Panorama = {
   borradores: BorradorCampana[];
   hallazgos: Hallazgo[];
   estado: { items: ItemPauta[]; listos: number; total: number; hayAtribucion: boolean };
+  /**
+   * ⭐ LAS SEÑALES DE ESTE NEGOCIO (Fase 6). Lo que decide qué se muestra.
+   *
+   * No es una preferencia ni un modo elegido en una pantalla: se detecta de
+   * datos reales en cada carga. Un negocio que conecta WhatsApp mañana gana la
+   * capa de conversaciones sin que nadie cambie una configuración.
+   */
+  senales: Senales;
+  profundidad: Profundidad;
+  /** En qué pie está cada plataforma publicitaria para este negocio. */
+  canales: EstadoCanalPanorama[];
+  /** Qué plataforma no respondió y por qué. Una caída no tumba a la otra. */
+  fallasCanales: FallaCanal[];
+  /** Filas normalizadas de las plataformas (campañas, grupos, anuncios, términos). */
+  filasAds: FilaRendimiento[];
+  /** Hechos y recomendaciones deterministas. El modelo NO las calcula. */
+  analisis: Analisis;
   /** Contactos del período que NO vinieron de un anuncio, para contexto. */
   sinAnuncio: number;
   /**
@@ -238,6 +295,17 @@ export type Panorama = {
    * galería vacía que parece un error.
    */
   almacenListo: boolean;
+};
+
+/** Lo que la UI necesita saber de cada canal, sin importar el proveedor. */
+export type EstadoCanalPanorama = {
+  proveedor: Proveedor;
+  nombre: string;
+  disponible: boolean;
+  conectado: boolean;
+  faltaElegirCuenta: boolean;
+  cuentaNombre: string | null;
+  moneda: string | null;
 };
 
 /** Cómo se lee cada etapa en las pantallas. Mismo vocabulario que Embudo. */

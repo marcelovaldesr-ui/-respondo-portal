@@ -26,7 +26,15 @@ import type { EscalonEmbudo } from "@/lib/marketing/tipos";
  *
  * Cuando una etapa tiene a dónde ir, la etapa ENTERA es un enlace.
  */
-const DE_META = new Set(["impresiones", "clics"]);
+/**
+ * Qué escalones los reporta LA PLATAFORMA (y por lo tanto van del lado apagado,
+ * con su rótulo propio) y cuáles los contamos nosotros.
+ *
+ * ⚠️ FASE 6: `resultados` es de la plataforma y el rótulo ya no puede decir
+ * «META» a secas — el mismo escalón puede venir de Google. El rótulo se toma
+ * del proveedor cuando se sabe, y si no, dice «PLATAFORMA».
+ */
+const DE_PLATAFORMA = new Set(["impresiones", "clics", "resultados"]);
 
 /** Rótulos de una línea: dos líneas desalinean toda la fila de escalones. */
 const CORTO: Partial<Record<EscalonEmbudo["clave"], string>> = {
@@ -37,18 +45,21 @@ export default function Embudo({
   escalones,
   enlaces,
   compacto = false,
+  rotuloPlataforma = "PLATAFORMA",
 }: {
   escalones: EscalonEmbudo[];
   enlaces?: Partial<Record<EscalonEmbudo["clave"], string>>;
   /** Versión vertical para paneles angostos (detalle de campaña). */
   compacto?: boolean;
+  /** Cómo se rotula el lado de la plataforma: «META», «GOOGLE» o genérico. */
+  rotuloPlataforma?: string;
 }) {
   const visibles = escalones.filter((e) => e.valor !== null);
   if (visibles.length === 0) return null;
 
-  const nuestros = visibles.filter((e) => !DE_META.has(e.clave));
+  const nuestros = visibles.filter((e) => !DE_PLATAFORMA.has(e.clave));
   const maxNuestro = Math.max(...nuestros.map((e) => e.valor ?? 0), 1);
-  const deMeta = visibles.filter((e) => DE_META.has(e.clave));
+  const deMeta = visibles.filter((e) => DE_PLATAFORMA.has(e.clave));
   const maxMeta = Math.max(...deMeta.map((e) => e.valor ?? 0), 1);
   /**
    * ⭐ ESCALA DE RAÍZ, y es una decisión.
@@ -63,7 +74,7 @@ export default function Embudo({
    * el gesto, el número es la verdad.
    */
   const alturaDe = (e: EscalonEmbudo) => {
-    const esMeta = DE_META.has(e.clave);
+    const esMeta = DE_PLATAFORMA.has(e.clave);
     const base = esMeta ? maxMeta : maxNuestro;
     const pct = Math.sqrt(Math.max(0, (e.valor ?? 0) / base)) * 100;
     return `${Math.max(6, Math.min(100, pct))}%`;
@@ -75,13 +86,13 @@ export default function Embudo({
     return (
       <div className="mk-embudo">
         {visibles.map((e) => {
-          const esMeta = DE_META.has(e.clave);
+          const esMeta = DE_PLATAFORMA.has(e.clave);
           const href = enlaces?.[e.clave];
           const Cuerpo = (
             <>
               <span className="flex items-center gap-1.5 font-semibold" style={{ color: esMeta ? "var(--muted)" : "var(--tinta)" }}>
                 {e.etiqueta}
-                {esMeta && <span style={{ fontSize: "9.5px", fontWeight: 700, letterSpacing: ".06em", color: "var(--muted-3)" }}>META</span>}
+                {esMeta && <span style={{ fontSize: "9.5px", fontWeight: 700, letterSpacing: ".06em", color: "var(--muted-3)" }}>{rotuloPlataforma}</span>}
               </span>
               <span className="mk-embudo-barra">
                 <span style={{ width: alturaDe(e) }} />
@@ -112,7 +123,7 @@ export default function Embudo({
   return (
     <div className="mk-embudo-h">
       {visibles.map((e) => {
-        const esMeta = DE_META.has(e.clave);
+        const esMeta = DE_PLATAFORMA.has(e.clave);
         const href = enlaces?.[e.clave];
         const clases = [
           "mk-embudo-etapa",
@@ -132,7 +143,7 @@ export default function Embudo({
             <span className="mk-embudo-rotulo" title={e.etiqueta}>
               {CORTO[e.clave] ?? e.etiqueta}
               {esMeta && (
-                <span style={{ fontSize: "9.5px", fontWeight: 700, letterSpacing: ".06em", color: "var(--muted-3)" }}>META</span>
+                <span style={{ fontSize: "9.5px", fontWeight: 700, letterSpacing: ".06em", color: "var(--muted-3)" }}>{rotuloPlataforma}</span>
               )}
             </span>
             <span className="mk-embudo-tasa">

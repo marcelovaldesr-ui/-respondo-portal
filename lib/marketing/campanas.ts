@@ -33,7 +33,12 @@ function desdeFila(f: Record<string, unknown>): BorradorCampana {
     presupuestoDiario: f.presupuesto_diario === null ? null : Number(f.presupuesto_diario),
     presupuestoTotal: f.presupuesto_total === null ? null : Number(f.presupuesto_total),
     moneda: String(f.moneda ?? "CLP"),
-    destino: "whatsapp",
+    // El destino guardado manda; `whatsapp` solo como respaldo de filas viejas.
+    destino: (["whatsapp", "sitio_web", "formulario_meta", "llamada"].includes(String(f.destino))
+      ? String(f.destino)
+      : "whatsapp") as BorradorCampana["destino"],
+    canal: f.canal ? String(f.canal) : undefined,
+    plan: (f.plan as BorradorCampana["plan"]) ?? null,
     creatividadIds: Array.isArray(f.creatividad_ids) ? (f.creatividad_ids as string[]) : [],
     copies: Array.isArray(f.copies)
       ? (f.copies as { titular?: string; texto?: string; cta?: string }[]).map((c) => ({
@@ -117,7 +122,7 @@ export async function guardarBorrador(
     presupuesto_diario: entrada.presupuestoDiario,
     presupuesto_total: entrada.presupuestoTotal,
     moneda: entrada.moneda || "CLP",
-    destino: "whatsapp",
+    destino: entrada.destino || "whatsapp",
     creatividad_ids: entrada.creatividadIds,
     copies: entrada.copies.slice(0, 6),
     estado,

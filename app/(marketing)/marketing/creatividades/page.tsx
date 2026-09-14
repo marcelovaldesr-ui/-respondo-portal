@@ -4,7 +4,7 @@ import { resolverRango } from "@/lib/ads/periodos";
 import { formatearNumero } from "@/lib/ads/moneda";
 import { cargarMarketing } from "@/lib/marketing/datos";
 import { contextoDeMarca } from "@/lib/marketing/contextoMarca";
-import { modoDemo } from "@/lib/marketing/modo";
+import { opcionesDemo } from "@/lib/marketing/modo";
 import { PLANTILLAS_CREATIVAS } from "@/lib/marketing/plantillasCreativas";
 import Cabecera from "@/components/marketing/Cabecera";
 import GaleriaCreatividades from "@/components/marketing/GaleriaCreatividades";
@@ -27,10 +27,10 @@ export const dynamic = "force-dynamic";
  */
 export default async function Creatividades({ searchParams }: { searchParams: Promise<{ p?: string }> }) {
   const usuario = await exigirPermisoPortal("generar_insights");
-  const demo = await modoDemo();
+  const { demo, variante } = await opcionesDemo();
   const rango = resolverRango((await searchParams).p ?? "30d");
   const [p, marca] = await Promise.all([
-    cargarMarketing(usuario.clienteId, rango, { demo }),
+    cargarMarketing(usuario.clienteId, rango, { demo, variante }),
     contextoDeMarca(usuario.clienteId, demo),
   ]);
   const hay = p.creatividades.length > 0;

@@ -6,9 +6,14 @@ import { armarMetricas, type DatosPlataforma } from "@/lib/ads/metricas";
 import { diaChile, diasEntre, sumarDias, type Rango } from "@/lib/ads/periodos";
 import type { RendimientoAnuncio } from "@/lib/ads/proveedor";
 import { listarBorradores } from "@/lib/marketing/campanas";
+import { rendimientoMulticanal } from "@/lib/ads/canales";
+import { agregar, costoPorResultado } from "@/lib/ads/canal";
+import { analizarAds } from "@/lib/ads/analisis";
+import { detectarSenales, profundidadDe } from "@/lib/ads/senales";
+import { armarEmbudoAdaptativo } from "@/lib/marketing/embudoAdaptativo";
 import { listarCreatividades } from "@/lib/marketing/creatividades";
 import { capacidadesDe } from "@/lib/marketing/capacidades";
-import { armarEmbudo, panoramaDemo } from "@/lib/marketing/demo";
+import { panoramaDemo, type VarianteDemo } from "@/lib/marketing/demo";
 import type {
   Creatividad,
   FilaAnuncio,
@@ -41,9 +46,9 @@ import type {
 export async function cargarMarketing(
   clienteId: string,
   rango: Rango,
-  opciones?: { demo?: boolean },
+  opciones?: { demo?: boolean; variante?: VarianteDemo },
 ): Promise<Panorama> {
-  if (opciones?.demo) return panoramaDemo(rango);
+  if (opciones?.demo) return panoramaDemo(rango, opciones.variante ?? "completo");
 
   const largo = diasEntre(rango.desde, rango.hasta);
   const anterior: Rango = {
@@ -56,7 +61,26 @@ export async function cargarMarketing(
    * Todo en paralelo y cada integración aparte: si Meta se cae, las cifras
    * propias, los leads y las creatividades aparecen igual.
    */
-  const [pauta, personas, estado, rendimiento, rendimientoAntes, creatividades, borradores, capacidades] =
+  /**
+   * ⚠️ POR QUÉ HAY DOS LECTURAS DE META Y NO UNA (decisión de rendimiento).
+   *
+   * `proveedorMeta.rendimiento` trae las filas por ANUNCIO y por DÍA: es lo que
+   * alimenta la atribución —cruzar el anuncio del `referral` con su gasto— y el
+   * gráfico de tendencia. `rendimientoMulticanal` trae el nivel CAMPAÑA de
+   * todos los canales, con estado, objetivo, presupuesto, alcance, frecuencia y
+   * el resultado que declara la plataforma: nada de eso viene en la consulta
+   * por anuncio.
+   *
+   * Se podría derivar la campaña sumando sus anuncios y ahorrarse una llamada,
+   * pero se perderían justo los campos que hacen posible el análisis (una
+   * campaña pausada se vería igual que una activa, y el alcance NO se suma).
+   * Todo va en paralelo, así que el costo es una conexión más, no más espera.
+   *
+   * Los niveles profundos de Google —grupos, palabras, términos— NO se piden
+   * acá: los pide la pantalla que los muestra. Traerlos en cada carga del
+   * inicio sería pagar cinco consultas para dibujar seis KPI.
+   */
+  const [pauta, personas, estado, rendimiento, rendimientoAntes, creatividades, borradores, capacidades, canalesAhora, canalesAntes] =
     await Promise.all([
       cargarPauta(clienteId, rango),
       personasDeAnuncios(clienteId, rango),
@@ -66,6 +90,8 @@ export async function cargarMarketing(
       listarCreatividades(clienteId),
       listarBorradores(clienteId),
       capacidadesDe(clienteId),
+      rendimientoMulticanal(clienteId, rango, ["campana"]),
+      rendimientoMulticanal(clienteId, anterior, ["campana"]),
     ]);
 
   /**
@@ -220,6 +246,7 @@ export async function cargarMarketing(
       id: m.campanaId,
       nombre: m.campanaNombre,
       origen: "meta" as const,
+      proveedor: "meta" as const,
       estado: "activa" as const,
       objetivo: null,
       gasto: 0,
@@ -242,6 +269,66 @@ export async function cargarMarketing(
     c.impresiones = (c.impresiones ?? 0) + m.impresiones;
     c.clics = (c.clics ?? 0) + m.clics;
     porCampana.set(m.campanaId, c);
+  }
+
+  /* ── Las campañas TAL COMO las ve cada plataforma ──────────────────────────
+   *
+   * ⭐ ACÁ LA PLATAFORMA ES LA AUTORIDAD sobre su propio gasto, y no la suma de
+   * los anuncios que trajeron conversaciones. La diferencia no es cosmética: si
+   * una campaña tiene ocho anuncios y solo tres trajeron gente, sumar esos tres
+   * subestima lo que se gastó de verdad — y el costo por venta sale barato por
+   * una resta que nadie ve. Con el nivel campaña el total cuadra contra el
+   * Administrador de Anuncios, que es lo primero que el dueño va a revisar.
+   *
+   * Lo que la atribución aporta —conversaciones, ventas, cobrado— se conserva
+   * tal cual: eso la plataforma no lo sabe.
+   */
+  const filasCampanaPlataforma = canalesAhora.filas.filter((f) => f.nivel === "campana");
+  for (const f of filasCampanaPlataforma) {
+    const existente = porCampana.get(f.id);
+    const costoRes = costoPorResultado(f);
+    if (existente) {
+      existente.proveedor = f.proveedor;
+      existente.origen = f.proveedor;
+      existente.gasto = f.gasto.valor;
+      existente.impresiones = f.impresiones;
+      existente.clics = f.clics;
+      existente.moneda = f.gasto.moneda;
+      existente.estado = f.estado === "desconocido" ? existente.estado : (f.estado ?? existente.estado);
+      existente.objetivo = f.objetivo ?? existente.objetivo;
+      existente.resultados = f.resultados?.cantidad ?? null;
+      existente.tipoResultado = f.resultados?.tipo ?? null;
+      existente.costoPorResultado = costoRes?.valor ?? null;
+      existente.frecuencia = f.frecuencia ?? null;
+      continue;
+    }
+    porCampana.set(f.id, {
+      id: f.id,
+      nombre: f.nombre,
+      origen: f.proveedor,
+      proveedor: f.proveedor,
+      estado: f.estado === "desconocido" ? "activa" : (f.estado ?? "activa"),
+      objetivo: f.objetivo ?? null,
+      gasto: f.gasto.valor,
+      moneda: f.gasto.moneda,
+      impresiones: f.impresiones,
+      clics: f.clics,
+      conversaciones: 0,
+      calificados: 0,
+      avanzados: 0,
+      ventas: 0,
+      cobrado: 0,
+      costoPorConversacion: null,
+      costoPorVenta: null,
+      roas: null,
+      anuncios: 0,
+      desde: null,
+      hasta: null,
+      resultados: f.resultados?.cantidad ?? null,
+      tipoResultado: f.resultados?.tipo ?? null,
+      costoPorResultado: costoRes?.valor ?? null,
+      frecuencia: f.frecuencia ?? null,
+    });
   }
   /**
    * El retorno solo se calcula si lo cobrado y lo gastado están en la MISMA
@@ -333,16 +420,62 @@ export async function cargarMarketing(
   });
 
   const calificados = leads.filter((l) => l.calificado).length;
-  const embudo = armarEmbudo({
-    impresiones: metaConectada ? totalMeta.impresiones : null,
-    clics: metaConectada ? totalMeta.clics : null,
-    conversaciones: pauta.propios.conversaciones,
-    calificados,
-    avanzados: pauta.propios.avanzados,
-    ventas: pauta.propios.ventas,
+
+  /* ── LAS SEÑALES ──────────────────────────────────────────────────────────
+   *
+   * Se detectan de datos reales del período, no de una configuración. Cada una
+   * responde a una pregunta concreta:
+   *   ads           → ¿hay alguna cuenta publicitaria leyendo?
+   *   conversiones  → ¿esa plataforma reporta resultados que sabemos nombrar?
+   *   conversaciones→ ¿alguien llegó a escribirnos por un anuncio?
+   *   ingresos      → ¿alguna de esas conversaciones dejó plata?
+   *
+   * `hayCanalConectado` y no `metaConectada`: un negocio puede tener solo
+   * Google. Ese detalle es la diferencia entre que Impresora Color vea su
+   * cuenta de Búsqueda y que vea la pantalla de «conectá Meta».
+   */
+  const totalesPlataforma = agregar(filasCampanaPlataforma);
+  const senales = detectarSenales({
+    hayCuentaPublicitaria: capacidades.hayCanalConectado,
+    plataformaReportaResultados: filasCampanaPlataforma.some(
+      (f) => f.resultados && f.resultados.tipo !== "desconocido" && f.resultados.cantidad > 0,
+    ),
+    hayConversacionesAtribuidas: pauta.propios.conversaciones > 0,
+    hayIngresosAtribuidos: pauta.propios.cobrado.valor > 0,
   });
 
-  const senales = hallazgos({
+  /**
+   * El embudo tiene los escalones que se pueden medir y ninguno más. Un
+   * negocio sin conversaciones ve tres escalones completos en vez de seis con
+   * cuatro en cero — que es lo que hacía parecer que el producto no servía.
+   */
+  const embudo = armarEmbudoAdaptativo(
+    {
+      impresiones: senales.ads ? (totalesPlataforma.impresiones || (metaConectada ? totalMeta.impresiones : null)) : null,
+      clics: senales.ads ? (totalesPlataforma.clics || (metaConectada ? totalMeta.clics : null)) : null,
+      resultados: totalesPlataforma.resultados?.cantidad ?? null,
+      tipoResultado: totalesPlataforma.resultados?.tipo ?? null,
+      conversaciones: pauta.propios.conversaciones,
+      calificados,
+      avanzados: pauta.propios.avanzados,
+      ventas: pauta.propios.ventas,
+    },
+    senales,
+  );
+
+  /**
+   * EL ANÁLISIS DETERMINISTA. Corre sobre las filas de las plataformas y NO
+   * necesita conversaciones: es lo que hace que un negocio solo-ads reciba
+   * hallazgos y recomendaciones con evidencia el primer día.
+   */
+  const analisis = analizarAds({
+    filas: canalesAhora.filas,
+    filasAntes: canalesAntes.filas,
+    periodo: rango.etiqueta.toLowerCase(),
+    dias: largo,
+  });
+
+  const senalesPropias = hallazgos({
     filas: pauta.filas,
     resumen: pauta.resumen,
     propios: pauta.propios,
@@ -368,7 +501,13 @@ export async function cargarMarketing(
     leads,
     creatividades: creas,
     borradores: borradores.items,
-    hallazgos: senales,
+    hallazgos: senalesPropias,
+    senales,
+    profundidad: profundidadDe(senales),
+    canales: capacidades.canales,
+    fallasCanales: canalesAhora.fallas,
+    filasAds: canalesAhora.filas,
+    analisis,
     estado: {
       items: estado.items,
       listos: estado.listos,
