@@ -127,7 +127,7 @@ function recortar(v: unknown, max: number): string {
   return s.length > max ? s.slice(0, max - 1).trimEnd() + "…" : s;
 }
 
-function ctaValido(v: unknown): string {
+export function ctaValido(v: unknown): string {
   const s = String(v ?? "").trim();
   const exacto = CTAS_META.find((c) => c.toLowerCase() === s.toLowerCase());
   if (exacto) return exacto;

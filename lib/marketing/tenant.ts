@@ -38,7 +38,7 @@ import { db } from "@/lib/db";
  */
 
 /** Las tablas que este módulo posee. Nada fuera de esta lista pasa por acá. */
-export type TablaMarketing = "ed_mk_creatividades" | "ed_mk_campanas";
+export type TablaMarketing = "ed_mk_creatividades" | "ed_mk_campanas" | "ed_mk_contexto";
 
 /** Error de aislamiento. Nunca debería ocurrir; si ocurre, es un bug grave. */
 export class FugaDeTenant extends Error {

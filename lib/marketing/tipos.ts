@@ -164,7 +164,10 @@ export type Lead = {
 };
 
 export type FormatoCreatividad = "1:1" | "4:5" | "9:16" | "16:9";
-export type PlataformaCreatividad = "instagram" | "facebook" | "ambas";
+export type PlataformaCreatividad = "instagram" | "facebook" | "ambas" | "google";
+
+/** De dónde salió la pieza. Las tres se comportan igual aguas abajo. */
+export type OrigenCreatividad = "generada" | "subida" | "existente";
 export type EstadoCreatividad = "borrador" | "lista" | "en_campana" | "archivada";
 
 export type Creatividad = {
@@ -186,6 +189,11 @@ export type Creatividad = {
   campanaId: string | null;
   campanaNombre: string | null;
   varianteDe: string | null;
+  origen: OrigenCreatividad;
+  /** El copy lo escribió una persona: no se reemplaza solo. */
+  textoManual: boolean;
+  /** Estrategia con la que se escribió y resultado de la revisión. */
+  estrategia: Record<string, unknown> | null;
   creadoEn: string;
   actualizadoEn: string;
   /** Rendimiento, cuando la creatividad ya corrió en Meta y se pudo cruzar. */
@@ -328,8 +336,18 @@ export const ESTADO_CAMPANA: Record<EstadoCampana, { texto: string; clase: strin
   publicada: { texto: "Publicada", clase: "pildora-ok" },
 };
 
+/**
+ * ⚠️ La ayuda NO nombra el canal.
+ *
+ * Decía «Que más gente te escriba por WhatsApp», que era verdad cuando el único
+ * destino posible era WhatsApp. Desde la Fase 6 un anuncio puede llevar a un
+ * formulario, a un sitio o a una llamada —Respondo mismo no tiene WhatsApp
+ * conectado—, así que el objetivo describe el RESULTADO y el destino se elige
+ * aparte. Prometer un canal en el rótulo del objetivo era contradecir al
+ * selector que está tres campos más abajo.
+ */
 export const OBJETIVOS = [
-  { clave: "conversaciones", texto: "Conseguir conversaciones", ayuda: "Que más gente te escriba por WhatsApp." },
+  { clave: "conversaciones", texto: "Conseguir conversaciones", ayuda: "Que más gente te escriba y empiece a conversar." },
   { clave: "reservas", texto: "Conseguir reservas", ayuda: "Que agenden una hora o visita." },
   { clave: "cotizaciones", texto: "Generar cotizaciones", ayuda: "Que pidan precio por algo concreto." },
   { clave: "ventas", texto: "Vender un producto", ayuda: "Que compren algo específico, con precio." },

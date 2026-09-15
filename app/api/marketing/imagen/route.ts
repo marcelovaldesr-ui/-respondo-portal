@@ -1,7 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { obtenerUsuarioConPermiso } from "@/lib/auth";
 import { db } from "@/lib/db";
-import { rutaDeImagen, rutaEsDelCliente, PREFIJO } from "@/lib/marketing/imagenes";
+import { rutaDeImagen, rutaEsDelCliente, tipoDeRuta, PREFIJO } from "@/lib/marketing/imagenes";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 15;
@@ -23,8 +23,9 @@ const BUCKET = "creatividades";
  *
  * TRES PUERTAS, en orden:
  *   1. Sesión con permiso de Marketing.
- *   2. La ruta tiene la forma exacta que escribimos nosotros: `<uuid>/<ms>.jpg`,
- *      sin traversal, sin rutas absolutas, sin otra extensión.
+ *   2. La ruta tiene la forma exacta que escribimos nosotros:
+ *      `<uuid>/<ms>.<jpg|png|webp>`, sin traversal, sin rutas absolutas y sin
+ *      ninguna otra extensión.
  *   3. La ruta pertenece al prefijo de ESTE negocio.
  *
  * Con esas tres, un usuario solo puede leer objetos bajo su propio prefijo —que
@@ -51,7 +52,10 @@ export async function GET(request: NextRequest) {
 
   return new NextResponse(data, {
     headers: {
-      "Content-Type": "image/jpeg",
+      // El tipo sale de la RUTA que escribimos nosotros, nunca de lo que dijo
+      // el navegador al subir. Con `nosniff`, un archivo que se colara con
+      // otro contenido no se interpretaría como nada ejecutable.
+      "Content-Type": tipoDeRuta(ruta),
       // `private`: fuera de cualquier CDN compartida. La ruta lleva marca de
       // tiempo y el contenido nunca cambia, así que se puede cachear fuerte.
       "Cache-Control": "private, max-age=31536000, immutable",

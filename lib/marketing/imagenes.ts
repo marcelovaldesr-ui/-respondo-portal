@@ -17,13 +17,36 @@
  */
 export const PREFIJO = "sb:";
 
+/**
+ * Los formatos que aceptamos guardar.
+ *
+ * El generador siempre escribe JPEG. Las piezas que sube el negocio conservan
+ * SU formato: recomprimir el PNG de un diseñador a JPEG le come la
+ * transparencia y le mete artefactos en los bordes del texto — y la misión es
+ * explícita en que la imagen de la persona no se altera sola.
+ */
+export const EXTENSIONES = ["jpg", "png", "webp"] as const;
+export type Extension = (typeof EXTENSIONES)[number];
+
+export const TIPO_DE: Record<Extension, string> = {
+  jpg: "image/jpeg",
+  png: "image/png",
+  webp: "image/webp",
+};
+
 /** La ruta dentro del bucket, o null si el valor no es un puntero nuestro. */
 export function rutaDeImagen(valor: string | null | undefined): string | null {
   if (!valor || !valor.startsWith(PREFIJO)) return null;
   const ruta = valor.slice(PREFIJO.length);
-  // Sin traversal, sin rutas absolutas, sin vacíos: `<uuid>/<numero>.jpg`.
-  if (!/^[0-9a-f-]{8,}\/[0-9]+\.jpg$/i.test(ruta)) return null;
+  // Sin traversal, sin rutas absolutas, sin vacíos: `<uuid>/<numero>.<ext>`.
+  if (!/^[0-9a-f-]{8,}\/[0-9]+\.(jpg|png|webp)$/i.test(ruta)) return null;
   return ruta;
+}
+
+/** El tipo con que se sirve esa ruta. Sale de la RUTA, nunca de lo que dijo el navegador. */
+export function tipoDeRuta(ruta: string): string {
+  const ext = ruta.split(".").pop()?.toLowerCase() as Extension | undefined;
+  return ext && ext in TIPO_DE ? TIPO_DE[ext] : "application/octet-stream";
 }
 
 /** ¿Esa ruta es del prefijo de ESTE negocio? Segunda barrera del Storage. */

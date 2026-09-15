@@ -64,6 +64,9 @@ function desdeFila(f: Record<string, unknown>): Creatividad {
     campanaId: (f.campana_id as string | null) ?? null,
     campanaNombre: null,
     varianteDe: (f.variante_de as string | null) ?? null,
+    origen: (f.origen as Creatividad["origen"]) ?? "generada",
+    textoManual: Boolean(f.texto_manual),
+    estrategia: (f.estrategia as Record<string, unknown> | null) ?? null,
     creadoEn: String(f.creado_en ?? ""),
     actualizadoEn: String(f.actualizado_en ?? ""),
     rendimiento: null,
@@ -147,7 +150,16 @@ export async function generarImagen(
         signal: ctrl.signal,
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          contents: [{ parts: [{ text: `${prompt}\n\nFotografía publicitaria profesional, realista, sin texto, sin logos, sin marcas de agua.` }] }],
+          /**
+           * El prompt llega ENTERO desde `visualCore.promptDeImagen`, con su
+           * sujeto, su encuadre y su lista de negativos.
+           *
+           * Antes se le pegaba acá una coletilla fija —«Fotografía publicitaria
+           * profesional, realista, sin texto, sin logos»— que era lo único que
+           * dirigía la imagen, y por eso todas las imágenes se parecían: la
+           * dirección de arte vivía en una constante, no en el anuncio.
+           */
+          contents: [{ parts: [{ text: prompt }] }],
           generationConfig: { responseModalities: ["IMAGE"], imageConfig: { aspectRatio: formato } },
         }),
       },
@@ -241,6 +253,12 @@ export type EntradaCreatividad = {
   estado?: Creatividad["estado"];
   campanaId?: string | null;
   varianteDe?: string | null;
+  /** De dónde salió la pieza. Aguas abajo las tres se comportan igual. */
+  origen?: Creatividad["origen"];
+  /** El copy lo escribió una persona: ninguna acción automática lo pisa. */
+  textoManual?: boolean;
+  /** Con qué estrategia se escribió, y qué dijo la revisión de calidad. */
+  estrategia?: Record<string, unknown> | null;
 };
 
 export async function guardarCreatividad(
@@ -291,20 +309,37 @@ export async function guardarCreatividad(
     actualizado_en: new Date().toISOString(),
   };
 
+  /**
+   * Las columnas de la 310 van APARTE y se reintenta sin ellas.
+   *
+   * PostgREST rechaza el INSERT entero si una columna no existe, así que
+   * mandarlas siempre haría que, sin la migración aplicada, no se pudiera
+   * guardar NADA — ni siquiera lo que ya funcionaba antes. Se intenta con
+   * ellas y, si la base todavía no las tiene, se guarda sin ellas: se pierde
+   * el origen y la estrategia, no el trabajo de la persona.
+   */
+  const extra = {
+    origen: entrada.origen ?? "generada",
+    texto_manual: entrada.textoManual ?? false,
+    estrategia: entrada.estrategia ?? null,
+  };
+
   if (id) {
-    const { data, error } = await modificarEn(clienteId, TABLA, id, fila);
-    if (error) return { ok: false, motivo: traducirFalla({ proveedor: "almacen", operacion: "guardarCreatividad", clienteId, crudo: error.message }) };
-    if (!data) return { ok: false, motivo: "Esa creatividad ya no existe. Puede que se haya eliminado desde otra pestaña." };
+    let r = await modificarEn(clienteId, TABLA, id, { ...fila, ...extra });
+    if (r.error) r = await modificarEn(clienteId, TABLA, id, fila);
+    if (r.error) return { ok: false, motivo: traducirFalla({ proveedor: "almacen", operacion: "guardarCreatividad", clienteId, crudo: r.error.message }) };
+    if (!r.data) return { ok: false, motivo: "Esa creatividad ya no existe. Puede que se haya eliminado desde otra pestaña." };
     return { ok: true, id };
   }
-  const { data, error } = await insertarEn(clienteId, TABLA, fila);
-  if (error || !data) {
+  let r = await insertarEn(clienteId, TABLA, { ...fila, ...extra });
+  if (r.error) r = await insertarEn(clienteId, TABLA, fila);
+  if (r.error || !r.data) {
     return {
       ok: false,
-      motivo: traducirFalla({ proveedor: "almacen", operacion: "crearCreatividad", clienteId, crudo: error?.message ?? "sin fila" }),
+      motivo: traducirFalla({ proveedor: "almacen", operacion: "crearCreatividad", clienteId, crudo: r.error?.message ?? "sin fila" }),
     };
   }
-  return { ok: true, id: String(data.id) };
+  return { ok: true, id: String(r.data.id) };
 }
 
 export async function cambiarEstadoCreatividad(

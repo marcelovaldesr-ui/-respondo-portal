@@ -410,6 +410,9 @@ const CREATIVIDADES_DEMO: Omit<Creatividad, "rendimiento" | "creadoEn" | "actual
     campanaId: "c_pendones",
     campanaNombre: "Pendones para ferias · Septiembre",
     varianteDe: null,
+    origen: "generada",
+    textoManual: false,
+    estrategia: null,
   },
   {
     id: "cr_pendon_express",
@@ -430,6 +433,9 @@ const CREATIVIDADES_DEMO: Omit<Creatividad, "rendimiento" | "creadoEn" | "actual
     campanaId: "c_pendones",
     campanaNombre: "Pendones para ferias · Septiembre",
     varianteDe: "cr_pendon_feria",
+    origen: "generada",
+    textoManual: false,
+    estrategia: null,
   },
   {
     id: "cr_tarjetas",
@@ -450,6 +456,9 @@ const CREATIVIDADES_DEMO: Omit<Creatividad, "rendimiento" | "creadoEn" | "actual
     campanaId: "c_tarjetas",
     campanaNombre: "Tarjetas de presentación · Pymes",
     varianteDe: null,
+    origen: "generada",
+    textoManual: false,
+    estrategia: null,
   },
   {
     id: "cr_giganto",
@@ -470,6 +479,9 @@ const CREATIVIDADES_DEMO: Omit<Creatividad, "rendimiento" | "creadoEn" | "actual
     campanaId: "c_giganto",
     campanaNombre: "Gigantografías · Locales comerciales",
     varianteDe: null,
+    origen: "generada",
+    textoManual: false,
+    estrategia: null,
   },
   {
     id: "cr_poleras",
@@ -490,6 +502,9 @@ const CREATIVIDADES_DEMO: Omit<Creatividad, "rendimiento" | "creadoEn" | "actual
     campanaId: "c_poleras",
     campanaNombre: "Poleras sublimadas · Eventos",
     varianteDe: null,
+    origen: "generada",
+    textoManual: false,
+    estrategia: null,
   },
   {
     id: "cr_stickers",
@@ -510,6 +525,9 @@ const CREATIVIDADES_DEMO: Omit<Creatividad, "rendimiento" | "creadoEn" | "actual
     campanaId: null,
     campanaNombre: null,
     varianteDe: null,
+    origen: "generada",
+    textoManual: false,
+    estrategia: null,
   },
   {
     id: "cr_navidad",
@@ -530,6 +548,9 @@ const CREATIVIDADES_DEMO: Omit<Creatividad, "rendimiento" | "creadoEn" | "actual
     campanaId: null,
     campanaNombre: null,
     varianteDe: null,
+    origen: "generada",
+    textoManual: false,
+    estrategia: null,
   },
   {
     id: "cr_remkt",
@@ -550,6 +571,9 @@ const CREATIVIDADES_DEMO: Omit<Creatividad, "rendimiento" | "creadoEn" | "actual
     campanaId: "c_remkt",
     campanaNombre: "Remarketing · Cotizaron y no compraron",
     varianteDe: null,
+    origen: "generada",
+    textoManual: false,
+    estrategia: null,
   },
 ];
 
@@ -1009,4 +1033,57 @@ export function armarEmbudo(v: {
       definicion: "Venta confirmada o cobro pagado por el enlace. La tasa es sobre conversaciones.",
     },
   ];
+}
+
+/* ── El contexto comercial de la demostración ───────────────────────────────
+   Se escribe a mano, como el resto de la demo, pero con la MISMA forma que
+   produce el ensamblado real: si algún día el modelo cambia, esto deja de
+   compilar y la demo no puede quedar mostrando una forma que producción ya no
+   entrega. Es el mismo criterio con el que la demo se construye restando del
+   panorama completo en vez de inventando campos. */
+import type { ContextoComercial } from "@/lib/marketing/contextoComercialCore";
+import { inferirVoz } from "@/lib/marketing/vozMarca";
+
+export function contextoComercialDemo(): ContextoComercial {
+  return {
+    negocio: { nombre: NEGOCIO_DEMO.nombre, rubro: NEGOCIO_DEMO.rubro, zona: NEGOCIO_DEMO.ciudad, sitio: null },
+    vende: [
+      { nombre: "Pendón roller 80×200", tipo: "producto", detalle: "Estructura de aluminio y bolso incluidos.", precio: "$34.990", fuente: "catalogo" },
+      { nombre: "Tarjetas de presentación", tipo: "producto", detalle: "Couché 350 g, mate o brillante, 1.000 unidades.", precio: "$19.990", fuente: "catalogo" },
+      { nombre: "Gigantografía PVC", tipo: "producto", detalle: "Por metro cuadrado, resistente al agua.", precio: null, fuente: "catalogo" },
+      { nombre: "Poleras sublimadas", tipo: "producto", detalle: "Full color, desde 10 unidades.", precio: null, fuente: "catalogo" },
+      { nombre: "Stickers troquelados", tipo: "producto", detalle: "Vinilo resistente al agua, 100 unidades.", precio: "$8.990", fuente: "catalogo" },
+    ],
+    capacidades: ["Diseño gráfico incluido", "Entrega express", "Retiro en local"],
+    audiencia: {
+      descripcion: "Negocios y organizadores de eventos de Chillán que necesitan material impreso con poca anticipación.",
+      rubros: ["comercio", "eventos", "gimnasios", "restaurantes"],
+    },
+    propuesta: {
+      problema: "El material se necesita para una fecha concreta y la imprenta de siempre no alcanza a entregarlo.",
+      resultado: "El trabajo sale a tiempo y con el diseño resuelto, sin tener que buscar un diseñador aparte.",
+    },
+    diferenciadores: ["Diseño incluido cuando se imprime con nosotros", "Entrega en 24 horas en productos de tienda"],
+    ofertas: [{ texto: "Pendón roller listo en 24 horas, con diseño incluido.", fuente: "conocimiento", reserva: null }],
+    pruebas: [{ texto: "Imprenta en Chillán desde 1998.", fuente: "conocimiento", reserva: null }],
+    voz: inferirVoz(NEGOCIO_DEMO.rubro),
+    noAfirmar: [
+      "Ningún resultado, porcentaje ni cifra de desempeño: no tenemos con qué respaldarlo.",
+      "Nada sobre plazos distintos de las 24 horas ya confirmadas.",
+    ],
+    vocabularioCliente: [
+      "Piden «pendón» o «roller» para ferias y eventos, casi siempre con apuro.",
+      "Preguntan si el diseño está incluido antes que el precio.",
+      "La objeción más común es el plazo, no el precio: «¿alcanza para el sábado?».",
+    ],
+    fuentes: [
+      { rol: "catalogo", titulo: "Qué imprimimos", motivo: "el título anuncia lo que el negocio vende" },
+      { rol: "precio", titulo: "Precios fijos de tienda", motivo: "trae precios concretos" },
+      { rol: "voz", titulo: "Cómo nombran los clientes los productos", motivo: "describe cómo escribe la marca" },
+    ],
+    descartados: [
+      { titulo: "Datos de transferencia (abono)", motivo: "es información operativa" },
+      { titulo: "Preguntas frecuentes", motivo: "es una pregunta frecuente" },
+    ],
+  };
 }

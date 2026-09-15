@@ -1,5 +1,6 @@
 import { exigirPermisoPortal } from "@/lib/auth";
-import { contextoDeMarca } from "@/lib/marketing/contextoMarca";
+import { contextoComercial } from "@/lib/marketing/contextoComercial";
+import { completitud } from "@/lib/marketing/contextoComercialCore";
 import { obtenerBorrador } from "@/lib/marketing/campanas";
 import { listarCreatividades, obtenerCreatividad } from "@/lib/marketing/creatividades";
 import { plantillaPorClave, type PlantillaCreativa } from "@/lib/marketing/plantillasCreativas";
@@ -25,8 +26,8 @@ export default async function NuevaCreatividad({
   const usuario = await exigirPermisoPortal("generar_insights");
   const demo = await modoDemo();
   const sp = await searchParams;
-  const [marca, campana, base, almacen] = await Promise.all([
-    contextoDeMarca(usuario.clienteId, demo),
+  const [ctx, campana, base, almacen] = await Promise.all([
+    contextoComercial(usuario.clienteId, { demo }),
     sp.campana ? obtenerBorrador(usuario.clienteId, sp.campana, demo) : null,
     sp.variarDe ? obtenerCreatividad(usuario.clienteId, sp.variarDe, demo) : null,
     listarCreatividades(usuario.clienteId, demo),
@@ -76,9 +77,9 @@ export default async function NuevaCreatividad({
       />
       {!almacen.disponible && <AvisoMigracion />}
       <GeneradorAnuncio
-        negocio={marca.nombre}
-        ofertas={marca.ofertas}
-        saber={marca.saber.length}
+        negocio={ctx.contexto.negocio.nombre}
+        contexto={ctx.contexto}
+        completitud={completitud(ctx.contexto)}
         demo={demo}
         campanaId={campana?.id ?? null}
         campanaNombre={campana?.nombre ?? null}

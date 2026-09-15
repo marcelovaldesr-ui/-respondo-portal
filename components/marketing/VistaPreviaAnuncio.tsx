@@ -34,7 +34,8 @@ export default function VistaPreviaAnuncio({
   cta: string;
   imagenUrl: string | null;
   formato: FormatoCreatividad;
-  plataforma?: "instagram" | "facebook" | "ambas";
+  /** `google` no pinta marco de red social: Search no tiene feed. */
+  plataforma?: "instagram" | "facebook" | "ambas" | "google";
   superficie?: "feed" | "historia";
   ancho?: number;
 }) {
