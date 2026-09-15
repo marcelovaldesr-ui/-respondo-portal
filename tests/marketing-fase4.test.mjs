@@ -100,7 +100,7 @@ test("nadie aparece a la vez en «Compraron» y en «Perdidos»", () => {
 /* ── 4. Capacidades: nunca ofrecer lo que no se puede ───────────────────── */
 
 test("sin la conexión habilitada, el motivo no invita a conectar nada", () => {
-  const texto = motivoSinPublicidad({ puedeConectarMeta: false, metaConectada: false, metaFaltaElegirCuenta: false });
+  const texto = motivoSinPublicidad({ puedeConectarMeta: false, puedeConectarGoogle: false, metaConectada: false, metaFaltaElegirCuenta: false, hayCanalConectado: false, canales: [] });
   assert.match(texto, /todavía no está activada/i);
   // Ni invita a conectar (no se puede), ni le echa la culpa al plan contratado:
   // la causa es de la instalación, no comercial.
@@ -109,7 +109,7 @@ test("sin la conexión habilitada, el motivo no invita a conectar nada", () => {
 });
 
 test("con la cuenta conectada, un límite de consultas no dice «conecta tu cuenta»", () => {
-  const texto = motivoSinPublicidad({ puedeConectarMeta: true, metaConectada: true, metaFaltaElegirCuenta: false }, "limite_api");
+  const texto = motivoSinPublicidad({ puedeConectarMeta: true, puedeConectarGoogle: false, metaConectada: true, metaFaltaElegirCuenta: false, hayCanalConectado: true, canales: [] }, "limite_api");
   assert.doesNotMatch(texto, /conect/i, "la cuenta YA está conectada");
   assert.match(texto, /esperar/i);
 });

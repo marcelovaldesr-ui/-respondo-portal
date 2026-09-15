@@ -1,5 +1,13 @@
 import type { Proveedor } from "@/lib/ads/canal";
 import type { Senales } from "@/lib/ads/senales";
+import {
+  formatearMonto,
+  monedaConocida,
+  montoComparable,
+  normalizarMoneda,
+  type Moneda,
+  type Monto,
+} from "@/lib/ads/moneda";
 
 /**
  * EL ARQUITECTO DE CAMPAÑAS — núcleo puro: modelo, límites y validación.
@@ -139,7 +147,8 @@ export type CampanaPlanificada = {
   nombre: string;
   /** El objetivo tal como se llama en la plataforma. */
   objetivo: string;
-  presupuestoDiario: number | null;
+  /** Cantidad + moneda. Nunca un escalar suelto: ver `pisoDiarioDe`. */
+  presupuestoDiario: Monto | null;
   destino: Destino;
   /** URL o número, según el destino. */
   destinoDetalle: string;
@@ -179,8 +188,16 @@ export type Hipotesis = {
 
 export type PlanCampana = {
   objetivoNegocio: string;
-  presupuestoMensual: number | null;
-  moneda: string;
+  /** Cantidad + moneda, o null si la persona no declaró presupuesto. */
+  presupuestoMensual: Monto | null;
+  /**
+   * La moneda del plan, incluso cuando no hay presupuesto declarado. Puede ser
+   * `MONEDA_DESCONOCIDA` si el negocio no tiene ninguna cuenta conectada: en
+   * ese caso el plan lo dice en vez de escribir «CLP» y que alguien lo crea.
+   */
+  moneda: Moneda;
+  /** El piso que se usó para validar, con su origen. `null` = no se exigió. */
+  piso: PisoDiario | null;
   duracionDias: number;
   estrategiaCanal: { canal: Proveedor; parte: number; porQue: string }[];
   campanas: CampanaPlanificada[];
@@ -208,32 +225,179 @@ export type PlanCampana = {
  *     los dos canales disponibles, la mayor parte va a Búsqueda salvo que el
  *     objetivo sea claramente de generar demanda.
  */
-export const PISO_DIARIO_CAMPANA = 2000;
+/**
+ * ⚠️ ACÁ ESTABA `PISO_DIARIO_CAMPANA = 2000`, Y ERA UN NÚMERO SIN MONEDA.
+ *
+ * 2.000 es un piso correcto **en pesos chilenos**. El código lo comparaba
+ * contra cualquier presupuesto, viniera en la moneda que viniera. Una cuenta en
+ * dólares con US$600 al mes —US$20 al día, un presupuesto perfectamente sano—
+ * daba `20 < 2000`: el reparto se colapsaba a un solo canal y `revisarPlan`
+ * marcaba la campaña como insuficiente. Para que el plan pasara la validación
+ * había que declarar US$60.000 mensuales.
+ *
+ * Y el arreglo obvio —«si es USD entonces 2»— es el mismo error con una tabla
+ * más larga: sigue siendo una constante de plata escrita a mano, sigue sin
+ * saber qué moneda está mirando, y se rompe con la moneda número tres.
+ *
+ * ⭐ LO QUE EL PISO MIDE DE VERDAD NO ES PLATA: ES APRENDIZAJE.
+ *
+ * El motivo por el que existe —está escrito arriba— es que una campaña con
+ * demasiado poco presupuesto no junta volumen para salir del aprendizaje y el
+ * mes se gasta sin concluir nada. Eso se mide en CLICS POR DÍA, que es una
+ * cantidad y no depende de ninguna moneda. La plata es la PROYECCIÓN de esa
+ * cantidad, y el único tipo de cambio honesto para hacerla es el de la propia
+ * cuenta: su costo por clic, en su moneda, medido en su historia.
+ *
+ * El orden, entonces:
+ *   1. **Observado.** piso = CPC de la cuenta × clics diarios mínimos. Misma
+ *      moneda que el presupuesto, sin inventar ningún tipo de cambio.
+ *   2. **Configurado.** Si el negocio todavía no tiene historia, se usa la
+ *      semilla declarada para esa moneda. Es CONFIGURACIÓN, es reemplazable, y
+ *      el plan dice que el piso salió de ahí y no de sus datos.
+ *   3. **Ninguno.** Si no hay historia y esa moneda no está configurada —o la
+ *      moneda es desconocida— NO se exige piso y se dice por qué. Preferimos
+ *      no opinar antes que bloquear un plan sano con una cifra inventada.
+ */
+
+/** Clics diarios con los que una campaña empieza a poder concluir algo. */
+export const CLICS_DIARIOS_PARA_APRENDER = 8;
+
+/**
+ * Semillas por moneda, para el negocio que todavía no tiene historia propia.
+ *
+ * ⚠️ Solo CLP, y a propósito: es la única moneda de la que este producto tiene
+ * evidencia real (cuentas chilenas operadas de verdad). Inventar una fila para
+ * USD sería repetir el defecto en otra celda. Una instalación que opere en otra
+ * moneda declara la suya —ver `semillasDeEntorno`— y mientras no lo haga el
+ * sistema no exige piso en vez de exigir uno falso.
+ */
+export const PISOS_DIARIOS_SEMILLA: Readonly<Record<string, number>> = { CLP: 2000 };
+
+/**
+ * Lee las semillas de una variable de entorno con formato `CLP:2000,USD:5`.
+ *
+ * Vive acá, en el núcleo puro, porque es parseo de texto y se prueba sin nada
+ * alrededor; el que lee `process.env` es el módulo de entrada/salida.
+ */
+export function semillasDeEntorno(crudo: string | undefined | null): Record<string, number> {
+  const out: Record<string, number> = { ...PISOS_DIARIOS_SEMILLA };
+  for (const par of String(crudo ?? "").split(",")) {
+    const [m, v] = par.split(":");
+    const moneda = normalizarMoneda(m);
+    const valor = Number(String(v ?? "").trim());
+    if (monedaConocida(moneda) && Number.isFinite(valor) && valor > 0) out[moneda] = valor;
+  }
+  return out;
+}
+
+export type PisoDiario = {
+  monto: Monto;
+  /** De dónde salió: de la cuenta de este negocio, o de la configuración. */
+  origen: "observado" | "configurado";
+  /** Explicación en una línea, para mostrarla junto a la cifra. */
+  porQue: string;
+};
+
+/**
+ * El piso diario por campaña, en la moneda del plan. `null` significa
+ * literalmente «no se puede exigir un piso», no «el piso es cero».
+ *
+ * `cpc` tiene que venir en LA MISMA moneda que el plan. Si no coincide, se
+ * ignora: convertirlo exigiría un tipo de cambio que no tenemos y que no vamos
+ * a inventar.
+ */
+export function pisoDiarioDe(entrada: {
+  moneda: Moneda;
+  cpc?: Monto | null;
+  semillas?: Record<string, number>;
+}): PisoDiario | null {
+  const moneda = normalizarMoneda(entrada.moneda);
+  if (!monedaConocida(moneda)) return null;
+
+  const cpc = entrada.cpc;
+  if (montoComparable(cpc) && normalizarMoneda(cpc!.moneda) === moneda && cpc!.valor > 0) {
+    return {
+      monto: { valor: cpc!.valor * CLICS_DIARIOS_PARA_APRENDER, moneda },
+      origen: "observado",
+      porQue: `Para juntar unos ${CLICS_DIARIOS_PARA_APRENDER} clics al día al costo por clic que tiene hoy esta cuenta (${formatearMonto(cpc!)}).`,
+    };
+  }
+
+  const semillas = entrada.semillas ?? PISOS_DIARIOS_SEMILLA;
+  const semilla = semillas[moneda];
+  if (Number.isFinite(semilla) && semilla > 0) {
+    return {
+      monto: { valor: semilla, moneda },
+      origen: "configurado",
+      porQue:
+        "Este negocio todavía no tiene historial propio de costo por clic, así que se usa el mínimo configurado para esta moneda.",
+    };
+  }
+  return null;
+}
+
+/**
+ * El costo por clic de una cuenta, a partir de sus propias filas.
+ *
+ * ⚠️ Solo suma filas de UNA moneda —la que se pide— y nunca mezcla: un total
+ * que junta pesos con dólares no es un total, es un número. Si no hay clics en
+ * esa moneda, devuelve null y el piso pasa a la semilla.
+ */
+export function cpcDe(
+  filas: { gasto: Monto; clics: number }[],
+  moneda: Moneda,
+): Monto | null {
+  const m = normalizarMoneda(moneda);
+  if (!monedaConocida(m)) return null;
+  const propias = filas.filter((f) => montoComparable(f.gasto) && normalizarMoneda(f.gasto.moneda) === m);
+  const clics = propias.reduce((a, f) => a + (Number.isFinite(f.clics) ? f.clics : 0), 0);
+  if (clics <= 0) return null;
+  const gasto = propias.reduce((a, f) => a + f.gasto.valor, 0);
+  if (!(gasto > 0)) return null;
+  return { valor: gasto / clics, moneda: m };
+}
+
+export type ParteDeCanal = { canal: Proveedor; parte: number; diario: Monto | null };
 
 export function repartirPresupuesto(
-  mensual: number | null,
+  mensual: Monto | null,
   canales: Proveedor[],
   intencionDeBusqueda: boolean,
-): { canal: Proveedor; parte: number; diario: number | null }[] {
+  piso: PisoDiario | null,
+): ParteDeCanal[] {
   if (!canales.length) return [];
+
+  /** El diario de una parte, en LA MISMA moneda que el mensual. */
+  const diarioDe = (parte: number): Monto | null =>
+    mensual === null ? null : { valor: (mensual.valor * parte) / 30, moneda: mensual.moneda };
+
   if (canales.length === 1) {
-    return [{ canal: canales[0], parte: 1, diario: mensual === null ? null : Math.round(mensual / 30) }];
+    return [{ canal: canales[0], parte: 1, diario: diarioDe(1) }];
   }
   const aGoogle = intencionDeBusqueda ? 0.65 : 0.35;
   const partes: Record<Proveedor, number> = { google: aGoogle, meta: 1 - aGoogle };
 
-  const reparto = canales.map((canal) => ({
+  const reparto: ParteDeCanal[] = canales.map((canal) => ({
     canal,
     parte: partes[canal],
-    diario: mensual === null ? null : Math.round((mensual * partes[canal]) / 30),
+    diario: diarioDe(partes[canal]),
   }));
 
   /**
    * Si el reparto deja alguna por debajo del piso, NO se reparte: se concentra
    * todo en la que la estrategia priorizó. Es preferible probar bien un canal
    * que probar mal dos.
+   *
+   * ⚠️ Y si NO hay piso conocido —cuenta sin historia en una moneda que no está
+   * configurada— no se concentra nada. Antes esa misma rama se ejecutaba igual
+   * comparando contra 2.000 «lo que fuera», y a una cuenta en dólares le mataba
+   * el segundo canal sin que nadie se lo pidiera. No saber el piso es no saber,
+   * no es «está bajo el piso».
    */
-  if (mensual !== null && reparto.some((r) => (r.diario ?? 0) < PISO_DIARIO_CAMPANA)) {
+  if (!piso || mensual === null) return reparto;
+  if (!mismaMoneda(mensual, piso.monto)) return reparto;
+
+  if (reparto.some((r) => (r.diario?.valor ?? 0) < piso.monto.valor)) {
     const principal = intencionDeBusqueda
       ? canales.includes("google")
         ? "google"
@@ -241,9 +405,16 @@ export function repartirPresupuesto(
       : canales.includes("meta")
         ? "meta"
         : canales[0];
-    return [{ canal: principal as Proveedor, parte: 1, diario: Math.round(mensual / 30) }];
+    return [{ canal: principal as Proveedor, parte: 1, diario: diarioDe(1) }];
   }
   return reparto;
+}
+
+/** Dos montos que se pueden comparar de verdad: ambos con moneda y la misma. */
+function mismaMoneda(a: Monto | null | undefined, b: Monto | null | undefined): boolean {
+  return (
+    montoComparable(a) && montoComparable(b) && normalizarMoneda(a!.moneda) === normalizarMoneda(b!.moneda)
+  );
 }
 
 /**
@@ -354,6 +525,7 @@ export type ProblemaPlan = { campo: string; problema: string };
  */
 export function revisarPlan(plan: PlanCampana): ProblemaPlan[] {
   const problemas: ProblemaPlan[] = [];
+  const piso = plan.piso;
 
   if (!plan.campanas.length) problemas.push({ campo: "campañas", problema: "El plan no tiene ninguna campaña." });
 
@@ -394,10 +566,16 @@ export function revisarPlan(plan: PlanCampana): ProblemaPlan[] {
         problemas.push({ campo: `campaña «${c.nombre}»`, problema: "Una campaña de Meta necesita al menos un conjunto de anuncios." });
       }
     }
-    if (c.presupuestoDiario !== null && c.presupuestoDiario < PISO_DIARIO_CAMPANA) {
+    /**
+     * ⚠️ El piso se exige SOLO cuando se conoce, y comparando dos montos de la
+     * misma moneda. Antes esto comparaba el diario contra 2.000 sin mirar en
+     * qué moneda estaba: una campaña de US$20 al día se marcaba como
+     * insuficiente y el plan quedaba trabado con un problema falso.
+     */
+    if (piso && mismaMoneda(c.presupuestoDiario, piso.monto) && c.presupuestoDiario!.valor < piso.monto.valor) {
       problemas.push({
         campo: `campaña «${c.nombre}»`,
-        problema: `Con menos de ${PISO_DIARIO_CAMPANA} al día la campaña no junta datos suficientes para decidir nada.`,
+        problema: `Con menos de ${formatearMonto(piso.monto)} al día la campaña no junta datos suficientes para decidir nada. ${piso.porQue}`,
       });
     }
   }
@@ -421,10 +599,20 @@ export function revisarPlan(plan: PlanCampana): ProblemaPlan[] {
  */
 export function planEnTexto(plan: PlanCampana): string {
   const L: string[] = [];
-  const monto = (n: number | null) => (n === null ? "—" : `${Math.round(n).toLocaleString("es-CL")} ${plan.moneda}`);
+  /**
+   * Un monto se escribe con su moneda o no se escribe. Si la moneda es
+   * desconocida sale el número pelado —que es exactamente lo que sabemos— y
+   * más abajo el plan dice en qué moneda hay que interpretarlo.
+   */
+  const monto = (m: Monto | null) => (m === null ? "—" : formatearMonto(m));
 
   L.push(`PLAN: ${plan.objetivoNegocio}`);
-  L.push(`Presupuesto: ${monto(plan.presupuestoMensual)} al mes · ${plan.duracionDias} días`);
+  L.push(
+    `Presupuesto: ${monto(plan.presupuestoMensual)} al mes · ${plan.duracionDias} días` +
+      (plan.presupuestoMensual && !monedaConocida(plan.moneda)
+        ? " · ⚠️ las cifras están en la moneda que configures en la plataforma: todavía no hay ninguna cuenta publicitaria conectada de la que leerla"
+        : ""),
+  );
   L.push("");
   L.push("ESTRATEGIA DE CANAL");
   for (const e of plan.estrategiaCanal) {

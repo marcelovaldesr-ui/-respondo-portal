@@ -395,6 +395,61 @@ export type RespuestaCopiloto = {
   sinDatos: boolean;
 };
 
+/* ── El presupuesto sugerido sale del gasto real, no de una cifra a fuego ──
+ *
+ * ⚠️ EL DEFECTO QUE ESTO ARREGLA: la regla 5 del prompt decía «entre $2.000 y
+ * $10.000». Son pesos chilenos escritos en duro: a una cuenta en dólares le
+ * proponía gastar diez mil dólares al día. La escala tiene que salir de lo que
+ * ESTA cuenta viene gastando, en SU moneda, y si no hay gasto observado no se
+ * sugiere ninguna cifra. No hay ninguna tabla de monedas acá ni conversión:
+ * la moneda es la que declaró la plataforma junto al gasto.
+ * ───────────────────────────────────────────────────────────────────────── */
+
+/** Un monto en la moneda de la cuenta, sin símbolo inventado. */
+const montoEnMoneda = (n: number, moneda: string) => `${Math.round(n).toLocaleString("es-CL")} ${moneda}`;
+
+export type EscalaDePresupuesto = {
+  /** Gasto diario típico observado en el período. */
+  diario: number;
+  minimo: number;
+  maximo: number;
+  moneda: string;
+};
+
+/**
+ * La escala de presupuesto de esta cuenta, o `null` cuando no se puede saber.
+ *
+ * Se mira el gasto que reportó la plataforma —que viene con su moneda pegada—
+ * y se reparte en los días del período. Si el gasto llegó en más de una moneda
+ * NO se suma ni se convierte: se devuelve `null`, porque una sola cifra ahí
+ * sería una mentira en las dos monedas.
+ */
+export function escalaDePresupuesto(p: Panorama): EscalaDePresupuesto | null {
+  const porMoneda = new Map<string, number>();
+  for (const f of p.filasAds.filter((f) => f.nivel === "campana")) {
+    if (f.gasto.valor > 0) porMoneda.set(f.gasto.moneda, (porMoneda.get(f.gasto.moneda) ?? 0) + f.gasto.valor);
+  }
+  if (!porMoneda.size) {
+    // Sin filas de la plataforma, sirven las campañas del panorama: traen su
+    // propia moneda y existen también para los negocios que solo tienen
+    // atribución.
+    for (const c of p.campanas) {
+      if (c.origen !== "borrador" && c.gasto && c.gasto > 0) porMoneda.set(c.moneda, (porMoneda.get(c.moneda) ?? 0) + c.gasto);
+    }
+  }
+  if (porMoneda.size !== 1) return null;
+
+  const [moneda, total] = [...porMoneda.entries()][0];
+  const dias = Math.max(1, p.rango.dias);
+  const diario = total / dias;
+  if (!Number.isFinite(diario) || diario <= 0) return null;
+  /**
+   * La horquilla es la mitad y una vez y media lo que ya se gasta: una campaña
+   * nueva se prueba a la escala de la cuenta, no a una escala inventada.
+   */
+  return { diario, minimo: diario * 0.5, maximo: diario * 1.5, moneda };
+}
+
 export function promptCopiloto(entrada: {
   pregunta: string;
   panorama: Panorama;
@@ -417,6 +472,18 @@ export function promptCopiloto(entrada: {
         .map((f) => `▸ ${f.nombre}: ${f.motivo}`)
         .join("\n")}\n`
     : "";
+  /**
+   * El rango de presupuesto se calcula acá y se escribe en la regla: el modelo
+   * no tiene que deducir la escala ni la moneda de las cifras sueltas, y si no
+   * hay gasto observado la regla le prohíbe inventar una.
+   */
+  const escala = escalaDePresupuesto(panorama);
+  const reglaPresupuesto = escala
+    ? `presupuesto diario sugerido entre ${montoEnMoneda(escala.minimo, escala.moneda)} y ${montoEnMoneda(escala.maximo, escala.moneda)}`
+    : `"presupuestoDiario" en null`;
+  const notaPresupuesto = escala
+    ? ` La escala y la moneda del presupuesto salen de lo que ESTA cuenta gastó: cerca de ${montoEnMoneda(escala.diario, escala.moneda)} al día en el período. Si propones otra escala, di por qué, y nunca cambies de moneda.`
+    : ` NO sugieras ninguna cifra de presupuesto: esta cuenta no tiene gasto observado en una sola moneda conocida, y un monto en la moneda equivocada se lee como recomendación y se gasta de verdad. Dile en una frase que el monto lo defina ella, o que conecte la cuenta publicitaria para que se lo propongamos con datos.`;
   const hiloTexto = hilo
     .slice(-3)
     .map((t) => `Persona: ${t.pregunta}\nCopiloto: ${t.respuesta}`)
@@ -459,7 +526,7 @@ REGLAS
 2. Habla en español de Chile, directo, como un asesor que respeta el tiempo del dueño. Sin listas de diez puntos: la conclusión primero, después la evidencia, después qué haría.
 3. «Calificado» significa que la conversación avanzó a interesado o más, o cotizó, reservó o compró. Úsalo así.
 4. Cuando compares campañas o anuncios, nombra el mejor y el peor con sus cifras exactas. Copia los números TAL COMO aparecen arriba (coma decimal, punto de miles: «23,2×», «$1.177.000», «5,5%»); no los reescribas al formato inglés.
-5. Si la persona pide CREAR una campaña, arma un borrador completo con la información del negocio: objetivo, oferta concreta (con precio si el contexto lo tiene), audiencia razonable (ubicación de la zona del negocio, edad, 2-4 intereses), presupuesto diario sugerido (entre $2.000 y $10.000 salvo que el gasto actual indique otra escala), DOS copies (titular ≤40 caracteres, texto ≤300, CTA de: Enviar mensaje · Cotizar por WhatsApp · Escribir ahora · Pedir información · Reservar · Comprar) y una descripción de imagen. No inventes precios que no estén en el contexto.
+5. Si la persona pide CREAR una campaña, arma un borrador completo con la información del negocio: objetivo, oferta concreta (con precio si el contexto lo tiene), audiencia razonable (ubicación de la zona del negocio, edad, 2-4 intereses), ${reglaPresupuesto}, DOS copies (titular ≤40 caracteres, texto ≤300, CTA de: Enviar mensaje · Cotizar por WhatsApp · Escribir ahora · Pedir información · Reservar · Comprar) y una descripción de imagen. No inventes precios que no estén en el contexto.${notaPresupuesto}
 6. ⭐ SI LA PREGUNTA NECESITA UNA SEÑAL QUE ESTE NEGOCIO NO TIENE, dilo en la primera línea, explica por qué en una frase y ofrece la pregunta parecida que SÍ puedes responder con lo que hay. Ejemplo: si preguntan qué campaña trae mejores clientes y no llegan conversaciones a Respondo, la respuesta correcta empieza por «no puedo saber cuál trae mejores clientes porque no recibo esa señal» y sigue con cuál consigue resultados más baratos, con sus cifras. NUNCA contestes una pregunta distinta como si fuera la que hicieron.
 7. NO sumes ni compares resultados de tipos distintos (conversaciones iniciadas, formularios, conversiones del sitio, compras): miden cosas distintas. Si hay dos tipos, muéstralos por separado y dilo.
 8. Recomienda rutas concretas del producto cuando corresponda: /marketing/campanas, /marketing/campanas/{id}, /marketing/atribucion, /marketing/leads, /marketing/creatividades, /marketing/campanas/nueva, /marketing/arquitecto, /marketing/integraciones. Las "acciones" son enlaces para VER una pantalla («Ver campaña X», «Ver personas»): Respondo no activa, pausa ni publica campañas en Meta, así que nunca escribas una acción que prometa eso; si conviene reactivar o pausar algo, dilo en la respuesta como recomendación para hacer en Meta.
@@ -474,7 +541,7 @@ Responde SOLO con JSON:
   "borrador": null
 }
 Si la persona pidió crear una campaña, "borrador" lleva:
-{ "nombre": "...", "objetivo": "conversaciones|reservas|cotizaciones|ventas", "oferta": "...", "audiencia": { "ubicacion": "...", "edadDesde": 25, "edadHasta": 55, "intereses": ["..."], "nota": "..." }, "presupuestoDiario": 5000, "copies": [ { "titular": "...", "texto": "...", "cta": "..." }, { ... } ], "creatividad": { "concepto": "...", "imagenPrompt": "..." } }`;
+{ "nombre": "...", "objetivo": "conversaciones|reservas|cotizaciones|ventas", "oferta": "...", "audiencia": { "ubicacion": "...", "edadDesde": 25, "edadHasta": 55, "intereses": ["..."], "nota": "..." }, "presupuestoDiario": número entero en la moneda de la cuenta, o null si la regla 5 te lo prohíbe, "copies": [ { "titular": "...", "texto": "...", "cta": "..." }, { ... } ], "creatividad": { "concepto": "...", "imagenPrompt": "..." } }`;
 }
 
 export function parsearRespuestaCopiloto(crudo: string): RespuestaCopiloto | null {

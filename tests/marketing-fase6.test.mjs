@@ -22,12 +22,26 @@ import {
   senalesVacias,
   sePuedeResponder,
 } from "../lib/ads/senales.ts";
-import { MINIMOS, analizarAds, comparables, mediana, umbralGastoSinResultado } from "../lib/ads/analisis.ts";
+import {
+  MINIMOS,
+  analizarAds,
+  comparables,
+  estaActiva,
+  evaluarNegativa,
+  mediana,
+  negativaBloquea,
+  tokens,
+  umbralGastoSinResultado,
+} from "../lib/ads/analisis.ts";
 import { armarEmbudoAdaptativo, tituloEmbudo } from "../lib/marketing/embudoAdaptativo.ts";
 import {
+  CLICS_DIARIOS_PARA_APRENDER,
   LIMITES,
-  PISO_DIARIO_CAMPANA,
+  PISOS_DIARIOS_SEMILLA,
   armarTracking,
+  cpcDe,
+  pisoDiarioDe,
+  semillasDeEntorno,
   destinosPosibles,
   hayIntencionDeBusqueda,
   planEnTexto,
@@ -36,7 +50,16 @@ import {
   revisarPlan,
   slug,
 } from "../lib/marketing/arquitectoCore.ts";
-import { HERRAMIENTAS, herramientasDisponibles, preguntasPara, promptCopiloto } from "../lib/marketing/copilotoCore.ts";
+import { MONEDA_DESCONOCIDA, formatearMonto } from "../lib/ads/moneda.ts";
+import {
+  CATEGORIAS_BLANDAS,
+  composicionDesdeFilas,
+  fusionarComposicion,
+  gaqlComposicion,
+  leerComposicion,
+  tipoDeCategoria,
+} from "../lib/ads/googleConversiones.ts";
+import { escalaDePresupuesto, HERRAMIENTAS, herramientasDisponibles, preguntasPara, promptCopiloto } from "../lib/marketing/copilotoCore.ts";
 import { panoramaDemo } from "../lib/marketing/demo.ts";
 import { resolverRango } from "../lib/ads/periodos.ts";
 import { formatearIdCuenta, soloDigitos, tipoCampanaLegible, tienePalabrasClave } from "../lib/ads/google.ts";
@@ -292,13 +315,174 @@ test("el refresh token de Google se guarda cifrado y con propósito propio", () 
 
 const ctx = (filas, filasAntes = []) => ({ filas, filasAntes, periodo: "últimos 30 días", dias: 30 });
 
-test("con la medición muda, el análisis se detiene y lo dice", () => {
+const usd = (valor) => ({ valor, moneda: "USD" });
+
+test("con la medición muda se avisa, y NO se opina de conversiones", () => {
   const sinConversiones = campana({ clics: 400, resultados: null });
   const r = analizarAds(ctx([sinConversiones]));
   assert.ok(r.insights.some((i) => i.clave === "medicion_muda"));
-  // Y no se opina de rendimiento sobre datos que sabemos incompletos.
-  assert.equal(r.insights.length, 1);
   assert.ok(r.recomendaciones.every((x) => x.accion === "revisar"));
+  assert.equal(r.recomendaciones.some((x) => x.clave.startsWith("pausar_")), false);
+  assert.equal(r.recomendaciones.some((x) => x.clave.startsWith("escalar_")), false);
+});
+
+/* ── BUG-05: inteligencia de conversión ≠ inteligencia de entrega ─────────── */
+
+test("BUG-05 · con la medición muda sobreviven CTR, CPM y desgaste creativo", () => {
+  // Antes esto devolvía UN solo insight y cortaba: el negocio con la medición
+  // rota —el que más lo necesita— se quedaba sin ver que su anuncio se gastó.
+  const ahora = campana({
+    clics: 400,
+    impresiones: 40_000,
+    frecuencia: 4.2,
+    resultados: null,
+    gasto: clp(300_000),
+  });
+  const antes = campana({
+    clics: 1_200,
+    impresiones: 40_000,
+    frecuencia: 2.1,
+    resultados: null,
+    gasto: clp(150_000),
+  });
+  const r = analizarAds(ctx([ahora], [antes]));
+
+  assert.ok(r.insights.some((i) => i.clave === "medicion_muda"), "la alerta de medición sigue primero");
+  assert.ok(r.insights.some((i) => i.clave.startsWith("ctr_")), "el CTR no depende de las conversiones");
+  assert.ok(r.insights.some((i) => i.clave.startsWith("cpm_")), "el CPM tampoco");
+  assert.ok(r.insights.some((i) => i.clave.startsWith("desgaste_")), "ni la frecuencia");
+  assert.ok(r.insuficientes.some((i) => i.clave === "sin_conversiones_medidas"));
+  // Pero nada que dependa de conversiones.
+  assert.equal(
+    r.recomendaciones.some((x) => ["escalar", "reducir"].includes(x.accion)),
+    false,
+  );
+});
+
+test("BUG-05 · con la medición muda, el reparto del gasto entre términos sigue siendo un hecho", () => {
+  const base = campana({ proveedor: "google", objetivo: "Búsqueda", clics: 400, resultados: null, gasto: clp(300_000) });
+  const filas = [
+    base,
+    termino("imprenta chillan", { gasto: clp(200_000), clics: 120, resultados: null }),
+    termino("imprenta barata", { gasto: clp(50_000), clics: 30, resultados: null }),
+    termino("imprenta cerca", { gasto: clp(50_000), clics: 30, resultados: null }),
+  ];
+  const r = analizarAds(ctx(filas));
+  assert.ok(r.insights.some((i) => i.clave === "termino_concentra_imprenta chillan"));
+});
+
+/* ── BUG-04: nunca se suman escalares de monedas distintas ────────────────── */
+
+test("BUG-04 · dos cuentas en monedas distintas se analizan por separado", () => {
+  const clpGrande = campana({ id: "clp-1", proveedor: "google", nombre: "Búsqueda CLP", gasto: clp(900_000), resultados: { cantidad: 30, tipo: "conversiones_web" } });
+  const clpChica = campana({ id: "clp-2", proveedor: "google", nombre: "Display CLP", gasto: clp(100_000), resultados: { cantidad: 4, tipo: "conversiones_web" } });
+  const enDolares = campana({ id: "usd-1", nombre: "Meta USD", gasto: usd(5_000), resultados: { cantidad: 200, tipo: "mensajes" } });
+
+  const r = analizarAds(ctx([clpGrande, clpChica, enDolares]));
+
+  assert.ok(
+    r.insuficientes.some((i) => i.clave === "monedas_mezcladas" && /CLP/.test(i.queFalta) && /USD/.test(i.queFalta)),
+    "hay que DECIR que no se suman, no sumarlas en silencio",
+  );
+
+  const conc = r.insights.find((i) => i.clave.startsWith("concentracion_"));
+  assert.ok(conc, "dentro de CLP sí hay concentración real");
+  assert.match(conc.evidencia, /\$900\.000 de \$1\.000\.000/, "el total es el de SU moneda, no 1.005.000");
+
+  // Ninguna cifra en pesos puede llevar el símbolo de dólares ni al revés.
+  for (const rec of r.recomendaciones) {
+    const suya = [clpGrande, clpChica, enDolares].find((c) => c.id === rec.entidad.id);
+    assert.equal(rec.moneda, suya.gasto.moneda);
+  }
+});
+
+test("BUG-04 · el umbral se niega a existir si le pasan monedas mezcladas", () => {
+  const mezcla = [
+    campana({ id: "a", gasto: clp(100_000), resultados: { cantidad: 20, tipo: "mensajes" } }),
+    campana({ id: "b", gasto: usd(150), resultados: { cantidad: 5, tipo: "mensajes" } }),
+  ];
+  assert.equal(umbralGastoSinResultado(mezcla), null);
+});
+
+test("BUG-04 · una cuenta sin moneda declarada no se convierte en pesos", () => {
+  const anonima = campana({ gasto: { valor: 100_000, moneda: "" }, clics: 400, resultados: null });
+  const r = analizarAds(ctx([anonima]));
+  assert.ok(r.insuficientes.some((i) => i.clave === "moneda_desconocida"));
+  assert.equal(
+    JSON.stringify(r).includes("$100.000"),
+    false,
+    "sin moneda conocida la cifra sale sin símbolo: «100.000», no «$100.000»",
+  );
+});
+
+/* ── BUG-06: la fatiga necesita una caída MATERIAL ────────────────────────── */
+
+test("BUG-06 · un CTR de 2,50% a 2,49% NO es desgaste creativo", () => {
+  const antes = campana({ impresiones: 40_000, clics: 1_000 }); // 2,50%
+  const ahora = campana({ impresiones: 40_000, clics: 996, frecuencia: 4.1 }); // 2,49%
+  const r = analizarAds(ctx([ahora], [antes]));
+  assert.equal(r.recomendaciones.some((x) => x.clave.startsWith("rotar_")), false);
+  const d = r.insights.find((i) => i.clave.startsWith("desgaste_"));
+  assert.ok(d, "la frecuencia alta sí es un hecho y se reporta");
+  assert.match(d.evidencia, /ruido/i);
+  assert.equal(d.tono, "neutro");
+});
+
+test("BUG-06 · una caída material de CTR con frecuencia alta SÍ es desgaste", () => {
+  const antes = campana({ impresiones: 40_000, clics: 1_200 }); // 3,0%
+  const ahora = campana({ impresiones: 40_000, clics: 600, frecuencia: 4.1 }); // 1,5%
+  const r = analizarAds(ctx([ahora], [antes]));
+  assert.ok(r.recomendaciones.some((x) => x.clave.startsWith("rotar_")));
+  assert.equal(r.insights.find((i) => i.clave.startsWith("desgaste_")).tono, "alerta");
+});
+
+test("BUG-06 · sin volumen en el período anterior no se afirma desgaste", () => {
+  const antes = campana({ impresiones: 200, clics: 6 });
+  const ahora = campana({ impresiones: 40_000, clics: 600, frecuencia: 4.1 });
+  const r = analizarAds(ctx([ahora], [antes]));
+  assert.equal(r.recomendaciones.some((x) => x.clave.startsWith("rotar_")), false);
+  assert.match(r.insights.find((i) => i.clave.startsWith("desgaste_")).evidencia, /volumen suficiente/i);
+});
+
+test("BUG-06 · el umbral de materialidad es reemplazable", () => {
+  const antes = campana({ impresiones: 40_000, clics: 1_000 });
+  const ahora = campana({ impresiones: 40_000, clics: 900, frecuencia: 4.1 }); // −10%
+  assert.equal(
+    analizarAds(ctx([ahora], [antes])).recomendaciones.some((x) => x.clave.startsWith("rotar_")),
+    false,
+  );
+  const exigente = analizarAds({ ...ctx([ahora], [antes]), umbrales: { caidaCtrMaterial: 5 } });
+  assert.ok(exigente.recomendaciones.some((x) => x.clave.startsWith("rotar_")));
+});
+
+/* ── BUG-07: no se recomienda tocar lo que está pausado ───────────────────── */
+
+test("BUG-07 · no se propone escalar una campaña pausada", () => {
+  const ahora = campana({ estado: "pausada", gasto: clp(100_000), resultados: { cantidad: 40, tipo: "mensajes" } });
+  const antes = campana({ estado: "pausada", gasto: clp(200_000), resultados: { cantidad: 40, tipo: "mensajes" } });
+  const r = analizarAds(ctx([ahora], [antes]));
+  assert.ok(r.insights.some((i) => i.clave.startsWith("costo_resultado_")), "el hecho se reporta igual");
+  assert.equal(r.recomendaciones.some((x) => x.clave.startsWith("escalar_")), false);
+
+  const viva = analizarAds(ctx([{ ...ahora, estado: "activa" }], [antes]));
+  assert.ok(viva.recomendaciones.some((x) => x.clave.startsWith("escalar_")), "activa sí se puede escalar");
+});
+
+test("BUG-07 · no se propone reducir ni rotar una campaña terminada", () => {
+  const cara = campana({ id: "cara", estado: "terminada", gasto: clp(400_000), resultados: { cantidad: 5, tipo: "mensajes" } });
+  const pares = [1, 2, 3].map((n) =>
+    campana({ id: `p${n}`, gasto: clp(100_000), resultados: { cantidad: 25, tipo: "mensajes" } }),
+  );
+  const r = analizarAds(ctx([cara, ...pares]));
+  assert.ok(r.insights.some((i) => i.clave === "caro_vs_pares_meta|campana|cara"));
+  assert.equal(r.recomendaciones.some((x) => x.clave === "reducir_meta|campana|cara"), false);
+});
+
+test("BUG-07 · estaActiva distingue lo que se puede tocar", () => {
+  assert.equal(estaActiva({ estado: "activa" }), true);
+  assert.equal(estaActiva({ estado: "desconocido" }), true, "sin dato no se asume pausada");
+  assert.equal(estaActiva({ estado: "pausada" }), false);
+  assert.equal(estaActiva({ estado: "terminada" }), false);
 });
 
 test("no se recomienda pausar algo con 3 clics: se declara dato insuficiente", () => {
@@ -423,21 +607,94 @@ const palabra = (nombre, over = {}) => ({
   ...over,
 });
 
-test("NO se propone excluir un término que bloquearía una palabra clave activa", () => {
-  const base = campana({
+const baseBusqueda = () =>
+  campana({
     proveedor: "google",
     objetivo: "Búsqueda",
     resultados: { cantidad: 30, tipo: "conversiones_web" },
     gasto: clp(300_000),
   });
-  const filas = [base, palabra("impresion de planos"), termino("impresion de planos a1")];
+
+test("NO se propone excluir un término que ES una palabra clave activa", () => {
+  const filas = [baseBusqueda(), palabra("impresion de planos"), termino("impresion de planos")];
   const r = analizarAds(ctx(filas));
   assert.equal(
-    r.recomendaciones.some((x) => x.clave === "negativa_impresion de planos a1"),
+    r.recomendaciones.some((x) => x.clave === "negativa_impresion de planos"),
     false,
-    "es exactamente la negativa que dejó ciego un grupo entero en una cuenta real",
+    "excluir el término idéntico a la palabra clave la deja sin servir",
   );
   assert.ok(r.insuficientes.some((i) => i.clave.startsWith("negativa_riesgosa_")));
+});
+
+/* ── BUG-09: el modelo de negativas, no un `includes` ─────────────────────── */
+
+test("BUG-09 · una negativa de UNA palabra avisa qué mataría en concordancia amplia", () => {
+  // El caso real de junio de 2026: la negativa «sublimacion» dejó ciego un
+  // grupo entero. En exacta es segura; en amplia mata «sublimacion textil».
+  const v = evaluarNegativa("sublimacion", ["sublimacion textil", "sublimacion en tazones"]);
+  assert.equal(v.concordancia, "exacta", "solo la exacta no deja sin servir a esas palabras");
+  assert.deepEqual(v.bloqueaEnAmplia, ["sublimacion textil", "sublimacion en tazones"]);
+
+  const filas = [baseBusqueda(), palabra("sublimacion textil"), termino("sublimacion")];
+  const r = analizarAds(ctx(filas));
+  const rec = r.recomendaciones.find((x) => x.clave === "negativa_sublimacion");
+  assert.ok(rec, "se propone, pero acotada");
+  assert.match(rec.que, /concordancia exacta/i);
+  assert.match(rec.porQue, /AMPLIA/);
+  assert.match(rec.porQue, /sublimacion textil/);
+});
+
+test("BUG-09 · un substring que no es una palabra ya NO cuenta como choque", () => {
+  // `"autor".includes("auto")` es true y bloqueaba la propuesta. En Google no
+  // existe ese choque: son dos palabras distintas.
+  assert.equal(negativaBloquea("auto", "frase", "autor de libros"), false);
+  assert.equal(negativaBloquea("impresion", "frase", "impresiones grandes"), false);
+  assert.equal(negativaBloquea("planos", "frase", "impresion de planos"), true);
+
+  const filas = [baseBusqueda(), palabra("autor de libros"), termino("auto usado barato")];
+  const r = analizarAds(ctx(filas));
+  assert.ok(
+    r.recomendaciones.some((x) => x.clave === "negativa_auto usado barato"),
+    "no choca con nada: tiene que proponerse",
+  );
+});
+
+test("BUG-09 · una palabra clave PAUSADA no puede vetar una negativa", () => {
+  const filas = [
+    baseBusqueda(),
+    palabra("sublimacion textil", { estado: "pausada" }),
+    palabra("imprenta chillan"),
+    termino("sublimacion"),
+  ];
+  const r = analizarAds(ctx(filas));
+  const rec = r.recomendaciones.find((x) => x.clave === "negativa_sublimacion");
+  assert.ok(rec, "la pausada no está trayendo tráfico: no se puede cegar");
+  assert.match(rec.que, /concordancia frase/i, "sin palabras activas que choquen, la frase es segura");
+});
+
+test("BUG-09 · las tildes no crean términos nuevos ni choques falsos", () => {
+  assert.deepEqual(tokens("Impresión de Planos A1"), ["impresion", "de", "planos", "a1"]);
+  const filas = [
+    baseBusqueda(),
+    palabra("impresión de planos"),
+    termino("Impresion De Planos", { resultados: { cantidad: 8, tipo: "conversiones_web" } }),
+  ];
+  const r = analizarAds(ctx(filas));
+  assert.equal(
+    r.insights.some((i) => i.clave === "termino_gana_Impresion De Planos"),
+    false,
+    "ya es palabra clave propia, solo cambia la tilde",
+  );
+});
+
+test("BUG-09 · un término ya excluido en la cuenta no se vuelve a proponer", () => {
+  const filas = [
+    baseBusqueda(),
+    palabra("imprenta chillan"),
+    termino("trabajos de imprenta sueldo", { extra: { estadoTermino: "EXCLUDED" } }),
+  ];
+  const r = analizarAds(ctx(filas));
+  assert.equal(r.recomendaciones.some((x) => x.clave.startsWith("negativa_")), false);
 });
 
 test("un término que gasta sin convertir y no choca con nada SÍ se propone excluir", () => {
@@ -545,6 +802,48 @@ test("con todas las señales, el prompt no inventa faltantes", () => {
   assert.doesNotMatch(prompt, /LO QUE HOY NO PODEMOS SABER/);
 });
 
+test("el presupuesto sugerido sale del gasto de la cuenta y de SU moneda", () => {
+  // Decía «entre $2.000 y $10.000» en duro: pesos chilenos escritos a fuego,
+  // que en una cuenta en dólares proponen gastar diez mil dólares al día.
+  const p = panoramaCompleto();
+  const enDolares = {
+    ...p,
+    campanas: [],
+    filasAds: p.filasAds.map((f) =>
+      f.nivel === "campana" ? { ...f, gasto: { ...f.gasto, moneda: "USD" } } : f,
+    ),
+  };
+  const escala = escalaDePresupuesto(enDolares);
+  assert.equal(escala.moneda, "USD");
+  const prompt = promptCopiloto({ pregunta: "créame una campaña", panorama: enDolares, contextoMarca: "", hilo: [] });
+  assert.doesNotMatch(prompt, /\$2\.000|\$10\.000/);
+  assert.match(prompt, /presupuesto diario sugerido entre .*USD y .*USD/);
+});
+
+test("sin gasto observado el prompt prohíbe inventar una cifra de presupuesto", () => {
+  const p = panoramaCompleto();
+  const sinGasto = { ...p, filasAds: [], campanas: [] };
+  assert.equal(escalaDePresupuesto(sinGasto), null);
+  const prompt = promptCopiloto({ pregunta: "créame una campaña", panorama: sinGasto, contextoMarca: "", hilo: [] });
+  assert.match(prompt, /NO sugieras ninguna cifra de presupuesto/);
+});
+
+test("dos monedas a la vez no se suman ni se convierten: no se sugiere presupuesto", () => {
+  // Meta en CLP y Google en USD: una sola cifra ahí sería mentira en las dos.
+  const p = panoramaCompleto();
+  const campanas = p.filasAds.filter((f) => f.nivel === "campana");
+  if (campanas.length >= 2) {
+    const mezcla = {
+      ...p,
+      campanas: [],
+      filasAds: p.filasAds.map((f, i) =>
+        f.nivel === "campana" && i % 2 === 0 ? { ...f, gasto: { ...f.gasto, moneda: "USD" } } : f,
+      ),
+    };
+    assert.equal(escalaDePresupuesto(mezcla), null);
+  }
+});
+
 test("el prompt prohíbe sumar resultados de tipos distintos", () => {
   const prompt = promptCopiloto({ pregunta: "resumen", panorama: panoramaCompleto(), contextoMarca: "", hilo: [] });
   assert.match(prompt, /NO sumes ni compares resultados de tipos distintos/);
@@ -587,23 +886,104 @@ test("la intención de búsqueda se decide con una heurística auditable, no con
   assert.equal(hayIntencionDeBusqueda("Quiero dar a conocer mi marca de ropa nueva"), false);
 });
 
+const pisoCLP = pisoDiarioDe({ moneda: "CLP" });
+
 test("con intención de búsqueda, la mayor parte del presupuesto va a Google", () => {
-  const r = repartirPresupuesto(600_000, ["meta", "google"], true);
+  const r = repartirPresupuesto(clp(600_000), ["meta", "google"], true, pisoCLP);
   const g = r.find((x) => x.canal === "google");
   const m = r.find((x) => x.canal === "meta");
   assert.ok(g.parte > m.parte);
-  assert.equal(g.diario + m.diario, Math.round((600_000 * 0.65) / 30) + Math.round((600_000 * 0.35) / 30));
+  assert.equal(g.diario.valor + m.diario.valor, 600_000 / 30);
+  assert.equal(g.diario.moneda, "CLP", "el diario lleva su moneda, no es un escalar");
 });
 
 test("un presupuesto chico NO se reparte entre dos canales: se concentra", () => {
-  const r = repartirPresupuesto(90_000, ["meta", "google"], true);
+  const r = repartirPresupuesto(clp(90_000), ["meta", "google"], true, pisoCLP);
   assert.equal(r.length, 1, "repartido, cada campaña quedaría bajo el piso y ninguna aprendería nada");
-  assert.ok(r[0].diario >= PISO_DIARIO_CAMPANA);
+  assert.ok(r[0].diario.valor >= pisoCLP.monto.valor);
 });
 
 test("sin presupuesto declarado el plan no inventa un diario", () => {
-  const r = repartirPresupuesto(null, ["meta"], false);
+  const r = repartirPresupuesto(null, ["meta"], false, pisoCLP);
   assert.equal(r[0].diario, null);
+});
+
+/* ── BUG-01: el piso es aprendizaje, no una constante en pesos ────────────── */
+
+test("BUG-01 · un presupuesto sano en dólares NO colapsa a un solo canal", () => {
+  // US$600 al mes = US$20 al día. Con el piso viejo (2.000 «lo que fuera»)
+  // 20 < 2000 y el reparto se concentraba en un canal sin que nadie lo pidiera.
+  const piso = pisoDiarioDe({ moneda: "USD", cpc: { valor: 0.5, moneda: "USD" } });
+  assert.ok(piso, "con CPC observado en USD sí hay piso");
+  assert.equal(piso.monto.moneda, "USD");
+  assert.equal(piso.monto.valor, 0.5 * CLICS_DIARIOS_PARA_APRENDER);
+
+  const r = repartirPresupuesto({ valor: 600, moneda: "USD" }, ["meta", "google"], true, piso);
+  assert.equal(r.length, 2, "US$20 al día alcanza para dos canales: 13 y 7 contra un piso de 4");
+});
+
+test("BUG-01 · un plan en dólares no queda trabado por un piso en pesos", () => {
+  const plan = planBase();
+  plan.moneda = "USD";
+  plan.presupuestoMensual = { valor: 600, moneda: "USD" };
+  plan.campanas[0].presupuestoDiario = { valor: 20, moneda: "USD" };
+  plan.piso = pisoDiarioDe({ moneda: "USD", cpc: { valor: 0.5, moneda: "USD" } });
+  const problemas = revisarPlan(plan);
+  assert.equal(problemas.length, 0, `no debería haber problemas: ${JSON.stringify(problemas)}`);
+});
+
+test("BUG-01 · sin moneda conocida no se exige piso, y no se inventa CLP", () => {
+  assert.equal(pisoDiarioDe({ moneda: MONEDA_DESCONOCIDA }), null);
+  assert.equal(pisoDiarioDe({ moneda: "" }), null);
+  const plan = planBase();
+  plan.moneda = MONEDA_DESCONOCIDA;
+  plan.presupuestoMensual = { valor: 600, moneda: MONEDA_DESCONOCIDA };
+  plan.campanas[0].presupuestoDiario = { valor: 20, moneda: MONEDA_DESCONOCIDA };
+  plan.piso = null;
+  assert.equal(revisarPlan(plan).length, 0);
+  // Y el monto se escribe sin símbolo: «20» no es «$20».
+  assert.equal(formatearMonto({ valor: 20, moneda: MONEDA_DESCONOCIDA }), "20");
+});
+
+test("BUG-01 · el piso observado manda sobre la semilla configurada", () => {
+  const conHistoria = pisoDiarioDe({ moneda: "CLP", cpc: clp(400) });
+  assert.equal(conHistoria.origen, "observado");
+  assert.equal(conHistoria.monto.valor, 400 * CLICS_DIARIOS_PARA_APRENDER);
+  const sinHistoria = pisoDiarioDe({ moneda: "CLP" });
+  assert.equal(sinHistoria.origen, "configurado");
+  assert.equal(sinHistoria.monto.valor, PISOS_DIARIOS_SEMILLA.CLP);
+});
+
+test("BUG-01 · un CPC en otra moneda se ignora: no se inventa tipo de cambio", () => {
+  const p = pisoDiarioDe({ moneda: "CLP", cpc: { valor: 0.5, moneda: "USD" } });
+  assert.equal(p.origen, "configurado", "el CPC en dólares no puede fijar un piso en pesos");
+});
+
+test("BUG-01 · el CPC se calcula por moneda y nunca mezcla monedas", () => {
+  const filas = [
+    { gasto: clp(100_000), clics: 500 },
+    { gasto: { valor: 200, moneda: "USD" }, clics: 100 },
+    { gasto: { valor: 9_999, moneda: MONEDA_DESCONOCIDA }, clics: 9_999 },
+  ];
+  assert.equal(cpcDe(filas, "CLP").valor, 200);
+  assert.equal(cpcDe(filas, "USD").valor, 2);
+  assert.equal(cpcDe(filas, MONEDA_DESCONOCIDA), null);
+  assert.equal(cpcDe(filas, "EUR"), null, "sin filas en esa moneda no hay CPC");
+});
+
+test("BUG-01 · el mínimo por moneda es configuración reemplazable", () => {
+  const s = semillasDeEntorno("USD:5, EUR:4,basura, XXX:0");
+  assert.equal(s.USD, 5);
+  assert.equal(s.EUR, 4);
+  assert.equal(s.CLP, PISOS_DIARIOS_SEMILLA.CLP, "la semilla de fábrica se conserva");
+  assert.equal(s.XXX, undefined, "un piso de cero no es un piso");
+  assert.equal(pisoDiarioDe({ moneda: "USD", semillas: s }).monto.valor, 5);
+});
+
+test("BUG-01 · una moneda sin piso configurado y sin historia no exige nada", () => {
+  assert.equal(pisoDiarioDe({ moneda: "JPY" }), null);
+  const r = repartirPresupuesto({ valor: 90_000, moneda: "JPY" }, ["meta", "google"], true, null);
+  assert.equal(r.length, 2, "no saber el piso no es «está bajo el piso»");
 });
 
 test("el tracking dice lo que NO se va a poder medir", () => {
@@ -629,8 +1009,9 @@ test("los textos se recortan a los límites reales de cada plataforma", () => {
 
 const planBase = () => ({
   objetivoNegocio: "Clientes de derecho laboral en Santiago",
-  presupuestoMensual: 300_000,
+  presupuestoMensual: { valor: 300_000, moneda: "CLP" },
   moneda: "CLP",
+  piso: pisoDiarioDe({ moneda: "CLP" }),
   duracionDias: 30,
   estrategiaCanal: [{ canal: "google", parte: 1, porQue: "Hay búsqueda explícita" }],
   campanas: [
@@ -638,7 +1019,7 @@ const planBase = () => ({
       canal: "google",
       nombre: "Búsqueda · Laboral",
       objetivo: "Búsqueda",
-      presupuestoDiario: 10_000,
+      presupuestoDiario: { valor: 10_000, moneda: "CLP" },
       destino: "sitio_web",
       destinoDetalle: "https://ejemplo.cl",
       conjuntos: [],
@@ -814,4 +1195,162 @@ test("la migración nueva es aditiva y conserva los estados viejos", () => {
     assert.match(sql, new RegExp(`'${estado}'`), `el estado ${estado} tiene que seguir siendo válido`);
   }
   assert.match(sql, /'requiere_conexion'/);
+});
+
+/* ══════════════════════════════════════════════════════════════════════════
+   BUG-08 — QUÉ SON, DE VERDAD, LAS CONVERSIONES DE GOOGLE
+   ══════════════════════════════════════════════════════════════════════════ */
+
+const filaComposicion = (campanaId, categoria, conversiones) => ({
+  campaign: { id: campanaId },
+  segments: { conversionActionCategory: categoria },
+  metrics: { conversions: conversiones },
+});
+
+test("BUG-08 · segmentar por acción de conversión NO duplica gasto ni clics", () => {
+  // Tres categorías para la MISMA campaña. Si la composición se hubiera pedido
+  // como un segmento de la consulta principal, Google habría devuelto tres
+  // filas y el agrupador habría triplicado el gasto.
+  const composicion = composicionDesdeFilas([
+    filaComposicion("g-1", "PURCHASE", 10),
+    filaComposicion("g-1", "PHONE_CALL_LEAD", 3),
+    filaComposicion("g-1", "SUBMIT_LEAD_FORM", 2),
+  ]);
+  const fila = {
+    proveedor: "google",
+    nivel: "campana",
+    id: "g-1",
+    nombre: "Búsqueda",
+    estado: "activa",
+    impresiones: 9_800,
+    clics: 451,
+    gasto: clp(52_300),
+    resultados: { cantidad: 15, tipo: "desconocido" },
+  };
+  const [fusionada] = fusionarComposicion([fila], composicion);
+
+  assert.equal(fusionada.gasto.valor, 52_300, "el gasto no se toca");
+  assert.equal(fusionada.clics, 451);
+  assert.equal(fusionada.impresiones, 9_800);
+  assert.equal(fusionada.resultados.cantidad, 15, "la cantidad buena es la de la consulta sin segmentar");
+});
+
+test("BUG-08 · la consulta de composición no pide costo, clics ni impresiones", () => {
+  const q = gaqlComposicion({ desde: "2026-08-01", hasta: "2026-08-30" });
+  assert.match(q, /segments\.conversion_action_category/);
+  assert.match(q, /metrics\.conversions/);
+  for (const prohibido of ["cost_micros", "metrics.clicks", "metrics.impressions"]) {
+    assert.equal(q.includes(prohibido), false, `${prohibido} no puede viajar en la consulta segmentada`);
+  }
+});
+
+test("BUG-08 · una cuenta que mide llamadas no se rotula «conversiones del sitio»", () => {
+  const c = composicionDesdeFilas([
+    filaComposicion("g-1", "PHONE_CALL_LEAD", 40),
+    filaComposicion("g-1", "PURCHASE", 2),
+  ]);
+  const lectura = leerComposicion(c.get("g-1").porCategoria);
+  assert.equal(lectura.tipo, "llamadas");
+  assert.match(lectura.desglose, /phone_call_lead/);
+});
+
+test("BUG-08 · conversiones de varios tipos son una MEZCLA y no se comparan", () => {
+  const c = composicionDesdeFilas([
+    filaComposicion("g-1", "PURCHASE", 10),
+    filaComposicion("g-1", "PHONE_CALL_LEAD", 10),
+  ]);
+  const lectura = leerComposicion(c.get("g-1").porCategoria);
+  assert.equal(lectura.tipo, "mezcla");
+  assert.equal(
+    sonComparables({ cantidad: 20, tipo: "mezcla" }, { cantidad: 20, tipo: "mezcla" }),
+    false,
+    "media venta y media llamada no tienen costo por resultado",
+  );
+  assert.equal(sumarResultados([{ cantidad: 5, tipo: "mezcla" }, { cantidad: 5, tipo: "mezcla" }]), null);
+  assert.equal(
+    sumarResultados([{ cantidad: 5, tipo: "mezcla" }, { cantidad: 5, tipo: "compras" }]).cantidad,
+    5,
+    "la mezcla se descarta del total, igual que un desconocido: no se suma a las compras",
+  );
+});
+
+test("BUG-08 · dos categorías que miden lo mismo NO son una mezcla", () => {
+  const c = composicionDesdeFilas([
+    filaComposicion("g-1", "SUBMIT_LEAD_FORM", 10),
+    filaComposicion("g-1", "REQUEST_QUOTE", 10),
+  ]);
+  assert.equal(leerComposicion(c.get("g-1").porCategoria).tipo, "leads");
+});
+
+test("BUG-08 · sin composición disponible el rótulo es honesto, no «web»", () => {
+  const fila = {
+    proveedor: "google",
+    nivel: "campana",
+    id: "g-1",
+    nombre: "Búsqueda",
+    gasto: clp(50_000),
+    impresiones: 100,
+    clics: 10,
+    resultados: { cantidad: 15, tipo: "desconocido" },
+  };
+  const [igual] = fusionarComposicion([fila], new Map());
+  assert.equal(igual.resultados.tipo, "desconocido");
+  assert.equal(
+    sonComparables(igual.resultados, { cantidad: 15, tipo: "conversiones_web" }),
+    false,
+    "no sabemos qué mide: no se compara con nada",
+  );
+  // Y el proveedor ya no escribe «conversiones_web» a ciegas.
+  assert.equal(
+    /tipo: "conversiones_web" as const/.test(codigo("lib/ads/google.ts")),
+    false,
+  );
+});
+
+test("BUG-08 · las acciones blandas de Google se reconocen y se pesan", () => {
+  assert.ok(CATEGORIAS_BLANDAS.has("PAGE_VIEW"));
+  assert.equal(tipoDeCategoria("PAGE_VIEW"), "desconocido");
+  assert.equal(tipoDeCategoria("GET_DIRECTIONS"), "desconocido");
+  assert.equal(tipoDeCategoria("PURCHASE"), "compras");
+  assert.equal(tipoDeCategoria("UNA_CATEGORIA_QUE_GOOGLE_INVENTE_MAÑANA"), "desconocido");
+
+  const c = composicionDesdeFilas([
+    filaComposicion("g-1", "PAGE_VIEW", 400),
+    filaComposicion("g-1", "PURCHASE", 28),
+  ]);
+  const lectura = leerComposicion(c.get("g-1").porCategoria);
+  assert.ok(lectura.parteBlanda > 0.9, "428 «conversiones» que son casi todas vistas de página");
+  assert.equal(lectura.tipo, "desconocido", "no es una cuenta que mida compras");
+});
+
+test("BUG-08 · la composición nunca reemplaza la cantidad de conversiones", () => {
+  // Si Google reparte distinto entre la consulta segmentada y la principal, la
+  // que manda es la principal: es la que no pasó por ningún segmento.
+  const c = composicionDesdeFilas([filaComposicion("g-1", "PURCHASE", 99)]);
+  const fila = {
+    proveedor: "google",
+    nivel: "campana",
+    id: "g-1",
+    nombre: "X",
+    gasto: clp(1_000),
+    impresiones: 1,
+    clics: 1,
+    resultados: { cantidad: 15, tipo: "desconocido" },
+  };
+  assert.equal(fusionarComposicion([fila], c)[0].resultados.cantidad, 15);
+});
+
+test("BUG-08 · el mapa cubre el enum ConversionActionCategory completo de v25", () => {
+  // Copiado de la referencia de campos de v25 (segments.conversion_action_category).
+  const ENUM_V25 = [
+    "ADD_TO_CART", "BEGIN_CHECKOUT", "BOOK_APPOINTMENT", "CONTACT", "CONVERTED_LEAD",
+    "DEFAULT", "DOWNLOAD", "ENGAGEMENT", "GET_DIRECTIONS", "IMPORTED_LEAD",
+    "OUTBOUND_CLICK", "PAGE_VIEW", "PHONE_CALL_LEAD", "PURCHASE", "QUALIFIED_LEAD",
+    "REQUEST_QUOTE", "SIGNUP", "STORE_SALE", "STORE_VISIT", "SUBMIT_LEAD_FORM",
+    "SUBSCRIBE_PAID", "UNKNOWN", "UNSPECIFIED", "YOUTUBE_FOLLOW_ON_VIEWS",
+  ];
+  const sinClasificar = ENUM_V25.filter(
+    (c) => tipoDeCategoria(c) === "desconocido" && !CATEGORIAS_BLANDAS.has(c) && !["UNKNOWN", "UNSPECIFIED"].includes(c),
+  );
+  assert.deepEqual(sinClasificar, [], "una categoría del enum sin decisión explícita es un hueco, no un default");
 });

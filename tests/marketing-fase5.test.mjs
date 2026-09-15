@@ -223,9 +223,25 @@ test("el aviso de fuga no registra el identificador del otro negocio", () => {
 
 test("no se le echa la culpa al plan de algo que es de la instalación", () => {
   const textos = [
-    motivoSinPublicidad({ puedeConectarMeta: false, metaConectada: false, metaFaltaElegirCuenta: false }),
-    motivoSinPublicidad({ puedeConectarMeta: true, metaConectada: false, metaFaltaElegirCuenta: false }),
-    motivoSinPublicidad({ puedeConectarMeta: true, metaConectada: true, metaFaltaElegirCuenta: false }, "limite_api"),
+    motivoSinPublicidad({ puedeConectarMeta: false, puedeConectarGoogle: false, metaConectada: false, metaFaltaElegirCuenta: false, hayCanalConectado: false, canales: [] }),
+    motivoSinPublicidad({ puedeConectarMeta: true, puedeConectarGoogle: false, metaConectada: false, metaFaltaElegirCuenta: false, hayCanalConectado: false, canales: [] }),
+    motivoSinPublicidad({ puedeConectarMeta: true, puedeConectarGoogle: false, metaConectada: true, metaFaltaElegirCuenta: false, hayCanalConectado: true, canales: [] }, "limite_api"),
   ];
   for (const t of textos) assert.doesNotMatch(t, /tu plan|plan contratado/i, t);
+});
+
+
+test("el objetivo que escribe la persona viaja delimitado en el prompt del Arquitecto", () => {
+  // Estaba pegado suelto debajo del bloque de seguridad, así que el único
+  // texto libre del usuario era justo el que no tenía marcadores.
+  const src = leer("lib/marketing/arquitecto.ts");
+  const i = src.indexOf("${pedido.objetivo}");
+  assert.ok(i > 0, "el prompt inyecta el objetivo de la persona");
+  const abre = src.lastIndexOf("<<<PEDIDO>>>", i);
+  const cierra = src.indexOf("<<<FIN PEDIDO>>>", i);
+  assert.ok(abre !== -1 && cierra !== -1 && abre < i && i < cierra, "va dentro de un bloque PEDIDO");
+  // Y la instrucción de seguridad distingue los dos bloques: el del negocio es
+  // material, el de la persona es una instrucción, pero solo sobre el anuncio.
+  assert.match(src, /<<<PEDIDO>>>[\s\S]*?solo sobre EL ANUNCIO/i);
+  assert.match(src, /no puede cambiar tu formato\s*\n?\s*de salida/i);
 });

@@ -89,7 +89,11 @@ export type FichaClasificada = FichaConocimiento & {
 /* ── Señales, casi todas sobre el TÍTULO ──────────────────────────────────── */
 
 const VOZ_T = /\b(c[óo]mo escribimos|c[óo]mo hablamos|tono|voz de la marca|modismos|vocabulario|c[óo]mo nombran|estilo de escritura)\b/i;
-const MECANICA_T = /\b(cupos?|excedentes?|costos? de|cuenta como|c[óo]mo se (cobra|factura)|facturaci[óo]n|l[íi]mite mensual|renovaci[óo]n)\b/i;
+/**
+ * Mecánica INEQUÍVOCA: expresiones que solo aparecen en la letra chica de un
+ * plan. Ninguna de estas nombra jamás algo que un cliente pida por su nombre.
+ */
+const MECANICA_T = /\b(cupos?|excedentes?|costos? de|cuenta como|c[óo]mo se (cobra|factura)|l[íi]mite mensual|renovaci[óo]n)\b/i;
 const OFERTA_T = /\b(prueba de \d+|prueba gratis|gratis|sin costo|descuento|promoci[óo]n|oferta|pack|combo|2x1|garant[íi]a|instalaci[óo]n incluida|primera (sesi[óo]n|consulta|hora))\b/i;
 const PRUEBA_T = /\b(resultados?|casos?|testimoni|rese[ñn]as?|proveedor t[ée]cnico|certificad|acreditad|premios?|desde \d{4}|experiencia)\b/i;
 const PROBLEMA_T = /\b(el problema|qu[ée] resolvemos|el dolor|por qu[ée] se pierde|se pierden? ventas)\b/i;
@@ -100,6 +104,98 @@ const OPERACION_T =
   /\b(horarios?|ubicaci[óo]n|direcci[óo]n|contacto|sucursales|transferencia|abono|despacho|retiro|devoluciones|c[óo]mo cotizar|c[óo]mo se cierra|c[óo]mo trabajar|qu[ée] datos pedir|qu[ée] preguntar|qu[ée] se puede responder|qu[ée] necesita .* para partir|aprendizajes|motivos de postventa|pol[íi]ticas?)\b/i;
 const CAPACIDAD_T =
   /\b(agenda|reservas?|cobrar|cobros?|pagos?|panel|bandeja|reportes?|m[ée]tricas|integraci[óo]n|conexi[óo]n con|avisos?|recordatorios?|seguimiento|derivaci[óo]n|canales?|l[íi]mites|automatiza)\b/i;
+
+/* ── Proceso o cosa: lo decide la FORMA del título ────────────────────────
+ *
+ * ⚠️ EL DEFECTO QUE ESTO ARREGLA: `facturaci[óo]n` estaba suelta dentro de
+ * MECANICA_T, así que a una empresa que VENDE software de facturación se le
+ * clasificaba su producto principal como «mecánica de cobro» y quedaba vetado
+ * para siempre: «Software de Facturación Electrónica» caía en el mismo saco
+ * que «Cómo funciona la facturación».
+ *
+ * La palabra sola no puede decidir, porque nombra las dos cosas. Lo que decide
+ * es la FORMA en que está redactado el título:
+ *
+ *   PROCESO  «cómo funciona la facturación», «cuándo se emite la boleta», «la
+ *            facturación de los excedentes» → se explica, no se compra.
+ *   COSA     «Software de facturación electrónica», «Plataforma de cobranza»
+ *            → un sintagma nominal que nombra una entidad.
+ *
+ * Y si no hay ninguna de las dos formas, no se veta por la sola palabra: eso
+ * era exactamente el defecto. Nada de esto mira marcas ni clientes: mira
+ * sintaxis.
+ * ───────────────────────────────────────────────────────────────────────── */
+
+/** Sustantivos que nombran a la vez un proceso del negocio y el dominio de un producto. */
+const DOMINIO_COBRO_FUENTE = "facturaci[óo]n|cobranzas?|cobros?|boletas?|facturas?|emisi[óo]n";
+const DOMINIO_COBRO = new RegExp(`\\b(?:${DOMINIO_COBRO_FUENTE})\\b`, "i");
+
+/** El título ABRE como una explicación: lo que sigue es un procedimiento. */
+const ABRE_EXPLICACION = /^\s*[¿]?\s*(c[óo]mo|cu[áa]ndo|cu[áa]nto|qu[ée] pasa|por qu[ée]|en qu[ée]|d[óo]nde|qui[ée]n|cu[áa]l)\b/i;
+
+/** Impersonal con «se»: la marca gramatical de que se describe un proceso, no una cosa. */
+const VERBO_IMPERSONAL =
+  /\bse\s+(cobra|cobran|factura|facturan|emite|emiten|renueva|renuevan|paga|pagan|calcula|calculan|descuenta|descuentan|vence|vencen|acumula|acumulan)\b/i;
+
+/** Artículo + sustantivo + preposición: «la facturación DE los excedentes» es el proceso. */
+const MARCO_DEL_PROCESO = new RegExp(`\\b(?:el|la|los|las)\\s+(?:${DOMINIO_COBRO_FUENTE})\\s+(?:de|del|por|en)\\b`, "i");
+
+/**
+ * Sustantivos con que cualquier rubro encabeza el nombre de lo que vende.
+ *
+ * Se exigen ADELANTE, como cabeza del sintagma: así «Software de facturación»
+ * nombra un producto y «Avisos de pedido y conexión con el sistema del
+ * negocio» sigue siendo una capacidad y no un producto llamado «sistema».
+ */
+const NUCLEO_PRODUCTO =
+  /^\s*(?:(?:el|la|los|las|un|una|unos|unas|nuestro|nuestra|nuestros|nuestras)\s+)?(software|sistemas?|plataformas?|aplicaci[óo]n|app|servicios?|m[óo]dulos?|erp|crm|portal|programa|soluci[óo]n|herramientas?|suite|licencias?)\b/i;
+
+/** ¿Está redactado como la explicación de un procedimiento? */
+function esFormaDeProceso(t: string): boolean {
+  return ABRE_EXPLICACION.test(t) || VERBO_IMPERSONAL.test(t) || MARCO_DEL_PROCESO.test(t);
+}
+
+/**
+ * La palabra del dominio escrita en mayúscula SIN ser la primera del título es
+ * un nombre propio, no un proceso: «Software de Facturación Electrónica».
+ */
+function dominioComoNombrePropio(t: string): boolean {
+  const re = new RegExp(`\\b(?:${DOMINIO_COBRO_FUENTE})\\b`, "gi");
+  for (let m = re.exec(t); m; m = re.exec(t)) {
+    const inicial = m[0][0];
+    if (m.index > 0 && inicial === inicial.toUpperCase() && inicial !== inicial.toLowerCase()) return true;
+  }
+  return false;
+}
+
+/**
+ * ¿El título NOMBRA una cosa que se compra?
+ *
+ * La forma de explicación manda sobre todo lo demás: «Cómo funciona el
+ * software de facturación» sigue siendo una explicación aunque adentro
+ * aparezca un sustantivo de producto.
+ */
+function nombraUnaCosa(t: string): boolean {
+  if (esFormaDeProceso(t)) return false;
+  return NUCLEO_PRODUCTO.test(t) || dominioComoNombrePropio(t);
+}
+
+/**
+ * ¿Este título es mecánica de cobro?
+ *
+ * Fuente única para el clasificador y para el filtro del mostrador: los dos
+ * vetaban «facturación» por su cuenta, y arreglar uno solo habría dejado al
+ * producto bien clasificado pero igual descartado como nombre.
+ */
+export function esMecanicaDeCobro(titulo: string): boolean {
+  const t = (titulo ?? "").trim();
+  // Un título que NOMBRA una cosa nunca es mecánica, aunque use su vocabulario:
+  // «Plataforma de cobranza» y «Sistema de renovación» son lo que se vende.
+  if (nombraUnaCosa(t)) return false;
+  if (MECANICA_T.test(t)) return true;
+  if (!DOMINIO_COBRO.test(t)) return false;
+  return esFormaDeProceso(t);
+}
 
 const DINERO = /\$\s?\d|\b\d{1,3}\.\d{3}\b|\bUF\s?\d/;
 /** Un catálogo enumera: comas encadenadas, o varias líneas «Nombre — …». */
@@ -155,8 +251,10 @@ export function clasificarFicha(f: FichaConocimiento): FichaClasificada {
   if (cat === "faq" || /[?¿]/.test(t)) return con("faq", "alta", "es una pregunta frecuente");
 
   // 3. Mecánica de cobro. Acá cae «Cupos y qué cuenta como una conversación»,
-  //    que es lo que antes encabezaba la lista de productos.
-  if (MECANICA_T.test(t)) return con("mecanica", "alta", "explica cómo se cobra, no qué se vende");
+  //    que es lo que antes encabezaba la lista de productos. Y acá NO cae
+  //    «Software de facturación electrónica», que antes sí caía por traer la
+  //    palabra «facturación» sin que nadie mirara la forma del título.
+  if (esMecanicaDeCobro(t)) return con("mecanica", "alta", "explica cómo se cobra, no qué se vende");
 
   // 4. Oferta: una propuesta concreta en el título, no la palabra «precio».
   if (OFERTA_T.test(t)) return con("oferta", "alta", "anuncia una propuesta comercial concreta");
@@ -193,6 +291,14 @@ export function clasificarFicha(f: FichaConocimiento): FichaClasificada {
   //     más débil que tenemos.
   if (CAPACIDAD_T.test(t)) return con("capacidad", "alta", "describe una funcionalidad");
 
+  // 12b. Un sintagma nominal encabezado por un sustantivo de producto NOMBRA
+  //      algo que se compra: «Software de facturación electrónica», «Plataforma
+  //      de cobranza automática». Va después de las señales explícitas y antes
+  //      de cualquier descarte por carpeta, porque es evidencia del título.
+  if (nombraUnaCosa(t) && !esPregunta(t)) {
+    return con("catalogo", "media", "el título nombra un producto o servicio que se vende");
+  }
+
   // 13. Carpeta operativa, sin señal en el título.
   if (CAT_OPERATIVAS.includes(cat)) return con("operacion", "media", "está archivada como información operativa");
 
@@ -226,7 +332,7 @@ export type Veredicto = { sirve: true } | { sirve: false; motivo: string };
 const NO_ES_NOMBRE: { re: RegExp; m: string }[] = [
   { re: /\b(pol[íi]tica|t[ée]rminos|condiciones|reglamento|instructivo|manual|preguntas frecuentes|faq)\b/i, m: "es un documento, no un producto" },
   { re: /\b(horarios?|ubicaci[óo]n|contacto|sucursales)\b/i, m: "es información operativa" },
-  { re: /\b(cupos?|excedentes?|cuenta como|facturaci[óo]n)\b/i, m: "es mecánica de cobro" },
+  { re: /\b(cupos?|excedentes?|cuenta como)\b/i, m: "es mecánica de cobro" },
   { re: /^(c[óo]mo|qu[ée]|cu[áa]ndo|d[óo]nde|por qu[ée]|cu[áa]nto)\b/i, m: "está redactado como explicación" },
   { re: /\s(y qu[ée]|y c[óo]mo)\s/i, m: "es una frase, no el nombre de un producto" },
   { re: /:/, m: "es un encabezado de sección" },
@@ -249,6 +355,11 @@ export function candidatoComercial(texto: string): Veredicto {
   if (/\.\s/.test(t)) return { sirve: false, motivo: "son varias oraciones" };
   if (t.split(" ").length > 8) return { sirve: false, motivo: "es una frase, no un nombre" };
   for (const { re, m } of NO_ES_NOMBRE) if (re.test(t)) return { sirve: false, motivo: m };
+  // La palabra «facturación» estaba en la lista de arriba y vetaba el producto
+  // de quien vende software de facturación. Acá se pregunta por la FORMA: se
+  // descarta «la facturación de los excedentes», no «Software de Facturación
+  // Electrónica».
+  if (esMecanicaDeCobro(t)) return { sirve: false, motivo: "es mecánica de cobro" };
   return { sirve: true };
 }
 

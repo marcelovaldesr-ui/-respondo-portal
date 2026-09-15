@@ -109,6 +109,16 @@ export type TipoResultado =
   | "compras"
   /** Llamadas telefónicas. */
   | "llamadas"
+  /**
+   * Varias clases de acción a la vez, sin ninguna dominante.
+   *
+   * Es el caso normal de una cuenta de Google que mide compras, llamadas y
+   * formularios en la misma campaña: `metrics.conversions` los suma en un solo
+   * número. Antes eso se rotulaba «conversiones del sitio» y se comparaba con
+   * cualquier cosa. Una mezcla NO se compara con nada, igual que `desconocido`:
+   * la diferencia es que acá sí sabemos de qué está hecha y se puede mostrar.
+   */
+  | "mezcla"
   /** La plataforma reporta un resultado que no supimos clasificar. */
   | "desconocido";
 
@@ -118,6 +128,7 @@ export const ETIQUETA_RESULTADO: Record<TipoResultado, string> = {
   conversiones_web: "Conversiones del sitio",
   compras: "Compras",
   llamadas: "Llamadas",
+  mezcla: "Conversiones de varios tipos",
   desconocido: "Resultados",
 };
 
@@ -135,7 +146,13 @@ export type Resultado = {
  */
 export function sonComparables(a: Resultado | null | undefined, b: Resultado | null | undefined): boolean {
   if (!a || !b) return false;
+  /**
+   * `mezcla` es tan incomparable como `desconocido`: una campaña cuyas
+   * conversiones son mitad compras y mitad clics no tiene un costo por
+   * resultado que signifique algo.
+   */
   if (a.tipo === "desconocido" || b.tipo === "desconocido") return false;
+  if (a.tipo === "mezcla" || b.tipo === "mezcla") return false;
   return a.tipo === b.tipo;
 }
 
@@ -145,7 +162,7 @@ export function sonComparables(a: Resultado | null | undefined, b: Resultado | n
  * un «—» honesto a un total inventado.
  */
 export function sumarResultados(rs: (Resultado | null | undefined)[]): Resultado | null {
-  const validos = rs.filter((r): r is Resultado => Boolean(r) && r!.tipo !== "desconocido");
+  const validos = rs.filter((r): r is Resultado => Boolean(r) && r!.tipo !== "desconocido" && r!.tipo !== "mezcla");
   if (!validos.length) return null;
   const tipo = validos[0].tipo;
   if (validos.some((r) => r.tipo !== tipo)) return null;

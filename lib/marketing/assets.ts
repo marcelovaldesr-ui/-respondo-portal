@@ -2,7 +2,7 @@ import { db } from "@/lib/db";
 import { exigirId, leerColumnas, soloDe } from "@/lib/marketing/tenant";
 import { PREFIJO, rutaDeImagen, rutaEsDelCliente, urlDeImagen } from "@/lib/marketing/imagenes";
 import { avisoDeProporcion, validarImagen } from "@/lib/marketing/assetsCore";
-import type { FormatoCreatividad } from "@/lib/marketing/tipos";
+import type { FormatoCreatividad, PlataformaCreatividad } from "@/lib/marketing/tipos";
 import { traducirFalla } from "@/lib/marketing/fallas";
 
 /**
@@ -29,6 +29,8 @@ export async function subirPieza(
   clienteId: string,
   bytes: Uint8Array,
   formato: FormatoCreatividad,
+  /** La plataforma que eligió la persona: decide a quién nombra el aviso de recorte. */
+  plataforma?: PlataformaCreatividad,
 ): Promise<ResultadoSubida> {
   exigirId(clienteId);
 
@@ -82,7 +84,7 @@ export async function subirPieza(
     url: urlDeImagen(puntero) ?? "",
     ancho: v.ancho,
     alto: v.alto,
-    aviso: avisoDeProporcion(v.ancho, v.alto, formato),
+    aviso: avisoDeProporcion(v.ancho, v.alto, formato, plataforma),
   };
 }
 

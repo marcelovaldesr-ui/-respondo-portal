@@ -13,6 +13,8 @@ import { detectarSenales, profundidadDe } from "@/lib/ads/senales";
 import { armarEmbudoAdaptativo } from "@/lib/marketing/embudoAdaptativo";
 import { listarCreatividades } from "@/lib/marketing/creatividades";
 import { capacidadesDe } from "@/lib/marketing/capacidades";
+import { monedaDelNegocio, retornoComparable } from "@/lib/marketing/monedaNegocio";
+import { MONEDA_DESCONOCIDA, normalizarMoneda } from "@/lib/ads/moneda";
 import { panoramaDemo, type VarianteDemo } from "@/lib/marketing/demo";
 import type {
   Creatividad,
@@ -80,7 +82,19 @@ export async function cargarMarketing(
    * acá: los pide la pantalla que los muestra. Traerlos en cada carga del
    * inicio sería pagar cinco consultas para dibujar seis KPI.
    */
-  const [pauta, personas, estado, rendimiento, rendimientoAntes, creatividades, borradores, capacidades, canalesAhora, canalesAntes] =
+  const [
+    pauta,
+    personas,
+    estado,
+    rendimiento,
+    rendimientoAntes,
+    creatividades,
+    borradores,
+    capacidades,
+    canalesAhora,
+    canalesAntes,
+    monedaNegocio,
+  ] =
     await Promise.all([
       cargarPauta(clienteId, rango),
       personasDeAnuncios(clienteId, rango),
@@ -92,6 +106,7 @@ export async function cargarMarketing(
       capacidadesDe(clienteId),
       rendimientoMulticanal(clienteId, rango, ["campana"]),
       rendimientoMulticanal(clienteId, anterior, ["campana"]),
+      monedaDelNegocio(clienteId),
     ]);
 
   /**
@@ -120,7 +135,12 @@ export async function cargarMarketing(
     );
   }
   const filasMeta: RendimientoAnuncio[] = rendimiento.ok ? rendimiento.datos : [];
-  const moneda = filasMeta[0]?.gasto.moneda ?? "CLP";
+  /**
+   * ⚠️ Sin `?? "CLP"`. Si Meta no devolvió la moneda de la cuenta, la respuesta
+   * correcta es «no se sabe» y la cifra sale sin símbolo. Escribir CLP hacía
+   * que una cuenta en dólares mostrara «$50» sobre US$50.
+   */
+  const moneda = normalizarMoneda(filasMeta[0]?.gasto.moneda);
 
   /* ── Meta por anuncio y por día ─────────────────────────────────────────── */
   const metaPorAnuncio = new Map<
@@ -188,6 +208,8 @@ export async function cargarMarketing(
       url: f.url,
       imagenUrl: null,
       gasto: m ? m.gasto : null,
+      // Sin fila de Meta no hay gasto y por lo tanto tampoco moneda del gasto.
+      moneda: m ? moneda : MONEDA_DESCONOCIDA,
       impresiones: m ? m.impresiones : null,
       clics: m ? m.clics : null,
       conversaciones: f.conversaciones,
@@ -337,7 +359,13 @@ export async function cargarMarketing(
    * los cobros en pesos, la columna ROAS mostraba un número inventado —y peor,
    * uno enorme— junto a un KPI que decía «—».
    */
-  const mismaMoneda = moneda === "CLP";
+  /**
+   * ⚠️ Acá decía `moneda === "CLP"`: comparaba la moneda de la cuenta
+   * publicitaria contra la cadena «CLP» en vez de contra la moneda del negocio.
+   * En una instalación que cobre en otra moneda eso apagaba el retorno para
+   * todos, o —peor— lo encendía cuando no correspondía.
+   */
+  const mismaMoneda = retornoComparable(moneda, monedaNegocio);
   const campanas = [...porCampana.values()].map((c) => ({
     ...c,
     costoPorConversacion: c.gasto !== null && c.conversaciones ? c.gasto / c.conversaciones : null,
@@ -489,7 +517,13 @@ export async function cargarMarketing(
   return {
     rango,
     demo: false,
-    monedaNegocio: "CLP",
+    /**
+     * ⚠️ Acá decía `"CLP"` en duro. La moneda en que cobra el negocio es una
+     * configuración suya —`ed_clientes.moneda`, migración 311— y no un hecho
+     * del código: con el valor fijo, una tabla de anuncios de una cuenta en
+     * dólares rotulaba «$50» sobre US$50.
+     */
+    monedaNegocio,
     capacidades: { ...capacidades, puedeGuardar: creatividades.disponible && borradores.disponible },
     metaConectada,
     errorPublicidad,

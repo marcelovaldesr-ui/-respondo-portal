@@ -19,8 +19,8 @@ import { Ico } from "@/components/marketing/Iconos";
  * DECISIONES DE LECTURA:
  *   · La primera columna es una ficha, no un texto: nombre, estado y objetivo
  *     juntos, porque nadie lee «Activa» en una columna a 400 px del nombre.
- *   · Las columnas de plata muestran «—» cuando Meta no está conectada, nunca
- *     un 0 que parece un dato.
+ *   · Las columnas de plata muestran «—» cuando ninguna plataforma entregó
+ *     cifras, nunca un 0 que parece un dato.
  *   · La tendencia es una chispa de siete días: ocupa 60 px y responde la
  *     pregunta que sigue a cualquier cifra —«¿y va subiendo?»—.
  *   · Los borradores conviven con las campañas reales porque para el dueño
@@ -42,7 +42,7 @@ export default function TablaCampanas({
   filas,
   monedaNegocio,
   periodo,
-  metaConectada,
+  hayPublicidad,
   puedeConectarMeta,
   motivoSinPublicidad,
   series,
@@ -52,7 +52,12 @@ export default function TablaCampanas({
   filas: FilaCampana[];
   monedaNegocio: string;
   periodo: string;
-  metaConectada: boolean;
+  /**
+   * ¿Hay ALGUNA plataforma publicitaria leyendo? Era `metaConectada`, y con
+   * solo Google conectado valía false: la tabla daba por hecho que no había
+   * publicidad y ofrecía conectar una cuenta que el negocio ya tenía.
+   */
+  hayPublicidad: boolean;
   /** Si la instalación siquiera permite conectar una cuenta publicitaria. */
   puedeConectarMeta: boolean;
   /** Por qué no hay cifras de publicidad, ya escrito para el dueño. */
@@ -183,7 +188,9 @@ export default function TablaCampanas({
           <p className="vacio-texto">
             {filas.length
               ? "Prueba con otro filtro o con otro texto."
-              : "Cuando alguien entre a WhatsApp desde un anuncio, su campaña aparece acá con su costo y su resultado."}
+              : senales.conversaciones
+                ? "Cuando alguien entre a WhatsApp desde un anuncio, su campaña aparece acá con su costo y su resultado."
+                : "Cuando tu cuenta publicitaria reporte campañas con actividad, aparecen acá con su costo y su resultado."}
           </p>
           {!filas.length && (
             <Link href="/marketing/campanas/nueva" className="btn-primario mk-btn-lg mt-5">
@@ -309,11 +316,11 @@ export default function TablaCampanas({
         </div>
       )}
 
-      {!metaConectada && filas.some((c) => c.origen === "atribucion") && (
+      {!hayPublicidad && filas.some((c) => c.origen === "atribucion") && (
         <PieSinPublicidad
           texto={`Sin cifras de tu cuenta publicitaria cada anuncio aparece como su propia fila y no se ve el gasto. ${motivoSinPublicidad}`}
           puedeConectar={puedeConectarMeta}
-          metaConectada={metaConectada}
+          hayPublicidad={hayPublicidad}
         />
       )}
     </section>

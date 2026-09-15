@@ -185,19 +185,42 @@ async function guardar(clienteId: string, contexto: ContextoComercial, id?: stri
 /**
  * El contexto del negocio, listo para usar.
  *
- * `refrescar` fuerza la reconstrucción. Se usa cuando la persona cambió su
- * conocimiento y quiere que el Estudio lo note, y desde «contexto usado».
+ * ═══════════════════════════════════════════════════════════════════════════
+ * TRES NIVELES, Y LA DIFERENCIA IMPORTA
+ *
+ *   (nada)         → usa lo guardado; reconstruye solo si no hay nada.
+ *   `refrescar`    → reconstruye, PERO respeta una corrección manual. Es el
+ *                    botón normal: «leí una ficha nueva, míratela».
+ *   `reconstruir`  → reconstruye aunque esté editado. Lo pide la persona a
+ *                    sabiendas y nunca pasa solo.
+ *
+ * ⚠️ POR QUÉ HIZO FALTA EL TERCERO
+ *
+ * La regla era `if (fila?.documento && (!opciones.refrescar || editado))`: una
+ * vez que alguien corregía el contexto a mano, `refrescar` quedaba ignorado
+ * PARA SIEMPRE. La intención —no pisar el trabajo de una persona con una
+ * reconstrucción automática— es correcta y se conserva. Lo que estaba mal es
+ * que no hubiera ninguna salida: un negocio que cambió su catálogo entero
+ * quedaba atrapado con un contexto obsoleto y la única forma de arreglarlo era
+ * entrar a la base de datos.
+ *
+ * Y la salida no borra el trabajo de la persona: `reconstruir` vuelve a leer
+ * las fichas y REAPLICA encima las correcciones que ella había guardado, así
+ * que lo que ella escribió sigue mandando —es `declarado`, la fuente de más
+ * autoridad— sobre un cimiento al día. Lo que se pierde no es su texto: es la
+ * parte vieja que ella nunca tocó, que es justo lo que quería actualizar.
+ * ═══════════════════════════════════════════════════════════════════════════
  */
 export async function contextoComercial(
   clienteId: string,
-  opciones: { demo?: boolean; refrescar?: boolean } = {},
+  opciones: { demo?: boolean; refrescar?: boolean; reconstruir?: boolean } = {},
 ): Promise<ContextoGuardado> {
   if (opciones.demo) {
     return { contexto: contextoComercialDemo(), actualizadoEn: null, editado: false, persistible: false };
   }
   exigirId(clienteId);
 
-  if (opciones.refrescar) EN_MEMORIA.delete(clienteId);
+  if (opciones.refrescar || opciones.reconstruir) EN_MEMORIA.delete(clienteId);
   const memo = EN_MEMORIA.get(clienteId);
   if (memo && memo.hasta > Date.now()) {
     return { contexto: memo.contexto, actualizadoEn: null, editado: false, persistible: false };
@@ -206,8 +229,13 @@ export async function contextoComercial(
   const { fila, persistible } = await leerGuardado(clienteId);
   const editado = Boolean(fila?.editado);
 
-  // Una corrección humana no se pisa nunca con una reconstrucción automática.
-  if (fila?.documento && (!opciones.refrescar || editado)) {
+  /**
+   * Una corrección humana no se pisa con una reconstrucción AUTOMÁTICA. Con una
+   * que la persona pidió explícitamente (`reconstruir`), sí — y más abajo se le
+   * devuelven sus correcciones encima.
+   */
+  const sirveLoGuardado = !opciones.reconstruir && (!opciones.refrescar || editado);
+  if (fila?.documento && sirveLoGuardado) {
     return {
       contexto: fila.documento as unknown as ContextoComercial,
       actualizadoEn: (fila.actualizado_en as string) ?? null,
@@ -216,11 +244,55 @@ export async function contextoComercial(
     };
   }
 
-  const contexto = await construirContexto(clienteId);
+  const reconstruido = await construirContexto(clienteId);
+  /**
+   * Lo que la persona escribió vuelve a aplicarse sobre el contexto nuevo. Sin
+   * esto, «reconstruir» sería un botón de borrar su trabajo con otro nombre.
+   */
+  const contexto =
+    opciones.reconstruir && editado && fila?.documento
+      ? conservarCorrecciones(reconstruido, fila.documento as unknown as ContextoComercial)
+      : reconstruido;
   if (persistible) await guardar(clienteId, contexto, fila?.id as string | undefined);
   // Un contexto que no se pudo construir NO se cachea: sería fijar el error.
   if (contexto.vende.length) EN_MEMORIA.set(clienteId, { contexto, hasta: Date.now() + VIDA_MS });
-  return { contexto, actualizadoEn: new Date().toISOString(), editado: false, persistible };
+  return {
+    contexto,
+    actualizadoEn: new Date().toISOString(),
+    // Si se conservaron correcciones, el contexto SIGUE siendo uno editado: la
+    // pantalla tiene que mostrar que hay trabajo humano adentro.
+    editado: Boolean(opciones.reconstruir && editado),
+    persistible,
+  };
+}
+
+/**
+ * Reaplica sobre un contexto recién construido lo que la persona había
+ * corregido a mano.
+ *
+ * Se reconocen por su fuente: `ensamblarContexto` marca `declarado` todo lo que
+ * viene de una corrección, y `declarado` es la autoridad más alta de la tabla
+ * (`AUTORIDAD` en `contextoComercialCore.ts`). Así el criterio no es una lista
+ * de campos escrita acá, que se desactualizaría sola: es la misma jerarquía de
+ * fuentes que usa el resto del módulo.
+ */
+export function conservarCorrecciones(nuevo: ContextoComercial, viejo: ContextoComercial): ContextoComercial {
+  const declarado = <T extends { fuente?: string }>(xs: T[]) => xs.filter((x) => x.fuente === "declarado");
+  const vendeSuyo = declarado(viejo.vende);
+  const ofertasSuyas = declarado(viejo.ofertas);
+  const pruebasSuyas = declarado(viejo.pruebas);
+
+  return {
+    ...nuevo,
+    vende: vendeSuyo.length ? vendeSuyo : nuevo.vende,
+    ofertas: ofertasSuyas.length ? ofertasSuyas : nuevo.ofertas,
+    pruebas: pruebasSuyas.length ? pruebasSuyas : nuevo.pruebas,
+    audiencia: viejo.audiencia.descripcion ? viejo.audiencia : nuevo.audiencia,
+    propuesta: {
+      problema: viejo.propuesta.problema || nuevo.propuesta.problema,
+      resultado: viejo.propuesta.resultado || nuevo.propuesta.resultado,
+    },
+  };
 }
 
 /** Guarda la corrección que escribió la persona. Queda marcada como suya. */

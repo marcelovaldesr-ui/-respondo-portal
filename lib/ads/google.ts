@@ -3,7 +3,8 @@ import { cifrar, descifrar } from "@/lib/cifrado";
 import { origenCanonico } from "@/lib/origenes";
 import { fallo, type ResultadoAds } from "@/lib/ads/proveedor";
 import type { FilaRendimiento, Nivel } from "@/lib/ads/canal";
-import type { Monto } from "@/lib/ads/moneda";
+import { MONEDA_DESCONOCIDA, normalizarMoneda, sumarPorMoneda, type Monto } from "@/lib/ads/moneda";
+import { composicionDesdeFilas, fusionarComposicion, gaqlComposicion } from "@/lib/ads/googleConversiones";
 
 /**
  * GOOGLE ADS — el único archivo que sabe de GAQL y de la Google Ads API.
@@ -199,7 +200,13 @@ export async function conexionGoogleDe(clienteId: string): Promise<ConexionGoogl
       cuentaId: soloDigitos(String(fila.cuenta_id ?? "")),
       cuentaNombre: String(fila.cuenta_nombre ?? ""),
       cuentaPadreId: padre ? soloDigitos(padre) : null,
-      moneda: String(fila.moneda ?? "CLP").toUpperCase(),
+      /**
+       * ⚠️ Sin `?? "CLP"`. La columna tiene `default 'CLP'` de cuando el
+       * producto era solo chileno, pero una fila vieja o un dato que no sea un
+       * código ISO no puede convertirse en una afirmación: lo que sabemos es
+       * que no sabemos, y así viaja.
+       */
+      moneda: normalizarMoneda(fila.moneda),
       zonaHoraria: String(fila.zona_horaria ?? "America/Santiago"),
       refreshToken,
       estado: String(fila.estado ?? "conectada"),
@@ -516,7 +523,12 @@ export async function cuentasDeGoogle(refreshToken: string): Promise<ResultadoAd
       cuentas.set(id, {
         id,
         nombre: String(c.descriptiveName ?? `Cuenta ${formatearIdCuenta(id)}`),
-        moneda: String(c.currencyCode ?? "CLP").toUpperCase(),
+        /**
+         * ⚠️ Si Google no devolvió `currency_code`, la cuenta se lista SIN
+         * moneda. Antes se listaba como CLP y una cuenta que factura en dólares
+         * aparecía en el selector con sus cifras en pesos.
+         */
+        moneda: normalizarMoneda(c.currencyCode),
         zonaHoraria: String(c.timeZone ?? "America/Santiago"),
         administradora: Boolean(c.manager),
         // Si la cuenta ES la raíz, se entra directo; si cuelga, por la raíz.
@@ -653,7 +665,19 @@ function aFila(nivel: Nivel, f: FilaGAQL, moneda: string): FilaRendimiento | nul
     impresiones: num(met.impressions),
     clics: num(met.clicks),
     gasto,
-    resultados: conversiones > 0 ? { cantidad: conversiones, tipo: "conversiones_web" as const } : null,
+    /**
+     * ⚠️ Acá decía `tipo: "conversiones_web"` a secas, para TODA conversión de
+     * Google. Una compra, una llamada desde el anuncio y un formulario se
+     * rotulaban igual, y desde ahí el producto comparaba una venta con un clic.
+     *
+     * El tipo honesto en este punto es `desconocido`: lo único que sabemos de
+     * `metrics.conversions` sin segmentar es su cantidad. `fusionarComposicion`
+     * lo refina después con la consulta de composición, y si esa consulta no
+     * está disponible el producto dice «resultados» en vez de afirmar que son
+     * del sitio web. `desconocido` no se compara con nada —ver `sonComparables`—
+     * que es exactamente la protección que hacía falta.
+     */
+    resultados: conversiones > 0 ? { cantidad: conversiones, tipo: "desconocido" as const } : null,
     valorResultados: valor > 0 ? { valor, moneda } : null,
     campanaId: camp.id ? String(camp.id) : undefined,
     campanaNombre: camp.name ? String(camp.name) : undefined,
@@ -762,12 +786,23 @@ export async function rendimientoGoogle(
   const login = con.cuentaPadreId || cred.loginCustomerId || null;
 
   const pedidos = niveles.map((n) => ({ nivel: n, gaql: gaqlDe(n, rango) })).filter((p) => p.gaql);
-  const respuestas = await Promise.all(
-    pedidos.map(async (p) => ({
-      nivel: p.nivel,
-      r: await consultar(con.cuentaId, p.gaql!, t.datos, cred, login),
-    })),
-  );
+  /**
+   * ⭐ La composición de conversiones viaja como UNA CONSULTA MÁS, en paralelo
+   * y fallando sola —igual que cada nivel—. Si la cuenta no la soporta o Google
+   * la rechaza, el rendimiento se muestra completo y lo único que se pierde es
+   * el desglose: un panel no se cae por no saber de qué tipo son las
+   * conversiones. Ver `googleConversiones.ts` para por qué es una consulta
+   * aparte y no un segmento de la principal.
+   */
+  const [respuestas, rComposicion] = await Promise.all([
+    Promise.all(
+      pedidos.map(async (p) => ({
+        nivel: p.nivel,
+        r: await consultar(con.cuentaId, p.gaql!, t.datos, cred, login),
+      })),
+    ),
+    consultar(con.cuentaId, gaqlComposicion(rango), t.datos, cred, login),
+  ]);
 
   const filas: FilaRendimiento[] = [];
   let primerError: ResultadoAds<FilaRendimiento[]> | null = null;
@@ -784,7 +819,18 @@ export async function rendimientoGoogle(
 
   // Si NADA se pudo leer, se devuelve el error real; si algo vino, se muestra.
   if (!filas.length && primerError) return primerError;
-  return { ok: true, datos: agruparPorId(filas) };
+
+  /**
+   * Se agrupa PRIMERO y se refina el tipo DESPUÉS. El orden importa: agrupar
+   * suma cantidades de filas que ya traen el tipo crudo, y recién sobre el
+   * total se decide si esta campaña mide compras, llamadas o una mezcla.
+   */
+  const agrupadas = agruparPorId(filas);
+  if (!rComposicion.ok) return { ok: true, datos: agrupadas };
+  return {
+    ok: true,
+    datos: fusionarComposicion(agrupadas, composicionDesdeFilas(rComposicion.datos as unknown as Record<string, unknown>[])),
+  };
 }
 
 /**
@@ -804,7 +850,18 @@ function agruparPorId(filas: FilaRendimiento[]): FilaRendimiento[] {
     }
     previa.impresiones += f.impresiones;
     previa.clics += f.clics;
-    previa.gasto = { valor: previa.gasto.valor + f.gasto.valor, moneda: previa.gasto.moneda };
+    /**
+     * ⚠️ Dos filas de la misma entidad SIEMPRE vienen de la misma cuenta y por
+     * lo tanto de la misma moneda; pero eso es un supuesto sobre la API, y un
+     * supuesto que no se comprueba es el que un día deja de ser cierto en
+     * silencio. Si las monedas no calzan, no se suma: se deja el monto previo y
+     * la moneda se marca desconocida, que es exactamente lo que sabríamos.
+     */
+    if (normalizarMoneda(previa.gasto.moneda) === normalizarMoneda(f.gasto.moneda)) {
+      previa.gasto = { valor: previa.gasto.valor + f.gasto.valor, moneda: previa.gasto.moneda };
+    } else {
+      previa.gasto = { valor: previa.gasto.valor + f.gasto.valor, moneda: MONEDA_DESCONOCIDA };
+    }
     if (f.resultados) {
       previa.resultados = {
         tipo: f.resultados.tipo,
@@ -832,12 +889,23 @@ export async function pruebaDeLecturaGoogle(
 ): Promise<ResultadoAds<{ campanas: number; gasto: Monto }>> {
   const r = await rendimientoGoogle(clienteId, rango, ["campana"]);
   if (!r.ok) return r;
-  const moneda = r.datos[0]?.gasto.moneda ?? "CLP";
+  /**
+   * ⚠️ El total se arma con `sumarPorMoneda`, no con un `reduce` sobre el valor
+   * y la moneda de la primera fila. Con una sola moneda —el caso normal de una
+   * cuenta— da exactamente lo mismo; con más de una, antes salía un total
+   * mentiroso rotulado con la moneda que apareciera primero, y ahora sale sin
+   * moneda, que es lo que sabemos.
+   */
+  const totales = sumarPorMoneda(r.datos.map((f) => f.gasto));
+  const gasto: Monto =
+    totales.size === 1
+      ? [...totales.values()][0]
+      : { valor: r.datos.reduce((a, f) => a + f.gasto.valor, 0), moneda: MONEDA_DESCONOCIDA };
   return {
     ok: true,
     datos: {
       campanas: r.datos.filter((f) => f.impresiones > 0 || f.gasto.valor > 0).length,
-      gasto: { valor: r.datos.reduce((a, f) => a + f.gasto.valor, 0), moneda },
+      gasto,
     },
   };
 }

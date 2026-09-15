@@ -5,6 +5,7 @@ import Link from "next/link";
 import { Ico } from "@/components/marketing/Iconos";
 import { disenarCampanaAccion, guardarPlanAccion } from "@/app/(marketing)/marketing/arquitecto/acciones";
 import { ETIQUETA_DESTINO, planEnTexto, type Destino, type PlanCampana } from "@/lib/marketing/arquitectoCore";
+import { formatearMonto, monedaConocida } from "@/lib/ads/moneda";
 
 /**
  * EL ARQUITECTO DE CAMPAÑAS, en pantalla.
@@ -115,9 +116,20 @@ export default function Arquitecto({
 
         <div className="mt-4 grid gap-3 sm:grid-cols-2">
           <div>
+            {/*
+              La etiqueta dice la moneda solo cuando se sabe cuál es. Antes
+              decía «(CLP)» siempre —venía de un `?? "CLP"`— y a un negocio con
+              cuenta en dólares le pedía su presupuesto en pesos.
+            */}
             <label className="mk-etiqueta" htmlFor="presupuesto">
-              Presupuesto mensual ({monedaNegocio})
+              Presupuesto mensual{monedaConocida(monedaNegocio) ? ` (${monedaNegocio.toUpperCase()})` : ""}
             </label>
+            {!monedaConocida(monedaNegocio) && (
+              <p className="mk-meta mt-1">
+                Todavía no hay una cuenta publicitaria conectada, así que no sabemos en qué moneda vas a
+                gastar: escribe el monto en la moneda que vayas a configurar en la plataforma.
+              </p>
+            )}
             <input
               id="presupuesto"
               inputMode="numeric"
@@ -208,7 +220,7 @@ export default function Arquitecto({
                 </div>
                 <p className="mk-meta mt-1">
                   Objetivo: {c.objetivo} · Presupuesto diario:{" "}
-                  {c.presupuestoDiario ? `${c.presupuestoDiario.toLocaleString("es-CL")} ${plan.moneda}` : "a definir"} ·
+                  {c.presupuestoDiario ? formatearMonto(c.presupuestoDiario) : "a definir"} ·
                   Destino: {ETIQUETA_DESTINO[c.destino]}
                   {c.destinoDetalle ? ` (${c.destinoDetalle})` : ""}
                 </p>

@@ -295,6 +295,7 @@ function construir(rango: Rango) {
           url: "https://www.facebook.com/",
           imagenUrl: `/marketing/demo/${anuncio.imagen}.jpg`,
           gasto: 0,
+          moneda: MONEDA_DEMO,
           impresiones: 0,
           clics: 0,
           conversaciones: 0,
@@ -331,6 +332,7 @@ function construir(rango: Rango) {
           url: "https://www.facebook.com/",
           imagenUrl: `/marketing/demo/${a.imagen}.jpg`,
           gasto: 0,
+          moneda: MONEDA_DEMO,
           impresiones: 0,
           clics: 0,
           conversaciones: 0,
@@ -678,6 +680,19 @@ function filasGoogleDemo(factor = 1): FilaRendimiento[] {
     { proveedor: "google", nivel: "grupo", id: "gg-1", nombre: "Tarjetas y flyers", campanaId: "g-1", campanaNombre: campanas[0].nombre, estado: "activa", objetivo: "Búsqueda", impresiones: n(9800), clics: n(451), gasto: clp(52300), resultados: { cantidad: n(34), tipo: "conversiones_web" } },
     { proveedor: "google", nivel: "grupo", id: "gg-2", nombre: "Pendones y gigantografía", campanaId: "g-1", campanaNombre: campanas[0].nombre, estado: "activa", objetivo: "Búsqueda", impresiones: n(8620), clics: n(291), gasto: clp(44500), resultados: { cantidad: n(14), tipo: "conversiones_web" } },
   ];
+  /**
+   * Los anuncios de la cuenta. Existen en la demo porque existen en producción
+   * (`NIVELES_DE.google` los incluye) y porque son lo único que la pestaña
+   * «Anuncios» de una campaña puede mostrarle a un negocio sin conversaciones
+   * propias: sin ellos la variante «google» enseñaría una lista vacía, que es
+   * justo el defecto que se corrigió.
+   */
+  const anuncios: FilaRendimiento[] = [
+    { proveedor: "google", nivel: "anuncio", id: "ad-1", nombre: "Anuncio 1 · Tarjetas 500 unidades", campanaId: "g-1", campanaNombre: campanas[0].nombre, grupoId: "gg-1", grupoNombre: grupos[0].nombre, estado: "activa", impresiones: n(5400), clics: n(268), gasto: clp(29800), resultados: { cantidad: n(21), tipo: "conversiones_web" } },
+    { proveedor: "google", nivel: "anuncio", id: "ad-2", nombre: "Anuncio 2 · Flyers full color", campanaId: "g-1", campanaNombre: campanas[0].nombre, grupoId: "gg-1", grupoNombre: grupos[0].nombre, estado: "activa", impresiones: n(4400), clics: n(183), gasto: clp(22500), resultados: { cantidad: n(13), tipo: "conversiones_web" } },
+    { proveedor: "google", nivel: "anuncio", id: "ad-3", nombre: "Anuncio 3 · Pendones 1x2", campanaId: "g-1", campanaNombre: campanas[0].nombre, grupoId: "gg-2", grupoNombre: grupos[1].nombre, estado: "pausada", impresiones: n(3900), clics: n(121), gasto: clp(19400), resultados: { cantidad: n(6), tipo: "conversiones_web" } },
+    { proveedor: "google", nivel: "anuncio", id: "ad-4", nombre: "Anuncio 4 · Estampados por mayor", campanaId: "g-2", campanaNombre: campanas[1].nombre, estado: "activa", impresiones: n(21000), clics: n(164), gasto: clp(24100), resultados: { cantidad: n(2), tipo: "conversiones_web" } },
+  ];
   const palabras: FilaRendimiento[] = [
     { proveedor: "google", nivel: "palabra", id: "kw-1", nombre: "imprenta chillan", campanaId: "g-1", campanaNombre: campanas[0].nombre, grupoId: "gg-1", grupoNombre: grupos[0].nombre, estado: "activa", impresiones: n(4100), clics: n(232), gasto: clp(24800), resultados: { cantidad: n(22), tipo: "conversiones_web" }, extra: { concordancia: "PHRASE" } },
     { proveedor: "google", nivel: "palabra", id: "kw-2", nombre: "tarjetas de presentacion", campanaId: "g-1", campanaNombre: campanas[0].nombre, grupoId: "gg-1", grupoNombre: grupos[0].nombre, estado: "activa", impresiones: n(3200), clics: n(140), gasto: clp(15600), resultados: { cantidad: n(9), tipo: "conversiones_web" }, extra: { concordancia: "BROAD" } },
@@ -690,7 +705,7 @@ function filasGoogleDemo(factor = 1): FilaRendimiento[] {
     // proponer excluirlo, tiene que decir por qué no.
     { proveedor: "google", nivel: "termino", id: "impresion de planos a1", nombre: "impresion de planos a1", campanaId: "g-1", campanaNombre: campanas[0].nombre, grupoId: "gg-2", grupoNombre: grupos[1].nombre, estado: "desconocido", impresiones: n(410), clics: n(29), gasto: clp(12200), resultados: null, extra: { estadoTermino: "NONE", palabraQueLoDisparo: "impresion de planos", concordancia: "BROAD" } },
   ];
-  return [...campanas, ...grupos, ...palabras, ...terminos];
+  return [...campanas, ...grupos, ...anuncios, ...palabras, ...terminos];
 }
 
 export function panoramaDemo(rango: Rango, variante: VarianteDemo = "completo"): Panorama {
@@ -932,7 +947,7 @@ export function panoramaDemo(rango: Rango, variante: VarianteDemo = "completo"):
   return {
     rango,
     demo: true,
-    monedaNegocio: "CLP",
+    monedaNegocio: MONEDA_DEMO,
     capacidades: { ...capacidades, canales: canalesDemo },
     metaConectada: variante !== "google",
     errorPublicidad: null,
@@ -1043,6 +1058,15 @@ export function armarEmbudo(v: {
    panorama completo en vez de inventando campos. */
 import type { ContextoComercial } from "@/lib/marketing/contextoComercialCore";
 import { inferirVoz } from "@/lib/marketing/vozMarca";
+
+/**
+ * La demo cobra y gasta en pesos chilenos, y lo dice UNA vez.
+ *
+ * Es una constante de los datos de demostración, no un supuesto del producto:
+ * la regla de la demo es mostrar lo que producción puede mostrar, y producción
+ * lee la moneda de la cuenta y del cliente.
+ */
+const MONEDA_DEMO = "CLP";
 
 export function contextoComercialDemo(): ContextoComercial {
   return {

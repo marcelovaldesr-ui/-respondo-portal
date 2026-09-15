@@ -1,7 +1,8 @@
 import Link from "next/link";
 import { exigirPermisoPortal } from "@/lib/auth";
 import { diaChile, resolverRango, sumarDias } from "@/lib/ads/periodos";
-import { formatearMonto, formatearNumero } from "@/lib/ads/moneda";
+import { formatearMonto, formatearNumero, formatearPorcentaje } from "@/lib/ads/moneda";
+import { agregar, ETIQUETA_RESULTADO } from "@/lib/ads/canal";
 import { cargarMarketing } from "@/lib/marketing/datos";
 import { opcionesDemo } from "@/lib/marketing/modo";
 import Cabecera from "@/components/marketing/Cabecera";
@@ -17,12 +18,12 @@ export const dynamic = "force-dynamic";
  *
  * Arriba, cuatro cifras del período para tener el marco; abajo la tabla con
  * buscador, filtros y orden. Los borradores del asistente conviven con las
- * campañas de Meta porque para el dueño son «mis campañas»: unas ya corren y
- * otras están por salir.
+ * campañas de la plataforma porque para el dueño son «mis campañas»: unas ya
+ * corren y otras están por salir.
  *
  * La chispa de 7 días se arma acá, desde los leads del período: es la única
- * forma de mostrar dirección por campaña sin pedirle a Meta una llamada por
- * cada fila.
+ * forma de mostrar dirección por campaña sin pedirle a la plataforma una
+ * llamada por cada fila.
  */
 export default async function Campanas({ searchParams }: { searchParams: Promise<{ p?: string }> }) {
   const usuario = await exigirPermisoPortal("generar_insights");
@@ -40,10 +41,33 @@ export default async function Campanas({ searchParams }: { searchParams: Promise
    */
   const monedas = new Set(reales.filter((c) => c.gasto !== null).map((c) => c.moneda));
   const monedaPublicidad = monedas.size === 1 ? [...monedas][0] : null;
-  const gasto = p.metaConectada && monedas.size <= 1 ? reales.reduce((a, c) => a + (c.gasto ?? 0), 0) : null;
+  /**
+   * La condición era `p.metaConectada`, y por eso una cuenta con solo Google
+   * leyendo veía «—» en lo invertido y, abajo, una nota que le pedía conectar
+   * una cuenta publicitaria que ya tenía. Lo que habilita la suma es que haya
+   * ALGÚN canal conectado; la guarda de moneda se mantiene intacta, porque
+   * sumar pesos con dólares sigue estando prohibido.
+   */
+  const gasto =
+    p.capacidades.hayCanalConectado && monedas.size <= 1 ? reales.reduce((a, c) => a + (c.gasto ?? 0), 0) : null;
   const conversaciones = reales.reduce((a, c) => a + c.conversaciones, 0);
   const ventas = reales.reduce((a, c) => a + c.ventas, 0);
   const cobrado = reales.reduce((a, c) => a + c.cobrado, 0);
+
+  /**
+   * Las dos últimas tarjetas se arman con lo que este negocio SÍ mide. Sin
+   * señal de conversaciones, «Conversaciones» y «Ventas e ingresos» son dos
+   * ceros permanentes que además se atribuían a «anuncios de Facebook e
+   * Instagram»: falso para quien solo pauta en Google.
+   */
+  const totalesPlataforma = agregar(p.filasAds.filter((f) => f.nivel === "campana"));
+  const resultados = totalesPlataforma.resultados;
+  const costoPorResultado =
+    totalesPlataforma.gasto && resultados && resultados.cantidad > 0
+      ? totalesPlataforma.gasto.valor / resultados.cantidad
+      : null;
+  const ctr =
+    totalesPlataforma.impresiones > 0 ? (totalesPlataforma.clics / totalesPlataforma.impresiones) * 100 : null;
 
   // Conversaciones por día (últimos 7) de cada campaña, para la columna «7 días».
   const dias = Array.from({ length: 7 }, (_, i) => sumarDias(rango.hasta, i - 6));
@@ -83,13 +107,39 @@ export default async function Campanas({ searchParams }: { searchParams: Promise
           valor={gasto === null ? "—" : formatearMonto({ valor: gasto, moneda: monedaPublicidad ?? p.monedaNegocio }, { monedaDelNegocio: p.monedaNegocio })}
           nota={gasto === null ? motivoSinPublicidad(p.capacidades, p.errorPublicidad) : "Según tu cuenta publicitaria, en el período"}
         />
-        <Resumen etiqueta="Conversaciones" valor={formatearNumero(conversaciones)} nota="Desde anuncios de Facebook e Instagram" />
-        <Resumen
-          etiqueta="Ventas e ingresos"
-          valor={`${formatearNumero(ventas)} · ${cobrado > 0 ? formatearMonto({ valor: cobrado, moneda: p.monedaNegocio }) : "—"}`}
-          nota="Al menos: lo cobrado por enlace de pago"
-          fuerte
-        />
+        {p.senales.conversaciones ? (
+          <>
+            <Resumen
+              etiqueta="Conversaciones"
+              valor={formatearNumero(conversaciones)}
+              nota="Personas que escribieron después de apretar un anuncio"
+            />
+            <Resumen
+              etiqueta="Ventas e ingresos"
+              valor={`${formatearNumero(ventas)} · ${cobrado > 0 ? formatearMonto({ valor: cobrado, moneda: p.monedaNegocio }) : "—"}`}
+              nota="Al menos: lo cobrado por enlace de pago"
+              fuerte
+            />
+          </>
+        ) : (
+          <>
+            <Resumen
+              etiqueta="Clics"
+              valor={p.senales.ads ? formatearNumero(totalesPlataforma.clics) : "—"}
+              nota={p.senales.ads ? `CTR ${formatearPorcentaje(ctr)} · lo reporta la plataforma` : motivoSinPublicidad(p.capacidades, p.errorPublicidad)}
+            />
+            <Resumen
+              etiqueta={resultados ? ETIQUETA_RESULTADO[resultados.tipo] : "Resultados"}
+              valor={resultados ? formatearNumero(resultados.cantidad) : "—"}
+              nota={
+                resultados
+                  ? `${costoPorResultado === null ? "—" : formatearMonto({ valor: costoPorResultado, moneda: monedaPublicidad ?? p.monedaNegocio }, { monedaDelNegocio: p.monedaNegocio })} cada uno`
+                  : "Tu cuenta publicitaria no reportó conversiones en este período."
+              }
+              fuerte
+            />
+          </>
+        )}
       </div>
 
       {!p.almacenListo && <AvisoMigracion />}
@@ -98,9 +148,9 @@ export default async function Campanas({ searchParams }: { searchParams: Promise
         filas={p.campanas}
         monedaNegocio={p.monedaNegocio}
         periodo={rango.clave}
-        metaConectada={p.metaConectada}
-          puedeConectarMeta={p.capacidades.puedeConectarMeta}
-          motivoSinPublicidad={motivoSinPublicidad(p.capacidades, p.errorPublicidad)}
+        hayPublicidad={p.capacidades.hayCanalConectado}
+        puedeConectarMeta={p.capacidades.puedeConectarMeta}
+        motivoSinPublicidad={motivoSinPublicidad(p.capacidades, p.errorPublicidad)}
         series={series}
         senales={p.senales}
         canales={p.canales.filter((c) => c.conectado).map((c) => c.proveedor)}

@@ -127,6 +127,13 @@ export type FilaAnuncio = {
   url: string;
   imagenUrl: string | null;
   gasto: number | null;
+  /**
+   * La moneda del GASTO, que es la de la cuenta publicitaria y NO la del
+   * negocio. `""` cuando no se sabe (la fila vino solo de atribución propia, o
+   * la plataforma no declaró su moneda). Lo cobrado va en la moneda del
+   * negocio, que viaja aparte en `Panorama.monedaNegocio`.
+   */
+  moneda: string;
   impresiones: number | null;
   clics: number | null;
   conversaciones: number;

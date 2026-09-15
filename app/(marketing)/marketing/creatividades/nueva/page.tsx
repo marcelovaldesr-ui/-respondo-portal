@@ -80,6 +80,7 @@ export default async function NuevaCreatividad({
         negocio={ctx.contexto.negocio.nombre}
         contexto={ctx.contexto}
         completitud={completitud(ctx.contexto)}
+        contextoEditado={ctx.editado}
         demo={demo}
         campanaId={campana?.id ?? null}
         campanaNombre={campana?.nombre ?? null}

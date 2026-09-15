@@ -43,7 +43,7 @@ export default async function PaginaArquitecto() {
       />
       <Arquitecto
         destinos={destinosPosibles(senales, capacidades.whatsappConectado)}
-        monedaNegocio={capacidades.monedaPublicidad ?? "CLP"}
+        monedaNegocio={capacidades.monedaPublicidad ?? ""}
         hayCanales={capacidades.hayCanalConectado}
         demo={demo}
       />

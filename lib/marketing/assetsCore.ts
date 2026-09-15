@@ -1,5 +1,5 @@
 import { proporcion } from "@/lib/marketing/creatividadesCore";
-import type { FormatoCreatividad } from "@/lib/marketing/tipos";
+import type { FormatoCreatividad, PlataformaCreatividad } from "@/lib/marketing/tipos";
 import type { Extension } from "@/lib/marketing/imagenes";
 
 /**
@@ -78,18 +78,48 @@ export function extensionDe(formato: string | undefined): Extension | null {
 }
 
 /**
+ * Quién va a recortar la pieza.
+ *
+ * ⚠️ El aviso decía «Meta la va a recortar» en duro, y este módulo también
+ * alimenta creatividades de Google: al que subía un banner para Google Ads se
+ * le nombraba la plataforma equivocada. La plataforma la elige la persona en el
+ * mismo formulario en que sube la pieza, así que viaja con el pedido; cuando no
+ * viene —una pieza que todavía no tiene destino— el aviso queda neutral en vez
+ * de adivinar.
+ */
+function quienRecorta(plataforma: PlataformaCreatividad | undefined): string {
+  switch (plataforma) {
+    case "google":
+      return "Google Ads";
+    case "instagram":
+      return "Instagram";
+    case "facebook":
+      return "Facebook";
+    case "ambas":
+      return "Meta";
+    default:
+      return "La plataforma donde lo publiques";
+  }
+}
+
+/**
  * ¿La proporción de la pieza calza con el formato del anuncio?
  *
  * Devuelve un AVISO, no un error. La persona puede querer subir un cuadrado
  * para una historia sabiendo perfectamente lo que hace.
  */
-export function avisoDeProporcion(ancho: number, alto: number, formato: FormatoCreatividad): string | null {
+export function avisoDeProporcion(
+  ancho: number,
+  alto: number,
+  formato: FormatoCreatividad,
+  plataforma?: PlataformaCreatividad,
+): string | null {
   const esperada = proporcion(formato);
   const real = ancho / alto;
   const desvio = Math.abs(real - esperada) / esperada;
   if (desvio < 0.06) return null;
   return (
     `Tu imagen es ${ancho}×${alto} y el formato elegido es ${formato}. ` +
-    `Meta la va a recortar por su cuenta. Se guarda tal cual: si prefieres, cambia el formato o sube la pieza ya exportada en ${formato}.`
+    `${quienRecorta(plataforma)} la va a recortar por su cuenta. Se guarda tal cual: si prefieres, cambia el formato o sube la pieza ya exportada en ${formato}.`
   );
 }

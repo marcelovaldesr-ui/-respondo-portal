@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useTransition } from "react";
-import { corregirContextoAccion } from "@/app/(marketing)/marketing/creatividades/acciones";
+import { contextoDelNegocioAccion, corregirContextoAccion } from "@/app/(marketing)/marketing/creatividades/acciones";
 import type { Completitud, ContextoComercial } from "@/lib/marketing/contextoComercialCore";
 
 /**
@@ -21,20 +21,31 @@ import type { Completitud, ContextoComercial } from "@/lib/marketing/contextoCom
  *
  * ⭐ Y lo que la persona corrige NO se vuelve a pisar: queda marcado como suyo
  * y la reconstrucción automática lo respeta.
+ *
+ * ⚠️ Con una salida, que faltaba: respetar la corrección para siempre dejaba al
+ * negocio que cambió su catálogo atrapado con un contexto viejo, sin ninguna
+ * forma de rehacerlo. «Volver a leer mis fichas» reconstruye desde el
+ * conocimiento actual y REAPLICA encima lo que la persona había corregido, así
+ * que su trabajo no se pierde: lo que se actualiza es la parte que ella nunca
+ * tocó. Es una acción explicada y aparte, no el botón de todos los días.
  * ═══════════════════════════════════════════════════════════════════════════
  */
 export default function ContextoUsado({
   contexto,
   completitud,
   demo,
+  editado = false,
 }: {
   contexto: ContextoComercial;
   completitud: Completitud;
   demo: boolean;
+  /** El contexto tiene correcciones humanas guardadas. */
+  editado?: boolean;
 }) {
   const [abierto, setAbierto] = useState(false);
   const [editando, setEditando] = useState(false);
   const [guardado, setGuardado] = useState(false);
+  const [rehecho, setRehecho] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [, iniciar] = useTransition();
 
@@ -64,6 +75,15 @@ export default function ContextoUsado({
       if (!r.ok) return setError(r.motivo ?? "No se pudo guardar.");
       setEditando(false);
       setGuardado(true);
+    });
+  };
+
+  const rehacer = () => {
+    setError(null);
+    iniciar(async () => {
+      const r = await contextoDelNegocioAccion(false, true);
+      if (!r.ok) return setError(r.motivo);
+      setRehecho(true);
     });
   };
 
@@ -132,9 +152,23 @@ export default function ContextoUsado({
               )}
 
               {!demo && (
-                <button type="button" className="btn-suave mt-4" onClick={() => setEditando(true)}>
-                  {guardado ? "Editar de nuevo" : "Corregir"}
-                </button>
+                <div className="mt-4 flex flex-wrap items-center gap-2">
+                  <button type="button" className="btn-suave" onClick={() => setEditando(true)}>
+                    {guardado ? "Editar de nuevo" : "Corregir"}
+                  </button>
+                  {editado && (
+                    <button type="button" className="btn-suave" onClick={rehacer}>
+                      Volver a leer mis fichas
+                    </button>
+                  )}
+                </div>
+              )}
+              {editado && !demo && (
+                <p className="mt-2" style={{ fontSize: "11.5px", color: "var(--muted-2)", lineHeight: 1.5 }}>
+                  {rehecho
+                    ? "Listo: se releyó tu conocimiento y tus correcciones se volvieron a aplicar encima. Se usa desde el próximo anuncio."
+                    : "Esto tiene correcciones tuyas, así que no se rehace solo. Si cambiaste tu catálogo, «volver a leer mis fichas» lo actualiza y conserva lo que corregiste."}
+                </p>
               )}
               {guardado && (
                 <span className="ml-2" style={{ fontSize: "12px", color: "var(--muted)" }}>

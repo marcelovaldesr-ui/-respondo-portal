@@ -96,6 +96,7 @@ export default function GeneradorAnuncio({
   negocio,
   contexto,
   completitud,
+  contextoEditado = false,
   demo,
   campanaId,
   campanaNombre,
@@ -105,6 +106,8 @@ export default function GeneradorAnuncio({
   negocio: string;
   contexto: ContextoComercial;
   completitud: Completitud;
+  /** El contexto tiene correcciones humanas: habilita la reconstrucción. */
+  contextoEditado?: boolean;
   demo: boolean;
   campanaId?: string | null;
   campanaNombre?: string | null;
@@ -227,6 +230,9 @@ export default function GeneradorAnuncio({
       const datos = new FormData();
       datos.set("archivo", archivo);
       datos.set("formato", formato);
+      // El aviso de recorte tiene que nombrar la plataforma correcta: Google no
+      // recorta como Meta, y la persona ya la eligió más arriba.
+      datos.set("plataforma", plataforma);
       const r = await subirDisenoAccion(datos);
       setOcupado("");
       if (!r.ok) return setError(r.motivo);
@@ -339,7 +345,7 @@ export default function GeneradorAnuncio({
                   </div>
                 )}
 
-                <ContextoUsado contexto={contexto} completitud={completitud} demo={demo} />
+                <ContextoUsado contexto={contexto} completitud={completitud} demo={demo} editado={contextoEditado} />
 
                 <div className="mk-campo-rotulo mt-6">¿Qué quieres lograr?</div>
                 <div className="grid gap-2 sm:grid-cols-2">

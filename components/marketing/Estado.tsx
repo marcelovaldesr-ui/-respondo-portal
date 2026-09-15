@@ -76,16 +76,21 @@ export function EstadoDeLead({ etapa }: { etapa: EtapaLead }) {
 export function PieSinPublicidad({
   texto,
   puedeConectar,
-  metaConectada,
+  hayPublicidad,
 }: {
   texto: string;
   puedeConectar: boolean;
-  metaConectada: boolean;
+  /**
+   * Se llamaba `metaConectada`, y con Google leyendo eso valía false: debajo
+   * del gasto de Google aparecía «Conectar la cuenta». Lo que decide si se
+   * ofrece conectar es si hay cifras de publicidad, venga de donde venga.
+   */
+  hayPublicidad: boolean;
 }) {
   return (
     <div className="mk-panel-pie">
       {texto}{" "}
-      {puedeConectar && !metaConectada && (
+      {puedeConectar && !hayPublicidad && (
         <Link href="/marketing/integraciones" className="mk-enlace">
           Conectar la cuenta
         </Link>

@@ -5,6 +5,7 @@ import { ERRORES, type CodigoErrorAds } from "@/lib/ads/proveedor";
 import type { EstadoCanalPanorama } from "@/lib/marketing/tipos";
 import type { VarianteDemo } from "@/lib/marketing/demo";
 import { db } from "@/lib/db";
+import { monedaConocida, normalizarMoneda } from "@/lib/ads/moneda";
 
 /**
  * QUÉ PUEDE HACER ESTE NEGOCIO, EN UN SOLO LUGAR.
@@ -35,7 +36,16 @@ export type Capacidades = {
   metaConectada: boolean;
   /** Hay conexión guardada pero falta elegir la cuenta publicitaria. */
   metaFaltaElegirCuenta: boolean;
-  /** Moneda en la que factura la cuenta publicitaria. null sin conexión. */
+  /**
+   * La moneda en que facturan las cuentas publicitarias conectadas.
+   *
+   * ⚠️ `null` significa «no se sabe», y tiene DOS causas que no hay que
+   * confundir: no hay ninguna cuenta conectada, o hay varias y facturan en
+   * monedas distintas. En los dos casos la respuesta correcta es la misma —no
+   * hay una moneda del negocio que usar— y en ninguno se rellena con «CLP».
+   * Antes esto miraba solo Meta: un negocio con solo Google Ads conectado se
+   * quedaba sin moneda aunque su cuenta la declarara.
+   */
   monedaPublicidad: string | null;
   /** WhatsApp conectado: sin esto no hay atribución ni eventos de vuelta. */
   whatsappConectado: boolean;
@@ -143,7 +153,7 @@ export async function capacidadesDe(clienteId: string): Promise<Capacidades> {
     puedeConectarMeta,
     metaConectada,
     metaFaltaElegirCuenta: Boolean(conexion && !conexion.cuentaId),
-    monedaPublicidad: metaConectada ? (conexion?.moneda ?? null) : null,
+    monedaPublicidad: monedaUnica(canales.filter((c) => c.conectado).map((c) => c.moneda)),
     whatsappConectado: Boolean(cliente.wabaId),
     puedeDevolverVentas: Boolean(cliente.wabaId && cliente.datasetId),
     cobroPorEnlace: Boolean(cliente.pagoLink),
@@ -198,7 +208,15 @@ async function leerCliente(clienteId: string): Promise<{
  * cuenta publicitaria de Meta»…) y todas asumían que conectarla era posible.
  */
 export function motivoSinPublicidad(
-  c: Pick<Capacidades, "puedeConectarMeta" | "metaConectada" | "metaFaltaElegirCuenta">,
+  c: Pick<
+    Capacidades,
+    | "puedeConectarMeta"
+    | "puedeConectarGoogle"
+    | "metaConectada"
+    | "metaFaltaElegirCuenta"
+    | "hayCanalConectado"
+    | "canales"
+  >,
   codigo?: CodigoErrorAds | null,
 ): string {
   /**
@@ -207,14 +225,41 @@ export function motivoSinPublicidad(
    * al plan sería inventarle al dueño una causa comercial —y hacerle creer que
    * pagando más se arregla— cuando en realidad es un paso nuestro.
    */
-  if (!c.puedeConectarMeta) return "La lectura de tu cuenta publicitaria todavía no está activada. La activamos nosotros; escríbenos.";
-  if (c.metaFaltaElegirCuenta) return "Falta elegir cuál de tus cuentas publicitarias mirar, en Integraciones.";
-  if (!c.metaConectada) return "Se ve cuando conectes tu cuenta publicitaria en Integraciones.";
+  if (!c.puedeConectarMeta && !c.puedeConectarGoogle) {
+    return "La lectura de tu cuenta publicitaria todavía no está activada. La activamos nosotros; escríbenos.";
+  }
+
   /**
-   * La cuenta SÍ está conectada: entonces el motivo no es «conéctala». Un
-   * límite de consultas o una caída pasajera tienen su propio texto, ya escrito
-   * para una persona en el catálogo del proveedor.
+   * Se miran TODOS los canales y no solo Meta: preguntando `metaConectada`,
+   * un negocio con Google leyendo y gastando leía «conéctala» debajo de su
+   * propio gasto. Quien ya conectó algo nunca recibe una invitación a conectar.
    */
-  if (codigo) return ERRORES[codigo].mensaje;
+  if (!c.hayCanalConectado) {
+    const aMedias = c.canales.find((x) => x.faltaElegirCuenta) ?? null;
+    if (aMedias) return `Falta elegir cuál de tus cuentas de ${aMedias.nombre} mirar, en Integraciones.`;
+    if (c.metaFaltaElegirCuenta) return "Falta elegir cuál de tus cuentas publicitarias mirar, en Integraciones.";
+    return "Se ve cuando conectes tu cuenta publicitaria en Integraciones.";
+  }
+
+  /**
+   * Hay cuenta conectada: el motivo no es «conéctala». `codigo` sale de la
+   * lectura de Meta, así que solo se cuenta cuando Meta es una de las cuentas
+   * conectadas; a quien solo tiene Google, un «sin conexión» de Meta le
+   * explicaría una falla que no es la suya.
+   */
+  if (codigo && c.metaConectada) return ERRORES[codigo].mensaje;
   return "Tu cuenta publicitaria no reportó gasto en este período.";
+}
+
+/**
+ * Una sola moneda, o ninguna.
+ *
+ * Con dos cuentas en monedas distintas NO hay «la moneda del negocio»: sumar o
+ * comparar sus cifras exigiría un tipo de cambio que no tenemos. Devolver null
+ * es lo que hace que las pantallas muestren cada canal por separado en vez de
+ * un total que no significa nada.
+ */
+function monedaUnica(monedas: (string | null | undefined)[]): string | null {
+  const validas = new Set(monedas.map((m) => normalizarMoneda(m)).filter((m) => monedaConocida(m)));
+  return validas.size === 1 ? [...validas][0] : null;
 }

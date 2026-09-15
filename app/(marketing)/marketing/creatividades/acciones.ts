@@ -128,14 +128,25 @@ import type { DireccionVisual, Angulo } from "@/lib/marketing/copyCore";
 import { piezasExistentes, subirPieza, type PiezaExistente } from "@/lib/marketing/assets";
 import { MAX_BYTES_SUBIDA } from "@/lib/marketing/assetsCore";
 
-/** Lo que Respondo entiende del negocio, para mostrarlo y poder corregirlo. */
+/**
+ * Lo que Respondo entiende del negocio, para mostrarlo y poder corregirlo.
+ *
+ * `reconstruir` es la salida controlada para un contexto que se editó a mano y
+ * quedó obsoleto: vuelve a leer las fichas y reaplica encima lo que la persona
+ * había corregido. La pantalla lo ofrece como una acción aparte y explicada,
+ * no como el botón de refrescar de todos los días.
+ *
+ * ⚠️ El `clienteId` sale de la sesión, nunca del formulario: reconstruir el
+ * contexto de otro negocio sería reescribirle su ficha comercial.
+ */
 export async function contextoDelNegocioAccion(
   refrescar = false,
+  reconstruir = false,
 ): Promise<{ ok: true; contexto: ContextoComercial; completitud: ReturnType<typeof completitud>; editado: boolean; persistible: boolean } | { ok: false; motivo: string }> {
   const usuario = await obtenerUsuarioConPermiso("generar_insights");
   if (!usuario) return { ok: false, motivo: "Sesión no válida." };
   const demo = await modoDemo();
-  const r = await contextoComercial(usuario.clienteId, { demo, refrescar });
+  const r = await contextoComercial(usuario.clienteId, { demo, refrescar, reconstruir });
   return { ok: true, contexto: r.contexto, completitud: completitud(r.contexto), editado: r.editado, persistible: r.persistible };
 }
 
@@ -237,13 +248,21 @@ export async function subirDisenoAccion(
 
   const archivo = datos.get("archivo");
   const formato = String(datos.get("formato") ?? "1:1") as FormatoCreatividad;
+  /**
+   * La plataforma viene del mismo formulario y se valida contra la lista: el
+   * aviso de recorte nombraba «Meta» en duro y este Estudio también arma
+   * piezas para Google. Un valor que no esté en la lista se ignora y el aviso
+   * queda neutral, que es la respuesta correcta cuando no se sabe.
+   */
+  const crudaPlataforma = String(datos.get("plataforma") ?? "");
+  const plataforma = (["instagram", "facebook", "ambas", "google"] as const).find((x) => x === crudaPlataforma);
   if (!(archivo instanceof File)) return { ok: false, motivo: "No llegó ningún archivo." };
   if (archivo.size > MAX_BYTES_SUBIDA) {
     return { ok: false, motivo: `La imagen pesa ${(archivo.size / 1024 / 1024).toFixed(1)} MB y el máximo son 8 MB.` };
   }
 
   const bytes = new Uint8Array(await archivo.arrayBuffer());
-  const r = await subirPieza(usuario.clienteId, bytes, formato);
+  const r = await subirPieza(usuario.clienteId, bytes, formato, plataforma);
   return r.ok ? { ok: true, url: r.url, puntero: r.puntero, aviso: r.aviso } : r;
 }
 

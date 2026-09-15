@@ -1,4 +1,5 @@
 import { db } from "@/lib/db";
+import { monedaDelNegocio } from "@/lib/marketing/monedaNegocio";
 import { exigirId } from "@/lib/marketing/tenant";
 import { bordesUTC, periodoAnterior, type Rango } from "@/lib/ads/periodos";
 import type { DatosPropios } from "@/lib/ads/metricas";
@@ -292,11 +293,15 @@ export async function cargarPauta(clienteId: string, rango: Rango): Promise<Paut
 
   /**
    * La moneda de lo cobrado es la del NEGOCIO, no la de la cuenta publicitaria.
-   * Se lee del cliente en vez de asumir CLP: el día que haya un cliente que
-   * cobre en otra moneda, `metricas.ts` va a negarse a calcular el retorno en
-   * vez de mezclar — que es exactamente lo que tiene que pasar.
+   *
+   * ⚠️ El comentario que estaba acá decía «se lee del cliente en vez de asumir
+   * CLP» y la línea de abajo decía `const monedaNegocio = "CLP"`. El comentario
+   * describía la intención, no el código, que es la peor clase de comentario:
+   * el que hace que nadie vuelva a mirar la línea. Ahora sí se lee del cliente
+   * (`ed_clientes.moneda`, migración 311) y, cuando no la declaró, de la
+   * configuración de la instalación.
    */
-  const monedaNegocio = "CLP";
+  const monedaNegocio = await monedaDelNegocio(clienteId);
 
   const propios: DatosPropios = {
     conversaciones: resumen.conversaciones,
