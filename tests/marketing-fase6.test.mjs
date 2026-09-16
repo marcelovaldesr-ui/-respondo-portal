@@ -51,6 +51,8 @@ import {
   slug,
 } from "../lib/marketing/arquitectoCore.ts";
 import { MONEDA_DESCONOCIDA, formatearMonto } from "../lib/ads/moneda.ts";
+import { ERRORES } from "../lib/ads/proveedor.ts";
+import { mensajeDeFalla } from "../lib/ads/canales.ts";
 import {
   CATEGORIAS_BLANDAS,
   composicionDesdeFilas,
@@ -1353,4 +1355,38 @@ test("BUG-08 · el mapa cubre el enum ConversionActionCategory completo de v25",
     (c) => tipoDeCategoria(c) === "desconocido" && !CATEGORIAS_BLANDAS.has(c) && !["UNKNOWN", "UNSPECIFIED"].includes(c),
   );
   assert.deepEqual(sinClasificar, [], "una categoría del enum sin decisión explícita es un hueco, no un default");
+});
+
+/* ══════════════════════════════════════════════════════════════════════════
+   UN FALLO DE GOOGLE NO PUEDE EXPLICARSE COMO UN FALLO DE META
+   ══════════════════════════════════════════════════════════════════════════ */
+
+test("el nivel de acceso del proyecto tiene su propio código, no «sin_permiso»", () => {
+  // Antes esto caía en `sin_permiso`, cuyo texto dice «falta permiso para leer
+  // esa cuenta publicitaria en Meta»: mandaba a revisar Meta por un problema
+  // que vive en la consola de Google Cloud.
+  assert.ok(ERRORES.nivel_acceso, "existe el código");
+  assert.match(ERRORES.nivel_acceso.mensaje, /Google Cloud/);
+  assert.match(ERRORES.nivel_acceso.mensaje, /Prueba/i);
+  assert.equal(/\bMeta\b/.test(ERRORES.nivel_acceso.mensaje), false, "no nombra a Meta");
+  assert.match(
+    ERRORES.nivel_acceso.mensaje,
+    /no es un problema de tu cuenta/i,
+    "y dice explícitamente que no es culpa de quien lo lee",
+  );
+});
+
+test("los mensajes de error de Google nunca nombran a Meta", () => {
+  for (const codigo of Object.keys(ERRORES)) {
+    const texto = mensajeDeFalla("google", codigo);
+    assert.equal(/\bMeta\b/.test(texto), false, `«${codigo}» dice Meta: ${texto}`);
+  }
+});
+
+test("el callback de Google devuelve la plataforma junto con el código", () => {
+  // Sin `p=google` en la vuelta, la pantalla no puede saber qué texto mostrar.
+  const ruta = codigo("app/api/ads/google/callback/route.ts");
+  assert.match(ruta, /integraciones\?e=\$\{motivo\}&p=google/);
+  // Y el detalle técnico sigue sin salir a la URL.
+  assert.equal(/detalle/.test(ruta.split("function volver")[1]?.slice(0, 300) ?? ""), false);
 });

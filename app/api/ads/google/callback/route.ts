@@ -12,8 +12,19 @@ import {
 
 export const dynamic = "force-dynamic";
 
+/**
+ * ⚠️ `p=google` viaja en la URL y NO es un detalle cosmético.
+ *
+ * El catálogo de avisos de la pantalla de Integraciones se escribió cuando Meta
+ * era el único canal y dice «Meta» en cada texto. Sin saber de qué plataforma
+ * vino el fallo, un error de Google salía como «falta permiso para leer esa
+ * cuenta publicitaria en Meta» y mandaba a revisar la conexión equivocada.
+ *
+ * Solo viaja el CÓDIGO y la plataforma. El `detalle` técnico sigue sin salir
+ * nunca a la URL: puede traer fragmentos de la respuesta de Google.
+ */
 function volver(motivo: string): NextResponse {
-  return NextResponse.redirect(new URL(`/marketing/integraciones?e=${motivo}`, origenCanonico()));
+  return NextResponse.redirect(new URL(`/marketing/integraciones?e=${motivo}&p=google`, origenCanonico()));
 }
 
 /**

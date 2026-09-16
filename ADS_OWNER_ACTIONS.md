@@ -172,6 +172,69 @@ Google Ads**.
 
 ---
 
+### G4-bis. PUBLICAR LA APP — sin esto, la conexión se cae cada 7 días
+
+⚠️ **Esto faltaba en este documento y no es opcional.** Se descubrió el
+15-sep-2026, montando el proyecto de verdad.
+
+**Qué:** cambiar el estado de publicación de la app de OAuth de **Prueba** a
+**En producción**, en *Google Auth Platform → Público → Publicar app*.
+
+**Por qué:** Google lo dice con todas las letras en su documentación:
+
+> «A Google Cloud Platform project with an OAuth consent screen configured for
+> an external user type and a publishing status of "Testing" is issued a refresh
+> token expiring in 7 days»
+
+y en la ayuda de la consola:
+
+> «Authorizations by a test user will expire seven days from the time of
+> consent. If your OAuth client requests an `offline` access type and receives a
+> refresh token, that token will also expire.»
+
+Respondo guarda exactamente ese refresh token. Con la app en **Prueba**, la
+conexión de Google Ads de cada cliente se muere a los siete días y hay que
+reautorizar a mano. El portal lo va a decir bien —«el permiso venció, hay que
+volver a autorizarlo»— pero es un parche que dura otra semana.
+
+La excepción de Google no aplica acá: solo vale si los únicos permisos pedidos
+son nombre, correo y perfil. `adwords` no es ninguno de esos.
+
+**«Interno» no es una salida.** Ese modo no tiene el vencimiento de 7 días, pero
+exige Google Workspace y que TODOS los usuarios sean de la misma organización.
+Los clientes conectan con cuentas `@gmail.com`, así que está descartado —en la
+consola el botón «Marcar como interno» aparece deshabilitado, por eso mismo—.
+
+**Dónde:** *Google Auth Platform → Público → Publicar app*.
+
+**Qué necesitas antes:** el botón está deshabilitado hasta completar
+*Información de la marca*: nombre de la app, correo de asistencia, **página
+principal**, **política de privacidad**, **condiciones del servicio** y
+**dominios autorizados**.
+
+⚠️ **`respondo-portal.vercel.app` NO sirve como dominio autorizado.** Google
+exige un dominio que puedas verificar como tuyo en Search Console, y `vercel.app`
+es un dominio compartido de Vercel. Usa **`respondo.cl`**, que sí es de Respondo,
+y verifícalo primero en Search Console. Las URIs de redirección del cliente OAuth
+pueden seguir apuntando a `vercel.app`: son cosas distintas.
+
+**Sobre la verificación:** `adwords` es un permiso **sensible**, y la
+documentación de verificación de Google dice que las apps que piden permisos
+sensibles «must complete Google's OAuth app verification before being granted
+access». Lo que NO pude confirmar en la documentación oficial es qué pasa
+exactamente con una app publicada pero **sin** verificar —si funciona igual
+mostrando la pantalla de «Google no verificó esta app», que es el
+comportamiento que se observa en la práctica, o si queda bloqueada—. **No lo des
+por hecho:** publica, intenta conectar, y si aparece esa pantalla de advertencia,
+entra por *Configuración avanzada → Ir a Respondo (no seguro)*. Si en cambio te
+bloquea, hay que completar la verificación antes de seguir.
+
+**Cómo verificar:** en *Público*, el estado de publicación tiene que decir **En
+producción** y no **Prueba**. Y la prueba de verdad: una conexión que siga viva
+ocho días después.
+
+---
+
 ### G5. Conectar la cuenta de Impresora Color
 
 **Qué:** apretar el botón y elegir la cuenta.

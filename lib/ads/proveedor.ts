@@ -31,6 +31,7 @@ export type CodigoErrorAds =
   | "sin_conexion" // nunca se conectó
   | "token_vencido" // hay que reconectar
   | "sin_permiso" // el token no tiene el alcance necesario
+  | "nivel_acceso" // el proyecto de Cloud todavía no puede leer cuentas reales
   | "limite_api" // Meta pidió esperar
   | "cuenta_invalida" // la cuenta ya no existe o cambió
   | "red" // timeout / caída
@@ -67,6 +68,25 @@ export const ERRORES: Record<CodigoErrorAds, ErrorAds> = {
     mensaje:
       "La conexión con Meta no tiene permiso para leer esta cuenta publicitaria. Suele pasar cuando el usuario que autorizó ya no administra la cuenta.",
     accion: "Revisar la conexión",
+    href: "/marketing/integraciones",
+  },
+  /**
+   * ⚠️ Código propio, y no `sin_permiso`, por una razón concreta.
+   *
+   * Cuando el proyecto de Google Cloud todavía está en nivel «Prueba», Google
+   * rechaza cualquier consulta a una cuenta real. Eso se traducía a
+   * `sin_permiso`, cuyo texto dice «falta permiso para leer esa cuenta
+   * publicitaria en Meta» — y mandaba a revisar permisos de Meta que estaban
+   * perfectos, por un problema que vive en otra consola y de otra plataforma.
+   * La explicación correcta existía, pero viajaba en `detalle`, que nunca se
+   * muestra. Un diagnóstico que el producto tiene y no dice es un diagnóstico
+   * que no tiene.
+   */
+  nivel_acceso: {
+    codigo: "nivel_acceso",
+    mensaje:
+      "El proyecto de Google Cloud todavía tiene nivel de acceso «Prueba», así que Google no deja leer cuentas reales. No es un problema de tu cuenta ni de los permisos que diste: se sube en la consola de Cloud, en «Google Ads API» → «Apply for access», y con el nivel Explorador basta.",
+    accion: "Reintentar",
     href: "/marketing/integraciones",
   },
   limite_api: {

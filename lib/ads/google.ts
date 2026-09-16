@@ -318,10 +318,22 @@ async function accessToken(refreshToken: string): Promise<ResultadoAds<string>> 
     const j = (await r.json().catch(() => ({}))) as Record<string, unknown>;
     if (!r.ok || !j.access_token) {
       /**
-       * `invalid_grant` es EL error frecuente y tiene una sola causa real: el
-       * dueño revocó el acceso desde su cuenta de Google, o se borró el
-       * cliente OAuth. Se traduce a «reconectar» y no a «error de red», porque
-       * es lo único que el dueño puede arreglar solo.
+       * `invalid_grant` es EL error frecuente. Tiene TRES causas, y conviene
+       * tenerlas escritas porque llevan a lugares distintos:
+       *
+       *  1. ⚠️ **La app de OAuth está en estado «Prueba».** Google emite
+       *     refresh tokens que VENCEN A LOS 7 DÍAS cuando el proyecto tiene
+       *     tipo de usuario externo y estado de publicación «Testing»
+       *     —documentado por Google, no es un rumor—. Es la causa más probable
+       *     durante el montaje de una instalación nueva, y no se arregla
+       *     reconectando: se arregla publicando la app. Reconectar compra otros
+       *     siete días.
+       *  2. El dueño revocó el acceso desde su cuenta de Google.
+       *  3. Se borró o se rotó el cliente OAuth del proyecto.
+       *
+       * Se traduce a «reconectar» y no a «error de red» porque reconectar es lo
+       * único que el dueño puede hacer solo en los tres casos, aunque en el
+       * primero sea un parche.
        */
       const codigo = String(j.error ?? "");
       if (codigo === "invalid_grant") return fallo("token_vencido", codigo);
@@ -363,7 +375,7 @@ function traducirErrorGoogle<T>(status: number, cuerpo: unknown): ResultadoAds<T
   // lo que hay que arreglar ya no es un token: es el nivel del proyecto.
   if (/DEVELOPER_TOKEN_NOT_APPROVED|DEVELOPER_TOKEN_PROHIBITED|ACCESS_LEVEL|NOT_APPROVED/i.test(texto)) {
     return fallo(
-      "sin_permiso",
+      "nivel_acceso",
       "El proyecto de Google Cloud todavía tiene acceso de prueba: Google no deja consultar cuentas reales con ese nivel. " +
         "Se sube en la consola de Cloud, en la página «Google Ads API», con «Apply for access».",
     );

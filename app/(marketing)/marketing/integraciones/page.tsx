@@ -10,6 +10,9 @@ import {
   pruebaDeLecturaGoogle,
 } from "@/lib/ads/google";
 import { estadoDePauta, type EstadoItem } from "@/lib/ads/estado";
+import { mensajeDeFalla } from "@/lib/ads/canales";
+import { ERRORES, type CodigoErrorAds } from "@/lib/ads/proveedor";
+import type { Proveedor } from "@/lib/ads/canal";
 import { formatearMonto, formatearNumero } from "@/lib/ads/moneda";
 import { resolverRango } from "@/lib/ads/periodos";
 import { EVENTOS } from "@/lib/ads/eventos";
@@ -44,6 +47,11 @@ const AVISOS: Record<string, { texto: string; tono: "ok" | "error" }> = {
   red: { texto: "No pudimos comunicarnos con Meta. Suele ser pasajero.", tono: "error" },
 };
 
+/** ¿Este texto de la URL es uno de nuestros códigos de error? */
+function esCodigoDeError(v: string): v is CodigoErrorAds {
+  return Object.prototype.hasOwnProperty.call(ERRORES, v);
+}
+
 const PILDORA: Record<EstadoItem, { texto: string; tono: "ok" | "alerta" | "neutro" }> = {
   ok: { texto: "Activo", tono: "ok" },
   atencion: { texto: "Requiere atención", tono: "alerta" },
@@ -64,11 +72,30 @@ const PILDORA: Record<EstadoItem, { texto: string; tono: "ok" | "alerta" | "neut
  * eventos, el identificador del conjunto de datos, la prueba de lectura— vive
  * dentro de «Ver detalles», que se abre solo cuando alguien lo necesita.
  */
-export default async function Integraciones({ searchParams }: { searchParams: Promise<{ e?: string; ok?: string }> }) {
+export default async function Integraciones({
+  searchParams,
+}: {
+  searchParams: Promise<{ e?: string; ok?: string; p?: string }>;
+}) {
   const usuario = await exigirPermisoPortal("gestionar_integraciones");
   const demo = await modoDemo();
   const params = await searchParams;
-  const aviso = AVISOS[params.ok ?? ""] ?? AVISOS[params.e ?? ""];
+  /**
+   * El aviso, con el nombre de la plataforma correcta.
+   *
+   * `AVISOS` nombra a Meta en cada texto porque se escribió cuando era el único
+   * canal. Cuando el fallo viene de Google (`?p=google`), el mensaje sale del
+   * catálogo de errores traducido con `mensajeDeFalla`, que es la función que
+   * ya hace esa sustitución para el resto del módulo. Así no hay dos catálogos
+   * de textos que se desincronicen.
+   */
+  const proveedorDelAviso: Proveedor = params.p === "google" ? "google" : "meta";
+  const codigo = params.e ?? "";
+  const aviso =
+    AVISOS[params.ok ?? ""] ??
+    (proveedorDelAviso === "google" && esCodigoDeError(codigo)
+      ? { texto: mensajeDeFalla("google", codigo), tono: "error" as const }
+      : AVISOS[codigo]);
 
   const [estado, conexion, clienteRow, conexionGoogle] = await Promise.all([
     estadoDePauta(usuario.clienteId),
