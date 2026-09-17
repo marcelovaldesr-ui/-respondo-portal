@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useState } from "react";
 import { BotonesHora, CalendarioMes, claveDia, mesDeClave, tituloDeClave } from "@/components/agenda/piezas";
 
 /**

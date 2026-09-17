@@ -317,7 +317,6 @@ export default function PanelChat({
   const color = meta?.color ?? "var(--indigo)";
   const contactoVisible = d?.contacto ?? adelanto?.contacto ?? "";
   const empleadoVisible = d?.empleadoNombre ?? adelanto?.empleadoNombre ?? "";
-  const modoVisible = d?.modo ?? adelanto?.modo ?? "bot";
   /**
    * Hay conversación abierta: basta la selección. Antes exigía detalle o
    * adelanto, y al volver con "atrás" en el teléfono (sin adelanto, detalle
