@@ -107,6 +107,14 @@ Cuidas al cliente después de la compra. Mides satisfacción, detectas problemas
 
 export type MensajePrueba = { rol: "cliente" | "empleado" | "humano"; texto: string };
 
+export function resolverCanalPrompt(canal?: string): { nombre: string; mensajes: string } {
+  const esInstagram = canal?.toLowerCase() === "instagram";
+  return {
+    nombre: esInstagram ? "Instagram" : "WhatsApp",
+    mensajes: esInstagram ? "Instagram Direct (máx. 1.000 caracteres)" : "WhatsApp real",
+  };
+}
+
 /**
  * Arma el prompt completo. Devuelve null si el empleado no es del cliente
  * (validación de acceso: el empleadoId llega desde el navegador).
@@ -122,6 +130,8 @@ export async function armarPrompt(
    * clientes sin agenda.
    */
   bloqueExtra?: string,
+  /** Canal por el que entra la conversación (ej: 'whatsapp', 'instagram'). */
+  canal?: string,
 ): Promise<string | null> {
   const supa = db();
 
@@ -147,11 +157,14 @@ export async function armarPrompt(
       .eq("activa", true),
   ]);
 
+  const { nombre: canalNombre, mensajes: canalMensajes } = resolverCanalPrompt(canal);
+
   const ficha = (empleado.ficha_personalidad ?? {}) as Record<string, unknown>;
   const nucleo = NUCLEO.replace(/\{\{nombre_publico\}\}/g, String(empleado.nombre_publico ?? "Asistente"))
     .replace(/\{\{nombre_negocio\}\}/g, String(cliente.data?.nombre ?? "el negocio"))
     .replace(/\{\{rubro\}\}/g, String(cliente.data?.rubro ?? ""))
-    .replace(/\{\{canal\}\}/g, "WhatsApp")
+    .replace(/\{\{canal\}\}/g, canalNombre)
+    .replace(/de WhatsApp real/g, `de ${canalMensajes}`)
     .replace(
       /\{\{palabras_clave_escalacion\}\}/g,
       String(ficha.palabras_clave_escalacion ?? "reclamo, urgente, abogado, garantía"),

@@ -4,7 +4,12 @@ import { db } from "@/lib/db";
 import { mediaDeMensajeWaha, reanclarUrlWaha } from "@/lib/waha";
 import { configPorCliente, resolverMediaMeta, hostDeMediaPermitido } from "@/lib/whatsapp";
 import { clienteDeFirmaExterna } from "@/lib/externo";
-import { cabecerasDeTipo } from "@/lib/mediaSegura";
+import {
+  cabecerasDeTipo,
+  descargarMediaSegura,
+  crearStreamConLimiteBytes,
+  LIMITE_BYTES_MEDIA,
+} from "@/lib/mediaSegura";
 
 export const dynamic = "force-dynamic";
 // La resolución bajo demanda puede requerir que WAHA descargue el archivo
@@ -160,6 +165,13 @@ export async function GET(request: NextRequest) {
     urlFinal = res.url;
     mime = mime || res.mime || "";
     cabeceras = { Authorization: `Bearer ${cfg.token}` };
+  } else if (guardado.startsWith("https://") && hostDeMediaPermitido(guardado)) {
+    // ── Meta / Instagram CDN Directo ─────────────────────────────────────────
+    // Los adjuntos de Instagram llegan con URL firmada directa de los CDNs de Meta
+    // (*.cdninstagram.com, *.fbcdn.net, lookaside.fbsbx.com).
+    // No deben re-anclarse a WAHA ni mandar token de WhatsApp en cabeceras.
+    urlFinal = guardado;
+    cabeceras = undefined;
   } else {
     // ── WAHA ─────────────────────────────────────────────────────────────────
     let url = guardado;
@@ -191,6 +203,26 @@ export async function GET(request: NextRequest) {
     cabeceras = key ? { "X-Api-Key": key } : undefined;
   }
 
+  // ── DESCARGA SEGURA CON CONTROL DE REDIRECTS Y LÍMITE DE STREAMING ────────
+  if (guardado.startsWith("meta:") || (guardado.startsWith("https://") && hostDeMediaPermitido(guardado))) {
+    const resDescarga = await descargarMediaSegura(urlFinal, { cabeceras });
+    if (!resDescarga.ok) {
+      return new NextResponse(resDescarga.error, { status: resDescarga.status });
+    }
+    const seguro = cabecerasDeTipo(
+      mime || resDescarga.contentType,
+      (msg.media_nombre as string | null) || "archivo",
+    );
+    return new NextResponse(resDescarga.stream, {
+      status: 200,
+      headers: {
+        ...seguro,
+        "Cache-Control": "private, max-age=31536000, immutable",
+      },
+    });
+  }
+
+  // Fallback para transporte WAHA (re-anclado sobre host local configurado)
   try {
     const r = await fetch(urlFinal, {
       headers: cabeceras,
@@ -203,26 +235,15 @@ export async function GET(request: NextRequest) {
       (msg.media_nombre as string | null) || "archivo",
     );
     const largo = Number(r.headers.get("content-length") ?? "0");
-    if (Number.isFinite(largo) && largo > 25 * 1024 * 1024) {
+    if (Number.isFinite(largo) && largo > LIMITE_BYTES_MEDIA) {
       return new NextResponse("Archivo demasiado grande", { status: 413 });
     }
-    // Reenviar como stream: un adjunto grande ya no se copia entero a memoria
-    // dentro de la función serverless.
-    return new NextResponse(r.body, {
+    if (!r.body) return new NextResponse("No disponible", { status: 502 });
+    const streamSeguro = crearStreamConLimiteBytes(r.body, LIMITE_BYTES_MEDIA);
+    return new NextResponse(streamSeguro, {
       status: 200,
       headers: {
-        // Se muestra inline (imágenes/PDF) pero con nombre por si se descarga.
         ...seguro,
-        /**
-         * CACHÉ LARGA, A PROPÓSITO (21-ago-2026). Antes eran 5 minutos, así que
-         * volver a abrir una conversación volvía a descargar cada foto — y en
-         * Cloud API cada descarga son DOS viajes a Meta, no uno.
-         *
-         * El contenido de un mensaje es inmutable: la foto que mandó alguien el
-         * martes es la misma para siempre. `private` mantiene la caché en el
-         * navegador de esa persona y fuera de cualquier CDN compartida, que es
-         * lo correcto para material de un cliente.
-         */
         "Cache-Control": "private, max-age=31536000, immutable",
       },
     });

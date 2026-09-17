@@ -469,7 +469,7 @@ export async function responderSiBot(params: {
     }
   }
 
-  const prompt = await armarPrompt(clienteId, empleadoId, aPrompt(hist), agenda?.texto);
+  const prompt = await armarPrompt(clienteId, empleadoId, aPrompt(hist), agenda?.texto, canal);
   if (!prompt) return { accion: "sin_prompt" };
 
   let datos: RespuestaMotor;

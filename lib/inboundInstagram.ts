@@ -195,14 +195,27 @@ export async function manejarEntranteInstagram(
       }
     }
 
-    const { data: contactoGuardado } = await supa
+    // NO DEGRADAR ETIQUETAS: un contacto existente conserva su etiqueta (cliente,
+    // proveedor, etc.) y su etapa. Solo un contacto NUEVO se inicializa como 'lead'.
+    const { data: existente } = await supa
       .from("ed_contactos")
-      .upsert(
-        { cliente_id: ctx.clienteId, chat_id: chatId, etiqueta: "lead" },
-        { onConflict: "cliente_id,chat_id" },
-      )
-      .select("nombre, telefono, etiquetas, etapa, etapa_manual, ultimo_mensaje_en, ultimo_mensaje_rol")
+      .select("nombre, telefono, etiquetas, etapa, etapa_manual, ultimo_mensaje_en, ultimo_mensaje_rol, etiqueta")
+      .eq("cliente_id", ctx.clienteId)
+      .eq("chat_id", chatId)
       .maybeSingle();
+
+    let contactoGuardado = existente;
+    if (!existente) {
+      const { data: nuevo } = await supa
+        .from("ed_contactos")
+        .upsert(
+          { cliente_id: ctx.clienteId, chat_id: chatId, etiqueta: "lead" },
+          { onConflict: "cliente_id,chat_id", ignoreDuplicates: true },
+        )
+        .select("nombre, telefono, etiquetas, etapa, etapa_manual, ultimo_mensaje_en, ultimo_mensaje_rol, etiqueta")
+        .maybeSingle();
+      contactoGuardado = nuevo;
+    }
 
     /**
      * El nombre de quien escribe, la PRIMERA vez que escribe.
