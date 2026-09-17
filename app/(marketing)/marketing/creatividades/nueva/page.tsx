@@ -1,5 +1,6 @@
 import { exigirPermisoPortal } from "@/lib/auth";
-import { contextoComercial } from "@/lib/marketing/contextoComercial";
+import { obtenerPerfilMarketing } from "@/lib/marketing/perfilMarketing";
+import { proyeccionCreative } from "@/lib/marketing/perfilMarketingCore";
 import { completitud } from "@/lib/marketing/contextoComercialCore";
 import { obtenerBorrador } from "@/lib/marketing/campanas";
 import { listarCreatividades, obtenerCreatividad } from "@/lib/marketing/creatividades";
@@ -26,12 +27,13 @@ export default async function NuevaCreatividad({
   const usuario = await exigirPermisoPortal("generar_insights");
   const demo = await modoDemo();
   const sp = await searchParams;
-  const [ctx, campana, base, almacen] = await Promise.all([
-    contextoComercial(usuario.clienteId, { demo }),
+  const [perfil, campana, base, almacen] = await Promise.all([
+    obtenerPerfilMarketing(usuario.clienteId, { demo }),
     sp.campana ? obtenerBorrador(usuario.clienteId, sp.campana, demo) : null,
     sp.variarDe ? obtenerCreatividad(usuario.clienteId, sp.variarDe, demo) : null,
     listarCreatividades(usuario.clienteId, demo),
   ]);
+  const creativeCtx = proyeccionCreative(perfil);
   /**
    * ⭐ LA INTEGRACIÓN REAL CON EL ARQUITECTO (Fase 6).
    *
@@ -77,15 +79,16 @@ export default async function NuevaCreatividad({
       />
       {!almacen.disponible && <AvisoMigracion />}
       <GeneradorAnuncio
-        negocio={ctx.contexto.negocio.nombre}
-        contexto={ctx.contexto}
-        completitud={completitud(ctx.contexto)}
-        contextoEditado={ctx.editado}
+        negocio={perfil.business.nombre}
+        contexto={creativeCtx}
+        completitud={completitud(creativeCtx)}
+        contextoEditado={perfil.editado}
         demo={demo}
         campanaId={campana?.id ?? null}
         campanaNombre={campana?.nombre ?? null}
         base={base ? { ...base } : null}
         plantilla={plantilla}
+        perfil={perfil}
       />
     </main>
   );

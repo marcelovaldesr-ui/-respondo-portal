@@ -1,6 +1,6 @@
 import { generarJSON } from "@/lib/gemini";
 import { resolverRango } from "@/lib/ads/periodos";
-import { contextoDeMarca, contextoEnTexto } from "@/lib/marketing/contextoMarca";
+import { obtenerPerfilMarketing, proyeccionCopiloto } from "@/lib/marketing/perfilMarketing";
 import {
   parsearRespuestaCopiloto,
   promptCopiloto,
@@ -27,15 +27,16 @@ export async function preguntarAlCopiloto(entrada: {
   demo?: boolean;
 }): Promise<{ ok: true; datos: RespuestaCopiloto } | { ok: false; motivo: string }> {
   const rango = resolverRango(entrada.periodo ?? "30d");
-  const [panorama, marca] = await Promise.all([
+  const [panorama, perfil] = await Promise.all([
     cargarMarketing(entrada.clienteId, rango, { demo: entrada.demo }),
-    contextoDeMarca(entrada.clienteId, entrada.demo),
+    obtenerPerfilMarketing(entrada.clienteId, { demo: entrada.demo }),
   ]);
 
+  const proy = proyeccionCopiloto(perfil);
   const prompt = promptCopiloto({
     pregunta: entrada.pregunta,
     panorama,
-    contextoMarca: contextoEnTexto(marca),
+    contextoMarca: proy.contextoTexto,
     hilo: entrada.hilo ?? [],
   });
 

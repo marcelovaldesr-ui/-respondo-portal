@@ -1,6 +1,6 @@
 import { generarJSON } from "@/lib/gemini";
-import { contextoComercial } from "@/lib/marketing/contextoComercial";
 import { contextoComercialEnTexto, completitud, type ContextoComercial } from "@/lib/marketing/contextoComercialCore";
+import { obtenerPerfilMarketing, proyeccionCreative } from "@/lib/marketing/perfilMarketing";
 import {
   ctaValidoPara,
   parsearPaqueteGoogle,
@@ -55,7 +55,9 @@ export async function generarCopy(
 ): Promise<ResultadoCopy> {
   const t0 = Date.now();
 
-  const c = opciones.contexto ?? (await contextoComercial(clienteId, { demo: opciones.demo })).contexto;
+  const c =
+    opciones.contexto ??
+    proyeccionCreative(await obtenerPerfilMarketing(clienteId, { demo: opciones.demo }));
 
   /**
    * Si no sabemos qué vende el negocio, no se genera.

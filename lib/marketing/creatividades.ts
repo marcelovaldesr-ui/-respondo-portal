@@ -1,6 +1,7 @@
 import { db } from "@/lib/db";
 import { generarJSON } from "@/lib/gemini";
-import { contextoDeMarca, contextoEnTexto } from "@/lib/marketing/contextoMarca";
+import { obtenerPerfilMarketing, proyeccionCreative } from "@/lib/marketing/perfilMarketing";
+import { contextoComercialEnTexto } from "@/lib/marketing/contextoComercialCore";
 import {
   parsearPaquete,
   promptCreativo,
@@ -115,8 +116,9 @@ export async function generarPaquete(
   pedido: Omit<PedidoCreativo, "contexto">,
   demo = false,
 ): Promise<ResultadoGeneracion> {
-  const marca = await contextoDeMarca(clienteId, demo);
-  const prompt = promptCreativo({ ...pedido, contexto: contextoEnTexto(marca) });
+  const perfil = await obtenerPerfilMarketing(clienteId, { demo });
+  const creativeCtx = proyeccionCreative(perfil);
+  const prompt = promptCreativo({ ...pedido, contexto: contextoComercialEnTexto(creativeCtx) });
   try {
     const crudo = await generarJSON(prompt, { timeoutMs: 30_000, thinkingBudget: 512 });
     const paquete = parsearPaquete(crudo);
@@ -318,11 +320,14 @@ export async function guardarCreatividad(
    * ellas y, si la base todavía no las tiene, se guarda sin ellas: se pierde
    * el origen y la estrategia, no el trabajo de la persona.
    */
-  const extra = {
-    origen: entrada.origen ?? "generada",
-    texto_manual: entrada.textoManual ?? false,
-    estrategia: entrada.estrategia ?? null,
-  };
+  const extra: Record<string, unknown> = {};
+  if (entrada.origen !== undefined) extra.origen = entrada.origen;
+  else if (!id) extra.origen = "generada";
+
+  if (entrada.textoManual !== undefined) extra.texto_manual = entrada.textoManual;
+  else if (!id) extra.texto_manual = false;
+
+  if (entrada.estrategia !== undefined) extra.estrategia = entrada.estrategia;
 
   if (id) {
     let r = await modificarEn(clienteId, TABLA, id, { ...fila, ...extra });

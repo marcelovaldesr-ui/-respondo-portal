@@ -1,6 +1,6 @@
 import { notFound } from "next/navigation";
 import { exigirPermisoPortal } from "@/lib/auth";
-import { contextoDeMarca } from "@/lib/marketing/contextoMarca";
+import { obtenerPerfilMarketing, proyeccionContextoMarca } from "@/lib/marketing/perfilMarketing";
 import { obtenerBorrador } from "@/lib/marketing/campanas";
 import { listarCreatividades } from "@/lib/marketing/creatividades";
 import { opcionesDemo } from "@/lib/marketing/modo";
@@ -25,12 +25,13 @@ export default async function NuevaCampana({ searchParams }: { searchParams: Pro
    * misma línea copiada: dos definiciones que podían separarse y dejar la
    * píldora que ve el dueño diciendo una cosa y el estado guardado otra.
    */
-  const [marca, creatividades, borrador, capacidades] = await Promise.all([
-    contextoDeMarca(usuario.clienteId, demo),
+  const [perfil, creatividades, borrador, capacidades] = await Promise.all([
+    obtenerPerfilMarketing(usuario.clienteId, { demo }),
     listarCreatividades(usuario.clienteId, demo),
     sp.id ? obtenerBorrador(usuario.clienteId, sp.id, demo) : null,
     demo ? Promise.resolve(capacidadesDemo(variante)) : capacidadesDe(usuario.clienteId),
   ]);
+  const marca = proyeccionContextoMarca(perfil, demo);
   /**
    * Un `?id=` que no existe abría el asistente EN BLANCO, con el id todavía en
    * la URL: la persona rehacía los ocho pasos y recién al guardar se enteraba

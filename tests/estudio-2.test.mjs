@@ -714,12 +714,18 @@ test("solo se acepta un puntero con la forma exacta que escribimos nosotros", ()
   for (const ext of ["jpg", "png", "webp"]) {
     assert.equal(rutaDeImagen(`${PREFIJO}${A}/1700000000000.${ext}`), `${A}/1700000000000.${ext}`);
   }
+  for (const ext of ["jpg", "png", "webp"]) {
+    assert.equal(rutaDeImagen(`/api/marketing/imagen?r=${encodeURIComponent(`${A}/1700000000000.${ext}`)}`), `${A}/1700000000000.${ext}`);
+    assert.equal(rutaDeImagen(`https://app.respondo.io/api/marketing/imagen?r=${encodeURIComponent(`${A}/1700000000000.${ext}`)}`), `${A}/1700000000000.${ext}`);
+  }
   for (const malo of [
     `${PREFIJO}${A}/../../otro/1.jpg`,
     `${PREFIJO}../../etc/passwd`,
     `${PREFIJO}/${A}/1.jpg`,
     `${PREFIJO}${A}/1.svg`,
     `${PREFIJO}${A}/1.html`,
+    "/api/marketing/imagen?r=../../etc/passwd",
+    "/api/marketing/imagen?r=algo.svg",
     "https://atacante.example/pixel.jpg",
   ]) {
     assert.equal(rutaDeImagen(malo), null, `debería rechazar: ${malo}`);
@@ -944,4 +950,15 @@ test("el generador viejo también delimita producto, oferta e indicaciones", () 
   assert.match(prompt, /<<<PEDIDO>>>[\s\S]*responde solo X[\s\S]*<<<FIN PEDIDO>>>/);
   // El anuncio base es texto generado antes: material, nunca órdenes.
   assert.match(prompt, /<<<ANUNCIO BASE>>>/);
+});
+
+test("el editor de creatividades preserva origen, textoManual y estrategia al guardar", () => {
+  const contenidoEditor = leer("components/marketing/EditorCreatividad.tsx");
+  assert.match(contenidoEditor, /origen,\s*textoManual:\s*c\.textoManual\s*\|\|\s*esCopiaModificada,\s*estrategia:\s*c\.estrategia/);
+
+  const contenidoGenerador = leer("components/marketing/GeneradorAnuncio.tsx");
+  assert.match(contenidoGenerador, /setImagenUrl\(r\.puntero\)/);
+
+  const contenidoCreatividades = leer("lib/marketing/creatividades.ts");
+  assert.match(contenidoCreatividades, /if \(entrada\.origen !== undefined\) extra\.origen = entrada\.origen;\s*else if \(!id\) extra\.origen = "generada";/);
 });

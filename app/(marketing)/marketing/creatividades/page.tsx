@@ -3,7 +3,7 @@ import { exigirPermisoPortal } from "@/lib/auth";
 import { resolverRango } from "@/lib/ads/periodos";
 import { formatearNumero } from "@/lib/ads/moneda";
 import { cargarMarketing } from "@/lib/marketing/datos";
-import { contextoDeMarca } from "@/lib/marketing/contextoMarca";
+import { obtenerPerfilMarketing, proyeccionContextoMarca } from "@/lib/marketing/perfilMarketing";
 import { opcionesDemo } from "@/lib/marketing/modo";
 import { PLANTILLAS_CREATIVAS } from "@/lib/marketing/plantillasCreativas";
 import Cabecera from "@/components/marketing/Cabecera";
@@ -29,10 +29,11 @@ export default async function Creatividades({ searchParams }: { searchParams: Pr
   const usuario = await exigirPermisoPortal("generar_insights");
   const { demo, variante } = await opcionesDemo();
   const rango = resolverRango((await searchParams).p ?? "30d");
-  const [p, marca] = await Promise.all([
+  const [p, perfil] = await Promise.all([
     cargarMarketing(usuario.clienteId, rango, { demo, variante }),
-    contextoDeMarca(usuario.clienteId, demo),
+    obtenerPerfilMarketing(usuario.clienteId, { demo }),
   ]);
+  const marca = proyeccionContextoMarca(perfil, demo);
   const hay = p.creatividades.length > 0;
   const conRendimiento = p.creatividades.filter((c) => c.rendimiento && c.estado !== "archivada").length;
   // El resumen tiene que cuadrar con las pestañas de abajo: «8 creatividades ·

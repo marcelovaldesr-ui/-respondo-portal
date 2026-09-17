@@ -36,8 +36,19 @@ export const TIPO_DE: Record<Extension, string> = {
 
 /** La ruta dentro del bucket, o null si el valor no es un puntero nuestro. */
 export function rutaDeImagen(valor: string | null | undefined): string | null {
-  if (!valor || !valor.startsWith(PREFIJO)) return null;
-  const ruta = valor.slice(PREFIJO.length);
+  if (!valor) return null;
+  let ruta: string | null = null;
+  if (valor.startsWith(PREFIJO)) {
+    ruta = valor.slice(PREFIJO.length);
+  } else if (valor.includes("/api/marketing/imagen")) {
+    try {
+      const url = new URL(valor, "http://localhost");
+      ruta = url.searchParams.get("r");
+    } catch {
+      ruta = null;
+    }
+  }
+  if (!ruta) return null;
   // Sin traversal, sin rutas absolutas, sin vacíos: `<uuid>/<numero>.<ext>`.
   if (!/^[0-9a-f-]{8,}\/[0-9]+\.(jpg|png|webp)$/i.test(ruta)) return null;
   return ruta;

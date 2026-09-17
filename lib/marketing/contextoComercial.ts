@@ -169,6 +169,54 @@ const VIDA_MS = 10 * 60 * 1000;
 
 
 
+export function limpiarMemoriaContexto(clienteId: string): void {
+  EN_MEMORIA.delete(clienteId);
+}
+
+export function fusionarDocumentoConPerfil(
+  docExistente: Record<string, unknown> | null | undefined,
+  contexto: ContextoComercial,
+  editado: boolean,
+): Record<string, unknown> {
+  const doc = docExistente ?? {};
+  const perfilViejo = (doc.perfil && typeof doc.perfil === "object" ? doc.perfil : null) as Record<string, unknown> | null;
+
+  const business = perfilViejo?.business ?? doc.business ?? null;
+  const brand = perfilViejo?.brand ?? doc.brand ?? null;
+  const marketing = perfilViejo?.marketing ?? doc.marketing ?? null;
+  const invalidation = perfilViejo?.invalidation ?? doc.invalidation ?? null;
+  const overrides = perfilViejo?.overrides ?? doc.overrides ?? {};
+
+  const docFusionado: Record<string, unknown> = {
+    ...contexto,
+    editado,
+    actualizadoEn: new Date().toISOString(),
+  };
+
+  if (business) docFusionado.business = business;
+  if (brand) docFusionado.brand = brand;
+  docFusionado.commercial = contexto;
+  if (marketing) docFusionado.marketing = marketing;
+  if (invalidation) docFusionado.invalidation = invalidation;
+  docFusionado.overrides = overrides;
+
+  if (business && brand && marketing) {
+    docFusionado.perfil = {
+      ...(perfilViejo ?? {}),
+      business,
+      brand,
+      commercial: contexto,
+      marketing,
+      invalidation: invalidation ?? { stale: false, razonStale: null, fichasHash: null, ultimoCalculo: new Date().toISOString() },
+      overrides,
+      editado,
+      actualizadoEn: new Date().toISOString(),
+    };
+  }
+
+  return docFusionado;
+}
+
 async function leerGuardado(clienteId: string): Promise<{ fila: Record<string, unknown> | null; persistible: boolean }> {
   const { data, error } = await leerDe(clienteId, TABLA).limit(1);
   if (error) return { fila: null, persistible: false };
@@ -176,8 +224,14 @@ async function leerGuardado(clienteId: string): Promise<{ fila: Record<string, u
   return { fila: filas[0] ?? null, persistible: true };
 }
 
-async function guardar(clienteId: string, contexto: ContextoComercial, id?: string): Promise<boolean> {
-  const fila = { documento: contexto as unknown as Record<string, unknown>, actualizado_en: new Date().toISOString() };
+async function guardar(
+  clienteId: string,
+  contexto: ContextoComercial,
+  id?: string,
+  docExistente?: Record<string, unknown> | null,
+): Promise<boolean> {
+  const doc = fusionarDocumentoConPerfil(docExistente, contexto, false);
+  const fila = { documento: doc, actualizado_en: new Date().toISOString() };
   const r = id ? await modificarEn(clienteId, TABLA, id, fila) : await insertarEn(clienteId, TABLA, fila);
   return !r.error;
 }
@@ -253,7 +307,7 @@ export async function contextoComercial(
     opciones.reconstruir && editado && fila?.documento
       ? conservarCorrecciones(reconstruido, fila.documento as unknown as ContextoComercial)
       : reconstruido;
-  if (persistible) await guardar(clienteId, contexto, fila?.id as string | undefined);
+  if (persistible) await guardar(clienteId, contexto, fila?.id as string | undefined, fila?.documento as Record<string, unknown> | null);
   // Un contexto que no se pudo construir NO se cachea: sería fijar el error.
   if (contexto.vende.length) EN_MEMORIA.set(clienteId, { contexto, hasta: Date.now() + VIDA_MS });
   return {
@@ -306,8 +360,10 @@ export async function corregirContexto(
   EN_MEMORIA.delete(clienteId);
   const { fila, persistible } = await leerGuardado(clienteId);
   if (!persistible) return { ok: false, motivo: "Falta aplicar la migración 310 para guardar el contexto." };
+  const docExistente = (fila?.documento ?? null) as Record<string, unknown> | null;
+  const docFusionado = fusionarDocumentoConPerfil(docExistente, contexto, true);
   const cuerpo = {
-    documento: contexto as unknown as Record<string, unknown>,
+    documento: docFusionado,
     editado: true,
     actualizado_en: new Date().toISOString(),
   };

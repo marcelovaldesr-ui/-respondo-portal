@@ -12,7 +12,7 @@ import {
 } from "@/app/(marketing)/marketing/creatividades/acciones";
 import { CTAS_META, LIMITES } from "@/lib/marketing/creatividadesCore";
 import { formatearMonto, formatearNumero } from "@/lib/ads/moneda";
-import { OBJETIVOS, type Creatividad, type FormatoCreatividad, type PlataformaCreatividad } from "@/lib/marketing/tipos";
+import { OBJETIVOS, type Creatividad, type FormatoCreatividad, type PlataformaCreatividad, type OrigenCreatividad } from "@/lib/marketing/tipos";
 import VistaPreviaAnuncio from "@/components/marketing/VistaPreviaAnuncio";
 import { EstadoDeCreatividad } from "@/components/marketing/Estado";
 import { Ico } from "@/components/marketing/Iconos";
@@ -54,6 +54,7 @@ export default function EditorCreatividad({
   const [formato, setFormato] = useState<FormatoCreatividad>(c.formato);
   const [imagenPrompt, setImagenPrompt] = useState(c.imagenPrompt ?? "");
   const [imagenUrl, setImagenUrl] = useState<string | null>(c.imagenUrl);
+  const [origen, setOrigen] = useState<OrigenCreatividad>(c.origen);
   const [editandoImagen, setEditandoImagen] = useState(false);
   const [superficie, setSuperficie] = useState<"feed" | "historia">(c.formato === "9:16" ? "historia" : "feed");
   const [ocupado, setOcupado] = useState<"" | "imagen" | "guardar" | "estado" | "duplicar" | "eliminar">("");
@@ -79,6 +80,12 @@ export default function EditorCreatividad({
     setAviso(null);
     setOcupado("guardar");
     iniciar(async () => {
+      const esCopiaModificada =
+        titular !== c.titular ||
+        texto !== c.texto ||
+        gancho !== c.gancho ||
+        cta !== c.cta;
+
       const r = await guardarCreatividadAccion(
         {
           nombre,
@@ -97,6 +104,9 @@ export default function EditorCreatividad({
           estado: c.estado,
           campanaId: c.campanaId,
           varianteDe: c.varianteDe,
+          origen,
+          textoManual: c.textoManual || esCopiaModificada,
+          estrategia: c.estrategia,
         },
         c.id,
       );
@@ -116,6 +126,7 @@ export default function EditorCreatividad({
       if (!r.ok) return setAviso({ tono: "error", texto: r.motivo });
       if (r.demo) return setAviso({ tono: "error", texto: "En demostración la imagen es de muestra y no se guarda." });
       setImagenUrl(r.url);
+      setOrigen("generada");
       setEditandoImagen(false);
       setAviso({ tono: "ok", texto: "Imagen generada. Guarda para conservarla." });
     });

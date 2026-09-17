@@ -121,6 +121,15 @@ export async function eliminarCreatividadAccion(id: string): Promise<{ ok: boole
 
 import { contextoComercial, corregirContexto } from "@/lib/marketing/contextoComercial";
 import { completitud, type ContextoComercial } from "@/lib/marketing/contextoComercialCore";
+import {
+  obtenerPerfilMarketing,
+  actualizarPerfilMarketing,
+  proyeccionCreative,
+} from "@/lib/marketing/perfilMarketing";
+import {
+  validarParcialPerfil,
+  type PerfilNegocioMarketing,
+} from "@/lib/marketing/perfilMarketingCore";
 import { generarCopy, type ResultadoCopy } from "@/lib/marketing/copy";
 import type { PedidoCopy } from "@/lib/marketing/copyCore";
 import { promptDeImagen, direccionEnPalabras } from "@/lib/marketing/visualCore";
@@ -201,7 +210,9 @@ export async function generarCopyAccion(pedido: PedidoCopy): Promise<ResultadoCo
   const demo = await modoDemo();
   const topado = await cupoDisponible(usuario.clienteId, "texto");
   if (topado) return { ok: false, motivo: topado };
-  return generarCopy(usuario.clienteId, pedido, { demo });
+  const perfil = await obtenerPerfilMarketing(usuario.clienteId, { demo });
+  const creativeCtx = proyeccionCreative(perfil);
+  return generarCopy(usuario.clienteId, pedido, { demo, contexto: creativeCtx });
 }
 
 /**
@@ -220,7 +231,8 @@ export async function generarImagenDirigidaAccion(
   const usuario = await obtenerUsuarioConPermiso("generar_insights");
   if (!usuario) return { ok: false, motivo: "Sesión no válida." };
   const demo = await modoDemo();
-  const { contexto } = await contextoComercial(usuario.clienteId, { demo });
+  const perfil = await obtenerPerfilMarketing(usuario.clienteId, { demo });
+  const contexto = proyeccionCreative(perfil);
   const enPalabras = direccionEnPalabras(contexto, direccion, angulo, producto);
 
   if (demo) return { ok: true, url: IMAGENES_DEMO[formato] ?? IMAGENES_DEMO["1:1"], demo: true, enPalabras };
@@ -272,4 +284,34 @@ export async function piezasExistentesAccion(): Promise<PiezaExistente[]> {
   if (!usuario) return [];
   if (await modoDemo()) return [];
   return piezasExistentes(usuario.clienteId);
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   PERSONALIZACIÓN PROFUNDA — acciones del perfil unificado de marketing.
+   ══════════════════════════════════════════════════════════════════════════ */
+
+export async function perfilMarketingAccion(
+  refrescar = false,
+  reconstruir = false,
+): Promise<{ ok: true; perfil: PerfilNegocioMarketing } | { ok: false; motivo: string }> {
+  const usuario = await obtenerUsuarioConPermiso("generar_insights");
+  if (!usuario) return { ok: false, motivo: "Sesión no válida." };
+  const demo = await modoDemo();
+  const perfil = await obtenerPerfilMarketing(usuario.clienteId, { demo, refrescar, reconstruir });
+  return { ok: true, perfil };
+}
+
+export async function actualizarPerfilMarketingAccion(
+  parcial: Parameters<typeof actualizarPerfilMarketing>[1],
+): Promise<{ ok: boolean; motivo?: string }> {
+  const usuario = await obtenerUsuarioConPermiso("generar_insights");
+  if (!usuario) return { ok: false, motivo: "Sesión no válida." };
+  if (await modoDemo()) return { ok: false, motivo: DEMO_BLOQUEADO };
+  const validacion = validarParcialPerfil(parcial);
+  if (!validacion.valido) {
+    return { ok: false, motivo: validacion.motivo };
+  }
+  const r = await actualizarPerfilMarketing(usuario.clienteId, parcial);
+  if (r.ok) revalidatePath("/marketing", "layout");
+  return r;
 }

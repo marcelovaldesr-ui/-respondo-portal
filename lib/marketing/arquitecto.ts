@@ -1,5 +1,5 @@
 import { generarJSON } from "@/lib/gemini";
-import { contextoDeMarca, contextoEnTexto } from "@/lib/marketing/contextoMarca";
+import { obtenerPerfilMarketing, proyeccionArchitect } from "@/lib/marketing/perfilMarketing";
 import { traducirFalla } from "@/lib/marketing/fallas";
 import type { Proveedor } from "@/lib/ads/canal";
 import type { Senales } from "@/lib/ads/senales";
@@ -277,8 +277,9 @@ export async function disenarCampana(pedido: PedidoArquitecto): Promise<Resultad
    */
   const destino: Destino = elegido ?? (pedido.tieneWhatsapp && pedido.senales.conversaciones ? "whatsapp" : "sitio_web");
 
-  const contextoMarca = await contextoDeMarca(pedido.clienteId, pedido.demo);
-  const contexto = contextoEnTexto(contextoMarca);
+  const perfil = await obtenerPerfilMarketing(pedido.clienteId, { demo: pedido.demo });
+  const proy = proyeccionArchitect(perfil);
+  const contexto = proy.contextoTexto;
 
   /* 2. Lo que sí necesita un modelo. */
   let crudo: string;
@@ -311,7 +312,7 @@ export async function disenarCampana(pedido: PedidoArquitecto): Promise<Resultad
   const porQue = (obj.porQueCanal ?? {}) as Record<string, unknown>;
   const destinoDetalle =
     destino === "whatsapp"
-      ? contextoMarca.whatsapp ?? ""
+      ? (proy.whatsappConectado ? "WhatsApp conectado" : "")
       : destino === "sitio_web"
         ? pedido.sitio ?? ""
         : "";
@@ -332,7 +333,7 @@ export async function disenarCampana(pedido: PedidoArquitecto): Promise<Resultad
               const hasta = Number(o.edadHasta);
               return {
                 nombre: texto(o.nombre, 80) || "Conjunto principal",
-                ubicacion: texto(o.ubicacion, 120) || contextoMarca.zona || "",
+                ubicacion: texto(o.ubicacion, 120) || proy.ubicacion || "",
                 edadDesde: Number.isFinite(desde) ? Math.max(18, Math.min(65, desde)) : null,
                 edadHasta: Number.isFinite(hasta) ? Math.max(18, Math.min(65, hasta)) : null,
                 intereses: lista(o.intereses).map((i) => texto(i, 60)).filter(Boolean).slice(0, 6),

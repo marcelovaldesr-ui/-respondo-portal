@@ -14,6 +14,7 @@ import { LIMITES } from "@/lib/marketing/creatividadesCore";
 import { ctasPara, type Angulo, type DireccionVisual, type PaqueteMeta, type Variante } from "@/lib/marketing/copyCore";
 import type { Completitud, ContextoComercial } from "@/lib/marketing/contextoComercialCore";
 import type { PlantillaCreativa } from "@/lib/marketing/plantillasCreativas";
+import type { PerfilNegocioMarketing } from "@/lib/marketing/perfilMarketingCore";
 import { OBJETIVOS, type FormatoCreatividad, type OrigenCreatividad, type PlataformaCreatividad } from "@/lib/marketing/tipos";
 import VistaPreviaAnuncio from "@/components/marketing/VistaPreviaAnuncio";
 import ContextoUsado from "@/components/marketing/ContextoUsado";
@@ -102,6 +103,7 @@ export default function GeneradorAnuncio({
   campanaNombre,
   base,
   plantilla,
+  perfil,
 }: {
   negocio: string;
   contexto: ContextoComercial;
@@ -113,6 +115,7 @@ export default function GeneradorAnuncio({
   campanaNombre?: string | null;
   base?: BaseVariacion | null;
   plantilla?: PlantillaCreativa | null;
+  perfil?: PerfilNegocioMarketing;
 }) {
   const router = useRouter();
   const [paso, setPaso] = useState<1 | 2 | 3>(1);
@@ -236,7 +239,7 @@ export default function GeneradorAnuncio({
       const r = await subirDisenoAccion(datos);
       setOcupado("");
       if (!r.ok) return setError(r.motivo);
-      setImagenUrl(r.url);
+      setImagenUrl(r.puntero);
       setImagenEsDemo(false);
       setOrigen("subida");
       setAvisoImagen(r.aviso);
@@ -345,7 +348,7 @@ export default function GeneradorAnuncio({
                   </div>
                 )}
 
-                <ContextoUsado contexto={contexto} completitud={completitud} demo={demo} editado={contextoEditado} />
+                <ContextoUsado contexto={contexto} completitud={completitud} demo={demo} editado={contextoEditado} perfil={perfil} />
 
                 <div className="mk-campo-rotulo mt-6">¿Qué quieres lograr?</div>
                 <div className="grid gap-2 sm:grid-cols-2">
@@ -690,9 +693,9 @@ export default function GeneradorAnuncio({
                             key={p.id}
                             type="button"
                             className="mk-opcion overflow-hidden p-0"
-                            aria-pressed={imagenUrl === p.url}
+                            aria-pressed={imagenUrl === p.puntero || imagenUrl === p.url}
                             onClick={() => {
-                              setImagenUrl(p.url);
+                              setImagenUrl(p.puntero);
                               setImagenEsDemo(false);
                               setOrigen("existente");
                               setAvisoImagen(null);

@@ -1,8 +1,13 @@
 "use client";
 
 import { useState, useTransition } from "react";
-import { contextoDelNegocioAccion, corregirContextoAccion } from "@/app/(marketing)/marketing/creatividades/acciones";
+import {
+  contextoDelNegocioAccion,
+  corregirContextoAccion,
+  actualizarPerfilMarketingAccion,
+} from "@/app/(marketing)/marketing/creatividades/acciones";
 import type { Completitud, ContextoComercial } from "@/lib/marketing/contextoComercialCore";
+import type { PerfilNegocioMarketing } from "@/lib/marketing/perfilMarketingCore";
 
 /**
  * LO QUE RESPONDO ENTIENDE DE TU NEGOCIO.
@@ -35,12 +40,14 @@ export default function ContextoUsado({
   completitud,
   demo,
   editado = false,
+  perfil,
 }: {
   contexto: ContextoComercial;
   completitud: Completitud;
   demo: boolean;
   /** El contexto tiene correcciones humanas guardadas. */
   editado?: boolean;
+  perfil?: PerfilNegocioMarketing;
 }) {
   const [abierto, setAbierto] = useState(false);
   const [editando, setEditando] = useState(false);
@@ -49,6 +56,8 @@ export default function ContextoUsado({
   const [error, setError] = useState<string | null>(null);
   const [, iniciar] = useTransition();
 
+  const prioridadInicial = perfil?.marketing.prioridadActual ?? (contexto as unknown as { marketing?: { prioridadActual?: string } }).marketing?.prioridadActual ?? "";
+  const [prioridad, setPrioridad] = useState(prioridadInicial);
   const [vende, setVende] = useState(contexto.vende.map((v) => v.nombre).join("\n"));
   const [audiencia, setAudiencia] = useState(contexto.audiencia.descripcion);
   const [problema, setProblema] = useState(contexto.propuesta.problema);
@@ -73,6 +82,13 @@ export default function ContextoUsado({
         ofertas: oferta.trim() ? [{ texto: oferta.trim(), fuente: "declarado" as const, reserva: null }] : [],
       });
       if (!r.ok) return setError(r.motivo ?? "No se pudo guardar.");
+
+      if (!demo && prioridad !== prioridadInicial) {
+        await actualizarPerfilMarketingAccion({
+          marketing: { prioridadActual: prioridad.trim() || null },
+        });
+      }
+
       setEditando(false);
       setGuardado(true);
     });
@@ -114,10 +130,27 @@ export default function ContextoUsado({
         <div className="border-t px-4 py-4" style={{ borderColor: "var(--borde)" }}>
           {!editando ? (
             <>
+              {prioridadInicial && (
+                <Dato rotulo="Prioridad comercial actual" valor={prioridadInicial} />
+              )}
               <Dato rotulo="Vende" valor={contexto.vende.map((v) => (v.precio ? `${v.nombre} (${v.precio})` : v.nombre)).join(" · ")} />
+              {perfil?.marketing.productosFoco && perfil.marketing.productosFoco.length > 0 && (
+                <Dato rotulo="Productos foco" valor={perfil.marketing.productosFoco.join(" · ")} />
+              )}
               <Dato rotulo="Le vende a" valor={contexto.audiencia.descripcion || contexto.audiencia.rubros.join(", ")} />
+              {perfil?.business.tipoNegocio && (
+                <Dato rotulo="Tipo de negocio" valor={perfil.business.tipoNegocio.toUpperCase()} />
+              )}
               <Dato rotulo="Resuelve" valor={contexto.propuesta.problema} />
               <Dato rotulo="Oferta vigente" valor={contexto.ofertas.map((o) => o.texto).join(" · ")} vacio="ninguna, y no se va a inventar una" />
+              {perfil?.marketing.ofertasTemporales && perfil.marketing.ofertasTemporales.length > 0 && (
+                <Dato
+                  rotulo="Ofertas con vencimiento"
+                  valor={perfil.marketing.ofertasTemporales
+                    .map((o) => `${o.titulo}: ${o.detalle} (${o.activo ? `vigente hasta ${o.expiraEn}` : `expirada el ${o.expiraEn}`})`)
+                    .join(" · ")}
+                />
+              )}
               <Dato
                 rotulo="Puede respaldar"
                 valor={contexto.pruebas.map((p) => p.texto).join(" · ")}
@@ -129,6 +162,9 @@ export default function ContextoUsado({
                   contexto.voz.emojis === "nunca" ? "sin emojis" : "con algún emoji"
                 }${contexto.voz.origen === "declarada" ? " (según lo que escribiste tú)" : " (inferido del rubro)"}`}
               />
+              {perfil?.brand.elementosProhibidos && perfil.brand.elementosProhibidos.length > 0 && (
+                <Dato rotulo="Prohibiciones de marca" valor={perfil.brand.elementosProhibidos.join(" · ")} />
+              )}
 
               {contexto.descartados.length > 0 && (
                 <details className="mt-3">
@@ -178,6 +214,15 @@ export default function ContextoUsado({
             </>
           ) : (
             <>
+              <label className="mb-3 block">
+                <span className="mk-campo-rotulo">Prioridad comercial actual (opcional)</span>
+                <input
+                  className="campo"
+                  value={prioridad}
+                  onChange={(e) => setPrioridad(e.target.value)}
+                  placeholder="Ej: Impulsar pendones express para eventos de fin de semana"
+                />
+              </label>
               <label className="mb-3 block">
                 <span className="mk-campo-rotulo">Qué vende (uno por línea)</span>
                 <textarea className="campo" rows={5} value={vende} onChange={(e) => setVende(e.target.value)} />

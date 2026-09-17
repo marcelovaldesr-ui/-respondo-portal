@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { db } from "@/lib/db";
 import { obtenerUsuarioConPermiso } from "@/lib/auth";
 import { PLANTILLAS } from "@/lib/plantillasRubro";
+import { marcarPerfilStale } from "@/lib/marketing/perfilMarketing";
 
 /**
  * PRIMER CAMINO DE ESCRITURA DEL PORTAL.
@@ -37,6 +38,7 @@ export async function crearFicha(formData: FormData) {
     contenido,
     vigente: true,
   });
+  await marcarPerfilStale(clienteId, "conocimiento_modificado").catch(() => {});
   revalidatePath("/informacion");
 }
 
@@ -52,6 +54,7 @@ export async function actualizarFicha(formData: FormData) {
     .update({ titulo, contenido, actualizado_en: new Date().toISOString() })
     .eq("id", id)
     .eq("cliente_id", clienteId); // barrera de acceso
+  await marcarPerfilStale(clienteId, "conocimiento_modificado").catch(() => {});
   revalidatePath("/informacion");
 }
 
@@ -66,6 +69,7 @@ export async function alternarVigencia(formData: FormData) {
     .update({ vigente: !vigente })
     .eq("id", id)
     .eq("cliente_id", clienteId);
+  await marcarPerfilStale(clienteId, "conocimiento_modificado").catch(() => {});
   revalidatePath("/informacion");
 }
 
@@ -75,6 +79,7 @@ export async function eliminarFicha(formData: FormData) {
   if (!id) return;
 
   await db().from("ed_conocimiento").delete().eq("id", id).eq("cliente_id", clienteId);
+  await marcarPerfilStale(clienteId, "conocimiento_modificado").catch(() => {});
   revalidatePath("/informacion");
 }
 
@@ -96,5 +101,6 @@ export async function cargarPlantilla(formData: FormData) {
         vigente: true,
       })),
     );
+  await marcarPerfilStale(clienteId, "conocimiento_modificado").catch(() => {});
   revalidatePath("/informacion");
 }
