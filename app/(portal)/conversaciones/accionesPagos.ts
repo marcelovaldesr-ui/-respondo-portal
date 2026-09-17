@@ -329,3 +329,18 @@ export async function avisarPedidoListo(formData: FormData): Promise<{
   if (!r.ok) return { ok: false, error: r.error };
   return { ok: true };
 }
+
+/** Concilia forzadamente un pago de Flow server-to-server. */
+export async function conciliarPagoAction(formData: FormData): Promise<{ ok: boolean; error?: string; estado?: string }> {
+  const usuario = await obtenerUsuarioConPermiso("operar_conversaciones");
+  if (!usuario) return { ok: false, error: "Sesión no válida" };
+
+  const pagoId = String(formData.get("pagoId") ?? "");
+  if (!pagoId) return { ok: false, error: "Falta ID de pago" };
+
+  const { conciliarPagoFlow } = await import("@/lib/flow/flowPagos");
+  const r = await conciliarPagoFlow(pagoId, usuario.clienteId);
+  if (!r.ok) return { ok: false, error: r.error };
+  return { ok: true, estado: r.estado };
+}
+

@@ -40,7 +40,7 @@
 export const MONTO_MAX = 10_000_000;
 export const MONTO_MIN = 1_000;
 
-export type EstadoPago = "pendiente" | "pagado" | "anulado";
+export type EstadoPago = "pendiente" | "pagado" | "anulado" | "rechazado" | "expirado";
 
 /**
  * Tope de la referencia del propio negocio. Un folio es corto por naturaleza
@@ -235,6 +235,8 @@ export function mensajeDeCobro(p: {
  */
 export function puedeCambiar(desde: EstadoPago, hacia: EstadoPago): boolean {
   if (desde === hacia) return false;
-  if (desde === "pendiente") return hacia === "pagado" || hacia === "anulado";
-  return false; // pagado y anulado son terminales
+  if (desde === "pendiente") {
+    return hacia === "pagado" || hacia === "anulado" || hacia === "rechazado" || hacia === "expirado";
+  }
+  return false; // pagado, anulado, rechazado y expirado son terminales
 }

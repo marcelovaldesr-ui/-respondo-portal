@@ -26,6 +26,12 @@ export type Pago = {
   pagadoEn: string | null;
   /** Folio del negocio (presupuesto/OT/pedido). Null si no se indicó. */
   referenciaExterna: string | null;
+  /** Pasarela proveedora: 'manual' o 'flow'. */
+  proveedor?: string | null;
+  /** ID de la orden en el proveedor (ej. flowOrder). */
+  proveedorOrden?: string | null;
+  /** Enlace directo de checkout si fue creado con proveedor dinámico. */
+  proveedorUrl?: string | null;
 };
 
 /** El enlace de pago del negocio, o null si no lo ha configurado. */
@@ -283,7 +289,8 @@ export async function pagosDeChat(p: {
       .order("creado_en", { ascending: false })
       .limit(20);
 
-  let r = await pedir(`${columnas}, referencia_externa`);
+  let r = await pedir(`${columnas}, referencia_externa, proveedor, proveedor_orden, proveedor_url`);
+  if (r.error) r = await pedir(`${columnas}, referencia_externa`);
   if (r.error) r = await pedir(columnas);
 
   const data = r.data as Record<string, unknown>[] | null;
@@ -297,6 +304,9 @@ export async function pagosDeChat(p: {
     creadoEn: f.creado_en as string,
     pagadoEn: (f.pagado_en as string | null) ?? null,
     referenciaExterna: (f.referencia_externa as string | null) ?? null,
+    proveedor: (f.proveedor as string | null) ?? "manual",
+    proveedorOrden: (f.proveedor_orden as string | null) ?? null,
+    proveedorUrl: (f.proveedor_url as string | null) ?? null,
   }));
 }
 
@@ -332,7 +342,8 @@ export async function listarPagos(p: {
     return q;
   };
 
-  let r = await pedir(`${columnas}, referencia_externa`);
+  let r = await pedir(`${columnas}, referencia_externa, proveedor, proveedor_orden, proveedor_url`);
+  if (r.error) r = await pedir(`${columnas}, referencia_externa`);
   if (r.error) r = await pedir(columnas);
 
   const filas = (r.data as Record<string, unknown>[] | null) ?? [];
@@ -358,6 +369,9 @@ export async function listarPagos(p: {
     creadoEn: f.creado_en as string,
     pagadoEn: (f.pagado_en as string | null) ?? null,
     referenciaExterna: (f.referencia_externa as string | null) ?? null,
+    proveedor: (f.proveedor as string | null) ?? "manual",
+    proveedorOrden: (f.proveedor_orden as string | null) ?? null,
+    proveedorUrl: (f.proveedor_url as string | null) ?? null,
     // Un chat de Instagram no es un teléfono: «+ig:1436…» confundiría.
     contacto:
       nombreDe.get(f.chat_id as string) ||

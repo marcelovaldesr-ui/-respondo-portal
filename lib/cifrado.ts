@@ -54,7 +54,9 @@ export type Proposito =
    */
   | "ads-google-token"
   /** `state` firmado del OAuth de Google Ads. */
-  | "ads-google-estado";
+  | "ads-google-estado"
+  /** SecretKey de Flow.cl para firma HMAC de pagos. */
+  | "flow-secret";
 
 function clave(proposito: Proposito): Buffer {
   const base = process.env.SUPABASE_SERVICE_ROLE_KEY;

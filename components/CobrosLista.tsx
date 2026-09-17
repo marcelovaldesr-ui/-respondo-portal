@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import Link from "next/link";
-import { marcarPago } from "@/app/(portal)/conversaciones/accionesPagos";
+import { marcarPago, conciliarPagoAction } from "@/app/(portal)/conversaciones/accionesPagos";
 import { formatearMonto } from "@/lib/pagosCore";
 import type { PagoListado } from "@/lib/pagos";
 import { ESTADO_COBRO } from "@/lib/estadoComercialVista";
@@ -48,6 +48,24 @@ export function CobrosLista({ pagos: iniciales }: { pagos: PagoListado[] }) {
     }
   };
 
+  const conciliar = async (p: PagoListado) => {
+    if (ocupado) return;
+    setOcupado(p.id);
+    setError(null);
+    try {
+      const fd = new FormData();
+      fd.set("pagoId", p.id);
+      const r = await conciliarPagoAction(fd);
+      if (r.ok && r.estado) {
+        setPagos((xs) => xs.map((x) => (x.id === p.id ? { ...x, estado: r.estado as PagoListado["estado"] } : x)));
+      } else {
+        setError(r.error ?? "No se pudo conciliar con Flow");
+      }
+    } finally {
+      setOcupado(null);
+    }
+  };
+
   if (!pagos.length) {
     return (
       <div className="tarjeta p-8 text-center" style={{ color: "var(--muted)" }}>
@@ -75,17 +93,45 @@ export function CobrosLista({ pagos: iniciales }: { pagos: PagoListado[] }) {
               <div className="flex items-baseline gap-2">
                 <span className="cifra text-[15px] font-bold">{formatearMonto(p.monto)}</span>
                 <Estado tono={e.tono}>{e.label}</Estado>
+                {p.proveedor === "flow" && (
+                  <span className="rounded bg-sky-50 px-1.5 py-0.5 text-[10.5px] font-medium text-sky-700 border border-sky-200">
+                    Flow
+                  </span>
+                )}
               </div>
               <div className="truncate text-[13px]" style={{ color: "var(--muted)" }}>
                 {p.contacto} · {p.concepto}
               </div>
-              <div className="cifra" style={{ fontSize: "var(--t-meta)", color: "var(--muted-2)" }}>
-                {p.referenciaExterna ? `N° ${p.referenciaExterna} · ` : ""}
-                {p.referencia} · {fechaCorta(p.creadoEn)}
+              <div className="cifra flex flex-wrap items-center gap-x-2" style={{ fontSize: "var(--t-meta)", color: "var(--muted-2)" }}>
+                <span>
+                  {p.referenciaExterna ? `N° ${p.referenciaExterna} · ` : ""}
+                  {p.referencia} · {fechaCorta(p.creadoEn)}
+                </span>
+                {p.proveedorUrl && (
+                  <a
+                    href={p.proveedorUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-sky-600 hover:underline"
+                  >
+                    Link Flow ↗
+                  </a>
+                )}
               </div>
             </div>
 
             <div className="flex shrink-0 items-center gap-1.5">
+              {p.estado === "pendiente" && p.proveedor === "flow" && (
+                <button
+                  onClick={() => void conciliar(p)}
+                  disabled={ocupado === p.id}
+                  className="rounded px-2.5 py-1 text-[12px] font-semibold disabled:opacity-50"
+                  style={{ background: "#E0F2FE", color: "#0369A1" }}
+                  title="Consultar estado real en Flow.cl"
+                >
+                  Revisar en Flow
+                </button>
+              )}
               {p.estado === "pendiente" && (
                 <>
                   <button
