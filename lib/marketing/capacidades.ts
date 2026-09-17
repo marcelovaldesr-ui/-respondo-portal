@@ -57,8 +57,10 @@ export type Capacidades = {
   puedeGenerarConIa: boolean;
   /** Las tablas de creatividades y borradores existen. */
   puedeGuardar: boolean;
-  /** Respondo puede publicar campañas en Meta por API. Hoy: no, a propósito. */
+  /** Respondo puede publicar campañas en Meta por API. */
   puedePublicarEnMeta: boolean;
+  /** Respondo puede publicar campañas en Google Ads por API. */
+  puedePublicarEnGoogle: boolean;
 
   /* ── Fase 6: el segundo canal ─────────────────────────────────────────── */
   /** La instalación tiene credenciales de Google Ads (proyecto Cloud propio). */
@@ -78,16 +80,6 @@ export type Capacidades = {
   hayCanalConectado: boolean;
 };
 
-/**
- * `PUEDE_PUBLICAR` vivía como constante local en un archivo de acciones y el
- * asistente dibujaba «No disponible» con texto fijo, sin leerla. Si algún día
- * se habilita, la pantalla seguiría diciendo que no. Ahora es una sola cosa.
- *
- * Publicar por API exige el permiso `ads_management` y la revisión de la
- * aplicación en Meta. No se pidió: Respondo es de solo lectura sobre la cuenta
- * publicitaria, y esa es una decisión de producto, no una limitación temporal.
- */
-const PUEDE_PUBLICAR_EN_META = false;
 
 /** La instalación tiene motor de IA. Igual que Meta: es de la instalación. */
 export function iaConfigurada(): boolean {
@@ -117,7 +109,8 @@ export function capacidadesDemo(variante: VarianteDemo = "completo"): Capacidade
     cobroPorEnlace: completo,
     puedeGenerarConIa: iaConfigurada(),
     puedeGuardar: true,
-    puedePublicarEnMeta: PUEDE_PUBLICAR_EN_META,
+    puedePublicarEnMeta: false,
+    puedePublicarEnGoogle: false,
     puedeConectarGoogle: true,
     googleConectada: variante !== "meta",
     canales: [
@@ -159,7 +152,8 @@ export async function capacidadesDe(clienteId: string): Promise<Capacidades> {
     cobroPorEnlace: Boolean(cliente.pagoLink),
     puedeGenerarConIa: iaConfigurada(),
     puedeGuardar: true, // lo ajusta `cargarMarketing` según existan las tablas
-    puedePublicarEnMeta: PUEDE_PUBLICAR_EN_META,
+    puedePublicarEnMeta: metaConectada,
+    puedePublicarEnGoogle: Boolean(google?.conectado),
     puedeConectarGoogle: googleAdsConfigurado(),
     googleConectada: Boolean(google?.conectado),
     canales: canales.map((c) => ({

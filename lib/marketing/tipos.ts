@@ -247,6 +247,7 @@ export type BorradorCampana = {
   creatividadIds: string[];
   copies: { titular: string; texto: string; cta: string }[];
   estado: EstadoCampana;
+  metaCampaignId?: string;
   notas: string;
   creadoEn: string;
   actualizadoEn: string;

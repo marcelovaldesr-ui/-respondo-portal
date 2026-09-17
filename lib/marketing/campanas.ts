@@ -48,6 +48,7 @@ function desdeFila(f: Record<string, unknown>): BorradorCampana {
         }))
       : [],
     estado: (f.estado as EstadoCampana) ?? "borrador",
+    metaCampaignId: f.meta_campaign_id ? String(f.meta_campaign_id) : undefined,
     notas: String(f.notas ?? ""),
     creadoEn: String(f.creado_en ?? ""),
     actualizadoEn: String(f.actualizado_en ?? ""),
@@ -151,6 +152,49 @@ export async function eliminarBorrador(clienteId: string, id: string): Promise<b
   return !error && Boolean(data);
 }
 
+/**
+ * Registra el resultado de una publicación real (Meta o Google) en el borrador.
+ * Guarda los IDs nativos, el estado en la plataforma y marca el borrador como `publicada`.
+ */
+export async function registrarPublicacionCampana(
+  clienteId: string,
+  id: string,
+  resultado: import("@/lib/ads/publicacion").ResultadoPublicacion,
+): Promise<boolean> {
+  const borrador = await obtenerBorrador(clienteId, id);
+  if (!borrador) return false;
+
+  const planPrevio = (borrador.plan && typeof borrador.plan === "object" ? borrador.plan : {}) as Record<string, unknown>;
+  const planConPublicacion = {
+    ...planPrevio,
+    publicacion: {
+      plataforma: resultado.plataforma,
+      cuentaId: resultado.cuentaId,
+      campaignId: resultado.campaignId,
+      adGroupOrAdSetId: resultado.adGroupOrAdSetId,
+      adIds: resultado.adIds,
+      estadoPlataforma: resultado.status,
+      publicadoEn: resultado.createdAt,
+      urlNativa: resultado.urlNativa,
+      idempotencyKey: resultado.idempotencyKey,
+    },
+  };
+
+  const fila: Record<string, unknown> = {
+    estado: "publicada",
+    plan: planConPublicacion,
+    actualizado_en: new Date().toISOString(),
+  };
+
+  if (resultado.plataforma === "meta" && resultado.campaignId) {
+    fila.meta_campaign_id = resultado.campaignId;
+  }
+
+  const { data, error } = await modificarEn(clienteId, TABLA, id, fila);
+  return !error && Boolean(data);
+}
+
 const TABLA = "ed_mk_campanas" as const;
 
 export { borradorEnTexto } from "@/lib/marketing/campanasCore";
+

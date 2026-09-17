@@ -11,6 +11,8 @@ import VistaPreviaAnuncio from "@/components/marketing/VistaPreviaAnuncio";
 import { EstadoDeCampana } from "@/components/marketing/Estado";
 import { Ico } from "@/components/marketing/Iconos";
 import { urlDeImagen } from "@/lib/marketing/imagenes";
+import ModalPublicarCampana from "@/components/marketing/ModalPublicarCampana";
+import type { Proveedor } from "@/lib/ads/canal";
 
 /**
  * EL ASISTENTE DE CAMPAÑAS — hacer simple lo que Meta hace complejo.
@@ -95,7 +97,20 @@ export default function AsistenteCampana({
   const [aviso, setAviso] = useState<{ tono: "ok" | "error"; texto: string } | null>(null);
   const [copiado, setCopiado] = useState(false);
   const [confirmarBorrar, setConfirmarBorrar] = useState(false);
+  const [modalPublicar, setModalPublicar] = useState(false);
+  const [proveedorModal, setProveedorModal] = useState<Proveedor>("meta");
   const [, iniciar] = useTransition();
+
+  const abrirPublicar = (prov: Proveedor) => {
+    setProveedorModal(prov);
+    if (!id) {
+      guardar(() => {
+        setModalPublicar(true);
+      });
+    } else {
+      setModalPublicar(true);
+    }
+  };
 
   const seleccionadas = creatividades.filter((c) => creatividadIds.includes(c.id));
   const principal = seleccionadas[0] ?? null;
@@ -610,20 +625,36 @@ export default function AsistenteCampana({
                       {Ico.externo({ className: "h-4 w-4" })} Continuar en Meta
                     </a>
                   </div>
-                  {/* Publicar por API es una decisión de producto, no una
-                      limitación temporal: Respondo es de solo lectura sobre la
-                      cuenta publicitaria. Se dice sin nombrar permisos de OAuth,
-                      que al dueño no le dicen nada. */}
-                  <div className="mk-hundido mt-4 flex items-start gap-3 px-4 py-3" style={{ fontSize: "11.5px", color: "var(--muted)" }}>
-                    <span className="btn-chico shrink-0" aria-disabled="true" style={{ opacity: 0.5 }}>
-                      Publicar desde Respondo
-                    </span>
-                    <span>
-                      {puedePublicar
-                        ? "Disponible."
-                        : "Respondo lee tu cuenta publicitaria pero no la modifica: no crea, no pausa ni cambia presupuestos. La campaña se sube en Meta."}{" "}
-                      Nunca vas a ver «Publicada» acá sin que lo esté de verdad.
-                    </span>
+                  <div className="mt-5 rounded-lg border p-4" style={{ borderColor: "var(--borde)", background: "var(--fondo-2)" }}>
+                    <div className="flex items-baseline justify-between gap-2">
+                      <span className="font-semibold" style={{ fontSize: "13px" }}>
+                        Publicación nativa en plataforma
+                      </span>
+                      <span className="mk-pildora uppercase" style={{ fontSize: "10.5px" }}>
+                        Estado inicial: Pausada
+                      </span>
+                    </div>
+                    <p className="mt-1" style={{ fontSize: "12px", color: "var(--muted-2)" }}>
+                      Crea la campaña directamente en tu cuenta de Meta Ads o Google Ads. Se creará en estado <strong>PAUSADA</strong> para que no gaste hasta que la actives.
+                    </p>
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      <button
+                        type="button"
+                        className="btn-primario mk-btn-lg"
+                        onClick={() => abrirPublicar("meta")}
+                        disabled={ocupado !== "" || (!puedePublicar && !demo)}
+                      >
+                        {Ico.nueva({ className: "h-4 w-4" })} Publicar en Meta Ads
+                      </button>
+                      <button
+                        type="button"
+                        className="btn-suave mk-btn-lg"
+                        onClick={() => abrirPublicar("google")}
+                        disabled={ocupado !== ""}
+                      >
+                        {Ico.nueva({ className: "h-4 w-4" })} Publicar en Google Ads
+                      </button>
+                    </div>
                   </div>
                   <details className="mt-4">
                     <summary className="cursor-pointer font-semibold" style={{ fontSize: "11.5px", color: "var(--muted-2)" }}>
@@ -701,6 +732,23 @@ export default function AsistenteCampana({
           )}
         </div>
       </aside>
+
+      {modalPublicar && (
+        <ModalPublicarCampana
+          borradorId={id ?? ""}
+          nombreBorrador={nombre || entrada().nombre}
+          proveedorInicial={proveedorModal}
+          abierto={modalPublicar}
+          alCerrar={() => setModalPublicar(false)}
+          alPublicarExitoso={(res) => {
+            setEstado("publicada");
+            setAviso({
+              tono: "ok",
+              texto: `Campaña publicada exitosamente en ${res.plataforma === "meta" ? "Meta Ads" : "Google Ads"} (Pausada). ID: ${res.campaignId}`,
+            });
+          }}
+        />
+      )}
     </div>
   );
 }

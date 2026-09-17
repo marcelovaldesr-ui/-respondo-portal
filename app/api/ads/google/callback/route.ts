@@ -3,6 +3,7 @@ import { nombreCookieVinculo, vinculoValido } from "@/lib/oauthVinculo";
 import { db } from "@/lib/db";
 import { verificarEstado } from "@/lib/cifrado";
 import { origenCanonico } from "@/lib/origenes";
+import type { ErrorAds } from "@/lib/ads/proveedor";
 import {
   cifrarRefreshToken,
   cuentasDeGoogle,
@@ -11,6 +12,28 @@ import {
 } from "@/lib/ads/google";
 
 export const dynamic = "force-dynamic";
+
+/**
+ * ⚠️ EL DETALLE NO PUEDE SALIR A LA URL, PERO TAMPOCO PUEDE PERDERSE.
+ *
+ * `fallo()` guarda en `detalle` lo que Google respondió de verdad. Ese texto no
+ * viaja a la URL a propósito —puede traer fragmentos de la respuesta— pero
+ * hasta acá tampoco iba a ningún otro lado: se perdía en el `return`. El
+ * resultado práctico fue una tarde entera de diagnóstico a ciegas: la pantalla
+ * decía `respuesta_rara` y ese código tiene DOS orígenes que se arreglan de
+ * formas opuestas —el canje del código contra `oauth2.googleapis.com`, que es
+ * un problema de credenciales nuestras, y la primera llamada a la API de Ads,
+ * que es un problema de nivel de acceso o de token de desarrollador—. Sin el
+ * detalle no hay forma de saber cuál de los dos fue.
+ *
+ * Es el mismo principio que ya está escrito en `lib/ads/proveedor.ts`: un
+ * diagnóstico que el producto tiene y no dice es un diagnóstico que no tiene.
+ * Lo único que cambia acá es el destino correcto: el log del servidor, no la
+ * pantalla.
+ */
+function registrar(etapa: string, error: ErrorAds): void {
+  console.error(`[ads-google] falló ${etapa}:`, error.codigo, error.detalle ?? "(sin detalle)");
+}
 
 /**
  * ⚠️ `p=google` viaja en la URL y NO es un detalle cosmético.
@@ -64,7 +87,10 @@ export async function GET(request: NextRequest) {
   }
 
   const refresh = await intercambiarCodigoGoogleAds(codigo);
-  if (!refresh.ok) return volver(refresh.error.codigo);
+  if (!refresh.ok) {
+    registrar("el canje del código por el refresh token", refresh.error);
+    return volver(refresh.error.codigo);
+  }
 
   /**
    * Se preguntan las cuentas ANTES de guardar: si el token no llega a ninguna
@@ -73,7 +99,10 @@ export async function GET(request: NextRequest) {
    * ahora que dejar guardada una conexión que nunca va a mostrar nada.
    */
   const cuentas = await cuentasDeGoogle(refresh.datos);
-  if (!cuentas.ok) return volver(cuentas.error.codigo);
+  if (!cuentas.ok) {
+    registrar("la lectura de cuentas accesibles en la API de Ads", cuentas.error);
+    return volver(cuentas.error.codigo);
+  }
 
   const operativas = cuentas.datos.filter((c) => !c.administradora);
   if (!operativas.length) return volver("sin_cuentas");
