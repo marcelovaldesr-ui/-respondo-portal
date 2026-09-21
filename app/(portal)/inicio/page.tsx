@@ -3,6 +3,7 @@ import NecesitaAtencion from "@/components/inicio/NecesitaAtencion";
 import PorCerrarse from "@/components/inicio/PorCerrarse";
 import EquipoDigital from "@/components/inicio/EquipoDigital";
 import Resultados from "@/components/inicio/Resultados";
+import OperacionDeHoy from "@/components/inicio/OperacionDeHoy";
 import { exigirUsuarioPortal } from "@/lib/auth";
 import { tienePermiso } from "@/lib/permisos";
 import { formatearCLP } from "@/lib/resumen";
@@ -13,6 +14,7 @@ import { contarConversacionesActivas } from "@/lib/metricas";
 import { inicioDeMesChile } from "@/lib/fechas";
 import { contextoNegocio, panoramaInicio } from "@/lib/estadoComercial";
 import { resultadosInicio, resumenEquipo } from "@/lib/inicio";
+import { obtenerOperacionHoy } from "@/lib/operationsSummary";
 
 export const dynamic = "force-dynamic";
 
@@ -163,13 +165,14 @@ export default async function Inicio() {
   const conversacionesP = contarConversacionesActivas(usuario.clienteId, inicioDeMesChile(), supa).catch(() => null);
   const resultadosP = conversacionesP.then((n) => resultadosInicio(usuario.clienteId, n));
 
-  const [panorama, resultados, cupo, cobros] = await Promise.all([
+  const [panorama, resultados, cupo, cobros, operacionHoy] = await Promise.all([
     panoramaP,
     resultadosP,
     esDueno ? estadoDeCupo(usuario.clienteId, supa) : Promise.resolve(null),
     esDueno
       ? resumenPagos(usuario.clienteId, supa).catch(() => ({ pendientes: 0, pagadosMes: 0, montoMes: 0 }))
       : Promise.resolve(null),
+    obtenerOperacionHoy(usuario.clienteId, supa).catch(() => null),
   ]);
   const equipo = await resumenEquipo(
     usuario.clienteId,
@@ -201,6 +204,7 @@ export default async function Inicio() {
 
       <div className="mt-5 grid items-start gap-x-8 gap-y-8 lg:grid-cols-[minmax(0,1fr)_360px]">
         <div className="min-w-0 space-y-8">
+          {operacionHoy && <OperacionDeHoy metricas={operacionHoy} />}
           <NecesitaAtencion
             filas={panorama.atencion}
             conteo={panorama.conteoAtencion}

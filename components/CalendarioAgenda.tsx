@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import Link from "next/link";
 import { fechaChileDe, horaChileAUtc, ZONA_AGENDA } from "@/lib/agendaCore";
 import { repartirEnCarriles } from "@/lib/calendarioCarriles";
 
@@ -37,6 +38,15 @@ export type CitaCal = {
   profesional: string;
   /** Ficha del servicio respondida al reservar (migración 277). */
   datosExtra?: Record<string, string> | null;
+  /** Commerce & Booking V1 */
+  tipo?: "cita" | "clase";
+  claseId?: string | null;
+  capacidadMaxima?: number;
+  cuposReservados?: number;
+  holdExpiraEn?: string | null;
+  anticipoPagado?: boolean;
+  anticipoMontoFijo?: number | null;
+  pagoId?: string | null;
 };
 
 export type ProfCal = { id: string; nombre: string };
@@ -56,7 +66,7 @@ const MARGEN = 12; // aire arriba y abajo para que la 1ª y última hora no se c
  */
 const PALETA = ["#1d3f8f", "#0e7490", "#7c2d63", "#b45309", "#2563eb", "#166534"];
 
-const ACTIVOS = ["agendada", "confirmada", "reagendada"];
+const ACTIVOS = ["agendada", "confirmada", "reagendada", "pendiente_pago"];
 
 /**
  * Colores por estado. Se subió el contraste respecto de la primera versión:
@@ -64,15 +74,18 @@ const ACTIVOS = ["agendada", "confirmada", "reagendada"];
  * se distinguía una hora confirmada de una por confirmar.
  */
 const ESTILO_ESTADO: Record<string, { etiqueta: string; fondo: string; borde: string; texto: string }> = {
+  pendiente_pago: { etiqueta: "Esperando anticipo", fondo: "#fef3c7", borde: "#f59e0b", texto: "#b45309" },
   agendada: { etiqueta: "Por confirmar", fondo: "var(--azul-suave)", borde: "var(--azul)", texto: "var(--azul)" },
   confirmada: { etiqueta: "Confirmada", fondo: "var(--ok-suave)", borde: "var(--ok)", texto: "var(--ok)" },
   reagendada: { etiqueta: "Reagendada", fondo: "var(--cian-suave)", borde: "var(--cian)", texto: "var(--cian)" },
   completada: { etiqueta: "Ya vino", fondo: "var(--fondo-fila)", borde: "var(--muted-2)", texto: "var(--muted)" },
   cancelada: { etiqueta: "Cancelada", fondo: "var(--fondo-hundido)", borde: "var(--borde-fuerte)", texto: "var(--muted-2)" },
   no_show: { etiqueta: "No llegó", fondo: "var(--coral-medio)", borde: "var(--peligro)", texto: "var(--peligro)" },
+  expirada: { etiqueta: "Hold expirado", fondo: "var(--fondo-hundido)", borde: "var(--muted-2)", texto: "var(--muted)" },
+  requiere_atencion: { etiqueta: "Requiere atención", fondo: "#fee2e2", borde: "#ef4444", texto: "#b91c1c" },
 };
 
-const LEYENDA = ["agendada", "confirmada", "completada", "no_show", "cancelada"];
+const LEYENDA = ["agendada", "confirmada", "pendiente_pago", "completada", "no_show", "cancelada"];
 
 const HATCH = "repeating-linear-gradient(45deg,#f8fafc,#f8fafc 6px,#f1f5f9 6px,#f1f5f9 12px)";
 
@@ -433,14 +446,21 @@ export default function CalendarioAgenda({
                     {delDia.map((c) => {
                       const est = estilo(c.estado);
                       const pasada = Date.parse(c.fin) < ahoraMs;
+                      const esClase = c.tipo === "clase";
+                      const esPendientePago = c.estado === "pendiente_pago";
+                      const cuposLibres = esClase ? Math.max(0, (c.capacidadMaxima ?? 0) - (c.cuposReservados ?? 0)) : null;
+
                       return (
                         <button
                           key={c.id}
                           onClick={() => setSeleccionada(c.id)}
                           className="flex w-full flex-wrap items-center gap-x-4 gap-y-2 rounded-[7px] border bg-white p-4 text-left transition hover:shadow-md"
                           style={{
-                            borderColor: "var(--borde)",
-                            borderLeft: `5px solid ${colorProf.get(c.profesionalId) ?? est.borde}`,
+                            borderColor: esClase ? "#d8b4fe" : esPendientePago ? "#fde68a" : "var(--borde)",
+                            borderLeft: esClase
+                              ? "5px solid #9333ea"
+                              : `5px solid ${colorProf.get(c.profesionalId) ?? est.borde}`,
+                            background: esClase ? "#faf5ff" : esPendientePago ? "#fffdf5" : "#fff",
                             opacity: pasada ? 0.72 : 1,
                           }}
                         >
@@ -453,16 +473,30 @@ export default function CalendarioAgenda({
                             </div>
                           </div>
                           <div className="min-w-0 flex-1">
-                            <div className="truncate text-[15px] font-semibold">{c.nombre}</div>
+                            <div className="flex items-center gap-2 truncate text-[15px] font-semibold">
+                              {esClase && (
+                                <span className="rounded bg-purple-100 px-1.5 py-0.5 text-[10.5px] font-bold text-purple-800 border border-purple-200">
+                                  Clase grupal
+                                </span>
+                              )}
+                              <span className="truncate">{c.nombre}</span>
+                            </div>
                             <div className="mt-0.5 truncate text-[13px]" style={{ color: "var(--muted)" }}>
-                              {c.servicio} · con {c.profesional}
+                              {esClase
+                                ? `Instructor: ${c.profesional} · ${c.cuposReservados ?? 0}/${c.capacidadMaxima ?? 0} cupos (${cuposLibres === 0 ? "LLENA" : `${cuposLibres} disponible${cuposLibres === 1 ? "" : "s"}`})`
+                                : `${c.servicio} · con ${c.profesional}`}
                             </div>
                             <div className="mt-0.5 truncate text-[12px]" style={{ color: "var(--muted-2)" }}>
-                              {c.telefono ?? "sin teléfono"} · reservó por {c.origen}
+                              {esClase
+                                ? "Cupos abiertos para reserva de alumnos"
+                                : `${c.telefono ?? "sin teléfono"} · reservó por ${c.origen}${
+                                    esPendientePago && c.anticipoMontoFijo
+                                      ? ` · Anticipo: $${c.anticipoMontoFijo.toLocaleString("es-CL")} CLP`
+                                      : ""
+                                  }`}
                             </div>
                           </div>
-                          {/* En celular el estado baja a su propia línea: si no,
-                              se come el ancho del servicio y todo sale cortado. */}
+                          {/* En celular el estado baja a su propia línea */}
                           <span className="basis-full pl-[80px] sm:ml-auto sm:basis-auto sm:pl-0">
                             <span className="pildora" style={{ background: est.fondo, color: est.texto }}>
                               {est.etiqueta}
@@ -581,11 +615,20 @@ export default function CalendarioAgenda({
                         const finRaw = minutosDelDia(cita.fin);
                         const fin = finRaw > ini ? finRaw : 24 * 60;
                         const est = estilo(cita.estado);
+                        const esClase = cita.tipo === "clase";
+                        const esPendientePago = cita.estado === "pendiente_pago";
                         const anulada = cita.estado === "cancelada" || cita.estado === "no_show";
                         const altoBloque = Math.max(22, (fin - ini) * PX_POR_MIN - 3);
                         const lineas = altoBloque >= 62 ? 3 : altoBloque >= 38 ? 2 : 1;
                         const activa = seleccionada === cita.id;
-                        const barra = vista === "semana" ? (colorProf.get(cita.profesionalId) ?? est.borde) : est.borde;
+                        const barra = esClase
+                          ? "#9333ea"
+                          : vista === "semana"
+                            ? (colorProf.get(cita.profesionalId) ?? est.borde)
+                            : est.borde;
+                        const fondoBloque = esClase ? "#f5f3ff" : esPendientePago ? "#fffbeb" : est.fondo;
+                        const textoBloque = esClase ? "#581c87" : esPendientePago ? "#92400e" : est.texto;
+
                         return (
                           <button
                             key={cita.id}
@@ -598,20 +641,20 @@ export default function CalendarioAgenda({
                               height: altoBloque,
                               left: `calc(${(carril / carriles) * 100}% + 3px)`,
                               width: `calc(${100 / carriles}% - 6px)`,
-                              background: est.fondo,
+                              background: fondoBloque,
                               borderLeft: `4px solid ${barra}`,
-                              color: est.texto,
+                              color: textoBloque,
                               opacity: anulada ? 0.7 : 1,
                               zIndex: activa ? 30 : 5,
                               boxShadow: activa
                                 ? "0 0 0 2px var(--azul)"
                                 : "0 1px 2px rgba(15,23,42,0.10)",
                             }}
-                            title={`${hhmm(ini)}–${hhmm(fin)} · ${cita.nombre} · ${cita.servicio} · ${cita.profesional} · ${est.etiqueta}`}
+                            title={`${hhmm(ini)}–${hhmm(fin)} · ${esClase ? "[Clase] " : ""}${cita.nombre} · ${cita.servicio} · ${cita.profesional} · ${est.etiqueta}`}
                           >
                             {lineas === 1 ? (
                               <div className={`truncate text-[11px] font-semibold ${anulada ? "line-through" : ""}`}>
-                                <span className="tabular-nums">{hhmm(ini)}</span> {cita.nombre}
+                                <span className="tabular-nums">{hhmm(ini)}</span> {esClase ? `👥 ${cita.nombre}` : cita.nombre}
                               </div>
                             ) : (
                               <>
@@ -624,12 +667,15 @@ export default function CalendarioAgenda({
                                   className={`truncate font-semibold ${anulada ? "line-through" : ""}`}
                                   style={{ fontSize: carriles > 1 ? "11.5px" : "12.5px" }}
                                 >
-                                  {cita.nombre}
+                                  {esClase ? `👥 ${cita.nombre}` : cita.nombre}
                                 </div>
                                 {lineas === 3 && (
                                   <div className="truncate text-[11px]" style={{ opacity: 0.85 }}>
-                                    {cita.servicio}
-                                    {vista === "semana" ? ` · ${cita.profesional}` : ""}
+                                    {esClase
+                                      ? `${cita.cuposReservados ?? 0}/${cita.capacidadMaxima ?? 0} cupos · ${cita.profesional}`
+                                      : esPendientePago
+                                        ? "⏳ Esperando anticipo"
+                                        : `${cita.servicio}${vista === "semana" ? ` · ${cita.profesional}` : ""}`}
                                   </div>
                                 )}
                               </>
@@ -654,13 +700,6 @@ export default function CalendarioAgenda({
 
       {/* ── Panel lateral de detalle ─────────────────────────────────── */}
       {detalle && (
-        /*
-          (Fase 2) El velo es más claro en pantalla grande. La agenda es una
-          pantalla de trabajo: mientras se confirma una hora, lo normal es
-          seguir mirando el resto del día ("¿tengo algo antes?"). Con el velo
-          al 35 % la lista de atrás quedaba ilegible. En celular el panel ocupa
-          toda la pantalla, así que el velo no se ve y da igual.
-        */
         <div
           className="fixed inset-0 z-50 flex justify-end"
           style={{ background: "rgba(15,23,42,0.18)" }}
@@ -674,33 +713,89 @@ export default function CalendarioAgenda({
             style={{ boxShadow: "-20px 0 50px -25px rgba(15,23,42,0.4)" }}
           >
             <div className="flex items-center justify-between gap-3">
-              <span className="pildora" style={{ background: estilo(detalle.estado).fondo, color: estilo(detalle.estado).texto }}>
-                {estilo(detalle.estado).etiqueta}
-              </span>
+              {detalle.tipo === "clase" ? (
+                <span className="pildora" style={{ background: "#ede9fe", color: "#6d28d9" }}>
+                  Clase grupal
+                </span>
+              ) : (
+                <span className="pildora" style={{ background: estilo(detalle.estado).fondo, color: estilo(detalle.estado).texto }}>
+                  {estilo(detalle.estado).etiqueta}
+                </span>
+              )}
               <button onClick={() => setSeleccionada(null)} className="btn-suave min-h-[36px] px-3 text-[12px]">
                 Cerrar
               </button>
             </div>
 
-            <h3 className="h-cifra">{detalle.nombre}</h3>
+            <h3 className="h-cifra mt-2">{detalle.nombre}</h3>
             <p className="mt-1 text-[14px]" style={{ color: "var(--muted)" }}>
-              {detalle.servicio}
+              {detalle.tipo === "clase" ? `Instructor: ${detalle.profesional}` : detalle.servicio}
             </p>
 
-            <div className="mt-4 rounded-[7px] border p-4" style={{ borderColor: "var(--borde)", background: "#fbfcfe" }}>
-              <Dato
-                etiqueta="Cuándo"
-                valor={`${mayus(etiquetaDia(fechaChileDe(new Date(detalle.inicio)), true))} · ${hhmm(minutosDelDia(detalle.inicio))}–${hhmm(minutosDelDia(detalle.fin))}`}
-              />
-              <Dato etiqueta="Con" valor={detalle.profesional} />
-              <Dato etiqueta="Contacto" valor={detalle.telefono ?? "sin teléfono"} />
-              <Dato etiqueta="Reservó por" valor={detalle.origen} />
-            </div>
+            {detalle.tipo === "clase" ? (
+              <div className="mt-4 rounded-[7px] border p-4" style={{ borderColor: "#e9d5ff", background: "#faf5ff" }}>
+                <Dato
+                  etiqueta="Horario"
+                  valor={`${mayus(etiquetaDia(fechaChileDe(new Date(detalle.inicio)), true))} · ${hhmm(minutosDelDia(detalle.inicio))}–${hhmm(minutosDelDia(detalle.fin))}`}
+                />
+                <Dato etiqueta="Instructor" valor={detalle.profesional} />
+                <Dato
+                  etiqueta="Cupos ocupados"
+                  valor={`${detalle.cuposReservados ?? 0} de ${detalle.capacidadMaxima ?? 0}`}
+                />
+                <Dato
+                  etiqueta="Disponibles"
+                  valor={
+                    (detalle.capacidadMaxima ?? 0) <= (detalle.cuposReservados ?? 0)
+                      ? "Clase llena"
+                      : `${(detalle.capacidadMaxima ?? 0) - (detalle.cuposReservados ?? 0)} cupos libres`
+                  }
+                />
+              </div>
+            ) : (
+              <div className="mt-4 rounded-[7px] border p-4" style={{ borderColor: "var(--borde)", background: "#fbfcfe" }}>
+                <Dato
+                  etiqueta="Cuándo"
+                  valor={`${mayus(etiquetaDia(fechaChileDe(new Date(detalle.inicio)), true))} · ${hhmm(minutosDelDia(detalle.inicio))}–${hhmm(minutosDelDia(detalle.fin))}`}
+                />
+                <Dato etiqueta="Con" valor={detalle.profesional} />
+                <Dato etiqueta="Contacto" valor={detalle.telefono ?? "sin teléfono"} />
+                <Dato etiqueta="Reservó por" valor={detalle.origen} />
+              </div>
+            )}
 
-            {/* Ficha del servicio (migración 277). Va en su propio bloque y no
-                mezclada con los datos de la hora: para una clínica esto es lo
-                PRIMERO que se mira al abrir la cita —RUT y previsión—, no un
-                detalle secundario. */}
+            {/* Aviso especial para citas individuales con anticipo pendiente */}
+            {detalle.tipo !== "clase" && detalle.estado === "pendiente_pago" && (
+              <div className="mt-4 rounded-[7px] border p-4 bg-amber-50 border-amber-200">
+                <div className="flex items-center gap-2 text-amber-900 font-bold text-[13.5px]">
+                  <span className="h-2 w-2 rounded-full bg-amber-500 animate-pulse" />
+                  Esperando pago de anticipo
+                </div>
+                <p className="mt-1 text-[13px] text-amber-800">
+                  El slot está en hold temporal. Si no se paga dentro del plazo límite, se liberará para otros clientes.
+                </p>
+                {detalle.anticipoMontoFijo && (
+                  <div className="mt-2 text-[13.5px] font-semibold text-amber-950">
+                    Monto anticipo: ${detalle.anticipoMontoFijo.toLocaleString("es-CL")} CLP
+                  </div>
+                )}
+                {detalle.holdExpiraEn && (
+                  <div className="mt-1 text-[12.5px] text-amber-800">
+                    Expira a las: {hhmm(minutosDelDia(detalle.holdExpiraEn))} hrs
+                  </div>
+                )}
+                {detalle.pagoId && (
+                  <Link
+                    href="/cobros"
+                    className="btn-suave mt-3 inline-block text-[12px] px-3 py-1.5"
+                  >
+                    Ver cobro asociado en Cobros →
+                  </Link>
+                )}
+              </div>
+            )}
+
+            {/* Ficha del servicio (migración 277) */}
             {detalle.datosExtra && Object.keys(detalle.datosExtra).length > 0 && (
               <div className="mt-3 rounded-[7px] border p-4" style={{ borderColor: "var(--borde)" }}>
                 <div className="eyebrow">Datos que dejó</div>
@@ -713,7 +808,16 @@ export default function CalendarioAgenda({
             )}
 
             <div className="mt-5 grid gap-2">
-              {ACTIVOS.includes(detalle.estado) ? (
+              {detalle.tipo === "clase" ? (
+                <div className="space-y-2">
+                  <Link
+                    href={`/agenda/clases?clase=${encodeURIComponent(detalle.claseId ?? detalle.id.replace("clase-", ""))}`}
+                    className="btn-primario block w-full text-center px-4 py-2.5 text-[14px]"
+                  >
+                    Ver inscritos y gestionar clase →
+                  </Link>
+                </div>
+              ) : ACTIVOS.includes(detalle.estado) ? (
                 <>
                   {detalle.estado !== "confirmada" && (
                     <form action={accionEstado}>
@@ -733,9 +837,6 @@ export default function CalendarioAgenda({
                     </a>
                   )}
 
-                  {/* (Fase 2) MOVER, no «cancelar y crear otra»: así la hora
-                      conserva su historial, su enlace de autogestión y su
-                      evento de Google, y los recordatorios se reprograman. */}
                   <MoverHora
                     cita={detalle}
                     profesionales={profesionales}

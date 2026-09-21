@@ -5,6 +5,7 @@ import { formatearSlot, ZONA_AGENDA, fechaChileDe, horaChileAUtc } from "@/lib/a
 import { estadoConexionGoogle } from "@/lib/estadoGoogleCore";
 import CalendarioAgenda, { type CitaCal, type FranjaSemanal, type ProfCal } from "@/components/CalendarioAgenda";
 import NuevaCita from "@/components/NuevaCita";
+import AgendaSubnav from "@/components/agenda/AgendaSubnav";
 import { crearCitaManual, cambiarEstadoCita, reabrirCita, reagendarCitaPortal } from "./acciones";
 
 export const dynamic = "force-dynamic";
@@ -30,10 +31,15 @@ type CitaFila = {
   estado: string;
   origen: string;
   profesional_id: string;
-  ed_servicios: { nombre: string } | null;
+  ed_servicios: { nombre: string; requiere_anticipo?: boolean; anticipo_monto_fijo?: number | null } | null;
   ed_profesionales: { nombre: string } | null;
   /** Ficha del servicio respondida al reservar (migración 277). */
   datos_extra?: Record<string, string> | null;
+  /** Commerce & Booking V1 */
+  clase_id?: string | null;
+  hold_expira_en?: string | null;
+  anticipo_pagado?: boolean | null;
+  pago_id?: string | null;
 };
 
 const ACTIVOS = ["agendada", "confirmada", "reagendada"];
@@ -133,6 +139,17 @@ export default async function Agenda({
       // intenta con la columna y se reintenta sin ella: el orden del deploy
       // deja de poder romper nada.
       (async () => {
+        const conCommerce = await supa
+          .from("ed_citas")
+          .select(
+            "id, nombre_contacto, telefono, chat_id, inicio, fin, estado, origen, profesional_id, datos_extra, clase_id, hold_expira_en, anticipo_pagado, pago_id, ed_servicios!servicio_id(nombre, requiere_anticipo, anticipo_monto_fijo), ed_profesionales!profesional_id(nombre)",
+          )
+          .eq("cliente_id", usuario.clienteId)
+          .gte("inicio", desdeIso)
+          .lte("inicio", hastaIso)
+          .order("inicio", { ascending: true });
+        if (!conCommerce.error) return conCommerce;
+
         const conFicha = await supa
           .from("ed_citas")
           .select(
@@ -155,7 +172,7 @@ export default async function Agenda({
       })(),
       supa
         .from("ed_clientes")
-        .select("slug, reservas_online")
+        .select("slug, reservas_online, commerce_booking_v1_activo")
         .eq("id", usuario.clienteId)
         .maybeSingle(),
     ]);
@@ -178,7 +195,7 @@ export default async function Agenda({
   const listaCitas = (citas ?? []) as unknown as CitaFila[];
 
   const profIds = listaProfesionales.map((p) => p.id);
-  const [{ data: horarios }, { data: bloqueos }] = await Promise.all([
+  const [{ data: horarios }, { data: bloqueos }, { data: clasesRaw }] = await Promise.all([
     profIds.length
       ? supa
           .from("ed_horarios")
@@ -192,6 +209,15 @@ export default async function Agenda({
       .eq("cliente_id", usuario.clienteId)
       .gte("hasta", new Date().toISOString())
       .order("desde"),
+    cliente?.commerce_booking_v1_activo
+      ? supa
+          .from("ed_clases")
+          .select("id, nombre, instructor, capacidad_maxima, cupos_reservados, horario_inicio, horario_fin, estado")
+          .eq("cliente_id", usuario.clienteId)
+          .gte("horario_inicio", desdeIso)
+          .lte("horario_inicio", hastaIso)
+          .neq("estado", "cancelada")
+      : Promise.resolve({ data: [] as Record<string, unknown>[] }),
   ]);
   const listaHorarios = (horarios ?? []) as { id: string; profesional_id: string; dia_semana: number; desde: string; hasta: string }[];
   const listaBloqueos = (bloqueos ?? []) as { id: string; profesional_id: string | null; desde: string; hasta: string; motivo: string | null }[];
@@ -201,19 +227,54 @@ export default async function Agenda({
   const configurada = serviciosActivos.length > 0 && profActivos.length > 0 && listaHorarios.length > 0;
 
   // ── Datos para el calendario ──────────────────────────────────────────
-  const citasCal: CitaCal[] = listaCitas.map((c) => ({
-    id: c.id,
-    inicio: c.inicio,
-    fin: c.fin,
-    estado: c.estado,
-    origen: c.origen,
-    nombre: c.nombre_contacto,
-    telefono: c.telefono ?? c.chat_id ?? null,
-    servicio: c.ed_servicios?.nombre ?? "Servicio",
-    profesionalId: c.profesional_id,
-    profesional: c.ed_profesionales?.nombre ?? "—",
-    datosExtra: c.datos_extra ?? null,
+  const clasesCal: CitaCal[] = ((clasesRaw ?? []) as {
+    id: string;
+    nombre: string;
+    instructor?: string | null;
+    capacidad_maxima: number;
+    cupos_reservados: number;
+    horario_inicio: string;
+    horario_fin: string;
+    estado: string;
+  }[]).map((c) => ({
+    id: `clase-${c.id}`,
+    inicio: c.horario_inicio,
+    fin: c.horario_fin,
+    estado: c.estado === "cancelada" ? "cancelada" : "confirmada",
+    origen: "portal",
+    nombre: c.nombre,
+    telefono: null,
+    servicio: "Clase grupal",
+    profesionalId: profActivos[0]?.id ?? "",
+    profesional: c.instructor || "Instructor",
+    tipo: "clase",
+    claseId: c.id,
+    capacidadMaxima: c.capacidad_maxima,
+    cuposReservados: c.cupos_reservados,
   }));
+
+  const citasCal: CitaCal[] = [
+    ...listaCitas.map((c) => ({
+      id: c.id,
+      inicio: c.inicio,
+      fin: c.fin,
+      estado: c.estado,
+      origen: c.origen,
+      nombre: c.nombre_contacto,
+      telefono: c.telefono ?? c.chat_id ?? null,
+      servicio: c.ed_servicios?.nombre ?? "Servicio",
+      profesionalId: c.profesional_id,
+      profesional: c.ed_profesionales?.nombre ?? "—",
+      datosExtra: c.datos_extra ?? null,
+      tipo: "cita" as const,
+      claseId: c.clase_id ?? null,
+      holdExpiraEn: c.hold_expira_en ?? null,
+      anticipoPagado: Boolean(c.anticipo_pagado),
+      anticipoMontoFijo: c.ed_servicios?.anticipo_monto_fijo ?? null,
+      pagoId: c.pago_id ?? null,
+    })),
+    ...clasesCal,
+  ];
 
   const profCal: ProfCal[] = profActivos.map((p) => ({ id: p.id, nombre: p.nombre }));
 
@@ -298,20 +359,17 @@ export default async function Agenda({
               Ver página de reservas
             </Link>
           )}
-          {/* Clases va ANTES de configuración: se usa todas las semanas, mientras
-              que configuración se toca una vez al mes. */}
-          <Link href="/agenda/clases" className="btn-suave px-3.5 py-2 text-[13.5px]">
-            Clases
-          </Link>
-          <Link href="/agenda/configuracion" className="btn-suave px-3.5 py-2 text-[13.5px]">
-            Configuración
-          </Link>
           <NuevaCita
             accion={crearCitaManual}
             servicios={serviciosActivos.map((s) => ({ id: s.id, nombre: s.nombre, duracionMin: s.duracion_min }))}
             profesionales={profCal}
           />
         </div>
+      </div>
+
+      {/* ── Subnavegación Agenda ───────────────────────────────────────── */}
+      <div className="mt-5">
+        <AgendaSubnav activo="calendario" commerceActivo={Boolean(cliente?.commerce_booking_v1_activo)} />
       </div>
 
       {/* ── Cifras ───────────────────────────────────────────────────── */}

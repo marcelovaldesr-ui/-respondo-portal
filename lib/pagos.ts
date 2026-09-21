@@ -311,7 +311,12 @@ export async function pagosDeChat(p: {
 }
 
 /** Fila del listado global de /cobros: el pago más quién es la persona. */
-export type PagoListado = Pago & { empleadoId: string; contacto: string };
+export type PagoListado = Pago & {
+  empleadoId: string;
+  contacto: string;
+  contactoId?: string | null;
+  tipoTransaccion?: string | null;
+};
 
 /**
  * Listado global de cobros del negocio, con el nombre del contacto resuelto.
@@ -342,7 +347,8 @@ export async function listarPagos(p: {
     return q;
   };
 
-  let r = await pedir(`${columnas}, referencia_externa, proveedor, proveedor_orden, proveedor_url`);
+  let r = await pedir(`${columnas}, referencia_externa, proveedor, proveedor_orden, proveedor_url, contacto_id, tipo_transaccion`);
+  if (r.error) r = await pedir(`${columnas}, referencia_externa, proveedor, proveedor_orden, proveedor_url`);
   if (r.error) r = await pedir(`${columnas}, referencia_externa`);
   if (r.error) r = await pedir(columnas);
 
@@ -372,6 +378,8 @@ export async function listarPagos(p: {
     proveedor: (f.proveedor as string | null) ?? "manual",
     proveedorOrden: (f.proveedor_orden as string | null) ?? null,
     proveedorUrl: (f.proveedor_url as string | null) ?? null,
+    contactoId: (f.contacto_id as string | null) ?? null,
+    tipoTransaccion: (f.tipo_transaccion as string | null) ?? null,
     // Un chat de Instagram no es un teléfono: «+ig:1436…» confundiría.
     contacto:
       nombreDe.get(f.chat_id as string) ||

@@ -139,3 +139,44 @@ export async function reconstruirSaldoDesdeLedger(
     consistente: saldoCalculado === saldoCacheado,
   };
 }
+
+export type MovimientoLedgerItem = {
+  id: string;
+  tipoMovimiento: TipoMovimientoCredito;
+  delta: number;
+  saldoResultante: number;
+  referencia: string | null;
+  motivo: string | null;
+  creadoEn: string;
+};
+
+/**
+ * OBTIENE EL HISTORIAL DE MOVIMIENTOS DEL LEDGER DE UNA MEMBRESÍA.
+ *
+ * Fuente única de verdad contable para la vista del dueño y staff.
+ */
+export async function obtenerMovimientosLedger(
+  clienteId: string,
+  membresiaId: string,
+  supa: SupabaseClient = db(),
+): Promise<MovimientoLedgerItem[]> {
+  const { data, error } = await supa
+    .from("ed_creditos_ledger")
+    .select("id, tipo_movimiento, delta, saldo_resultante, referencia, motivo, creado_en")
+    .eq("cliente_id", clienteId)
+    .eq("membresia_id", membresiaId)
+    .order("creado_en", { ascending: false });
+
+  if (error || !data) return [];
+
+  return data.map((d) => ({
+    id: d.id as string,
+    tipoMovimiento: d.tipo_movimiento as TipoMovimientoCredito,
+    delta: d.delta as number,
+    saldoResultante: d.saldo_resultante as number,
+    referencia: (d.referencia as string) ?? null,
+    motivo: (d.motivo as string) ?? null,
+    creadoEn: d.creado_en as string,
+  }));
+}
+

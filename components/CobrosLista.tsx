@@ -84,6 +84,10 @@ export function CobrosLista({ pagos: iniciales }: { pagos: PagoListado[] }) {
       )}
       {pagos.map((p) => {
         const e = ESTADO_COBRO[p.estado] ?? ESTADO_COBRO.pendiente;
+        const conceptoMin = (p.concepto ?? "").toLowerCase();
+        const esAnticipo = p.tipoTransaccion === "anticipo_cita" || conceptoMin.includes("anticipo") || conceptoMin.includes("reserva");
+        const esMembresia = p.tipoTransaccion === "membresia" || conceptoMin.includes("membresía") || conceptoMin.includes("membresia") || conceptoMin.includes("plan");
+
         return (
           <div
             key={p.id}
@@ -96,6 +100,16 @@ export function CobrosLista({ pagos: iniciales }: { pagos: PagoListado[] }) {
                 {p.proveedor === "flow" && (
                   <span className="rounded bg-sky-50 px-1.5 py-0.5 text-[10.5px] font-medium text-sky-700 border border-sky-200">
                     Flow
+                  </span>
+                )}
+                {esAnticipo && (
+                  <span className="rounded bg-amber-50 px-1.5 py-0.5 text-[10.5px] font-semibold text-amber-800 border border-amber-200">
+                    Anticipo
+                  </span>
+                )}
+                {esMembresia && (
+                  <span className="rounded bg-purple-50 px-1.5 py-0.5 text-[10.5px] font-semibold text-purple-800 border border-purple-200">
+                    Membresía
                   </span>
                 )}
               </div>
@@ -153,11 +167,29 @@ export function CobrosLista({ pagos: iniciales }: { pagos: PagoListado[] }) {
                 </>
               )}
               <Link
-                href={`/conversaciones?emp=${encodeURIComponent(p.empleadoId)}&chat=${encodeURIComponent(p.chatId)}`}
+                href={`/agenda/clientes?q=${encodeURIComponent(p.contacto)}`}
                 className="btn-suave px-2.5 py-1 text-[12px]"
+                title="Ver ficha del cliente"
               >
-                Ver chat →
+                Ver cliente
               </Link>
+              {esAnticipo && (
+                <Link
+                  href="/agenda"
+                  className="btn-suave px-2.5 py-1 text-[12px]"
+                  title="Ver en la agenda"
+                >
+                  Ver reserva
+                </Link>
+              )}
+              {p.chatId && (
+                <Link
+                  href={`/conversaciones?emp=${encodeURIComponent(p.empleadoId)}&chat=${encodeURIComponent(p.chatId)}`}
+                  className="btn-suave px-2.5 py-1 text-[12px]"
+                >
+                  Ver chat →
+                </Link>
+              )}
             </div>
           </div>
         );
