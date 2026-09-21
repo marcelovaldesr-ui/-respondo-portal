@@ -18,6 +18,7 @@ import {
   encuestaRapida,
   type CitaDelMotor,
 } from "@/lib/agendaBot";
+import { procesarCommerceWhatsAppRapido } from "@/lib/whatsapp/commerceBookingBot";
 
 /**
  * Cerebro de Tino sobre WhatsApp real (Opción B, Fase 2).
@@ -466,6 +467,51 @@ export async function responderSiBot(params: {
         return { accion: "envio_sin_registro_derivado" };
       }
       return { accion: "encuesta_cerro_cita", detalle: "enviado" };
+    }
+  }
+
+  // Commerce & Booking V1: Atajo determinístico para WhatsApp (saldos, renovaciones, cancelaciones directas)
+  if (ultimo?.rol === "cliente") {
+    const rapidaCommerce = await procesarCommerceWhatsAppRapido({
+      clienteId,
+      empleadoId,
+      chatId,
+      textoEntrante: ultimo.texto,
+    });
+    if (rapidaCommerce) {
+      const supaCom = db();
+      const envioCom = params.enviar
+        ? await params.enviar(chatId, rapidaCommerce)
+        : cfg
+          ? await enviarTexto(cfg, chatId, rapidaCommerce)
+          : { ok: false as const, error: "sin transporte" };
+      if (!envioCom.ok) {
+        await derivarPorFalloDeEnvio(supaCom, {
+          clienteId,
+          empleadoId,
+          chatId,
+          detalle: envioCom.error ?? "sin transporte",
+        });
+        return { accion: "error_envio_derivado", detalle: envioCom.error ?? "sin transporte" };
+      }
+      const guardadoCom = await guardarMensaje(supaCom, {
+        empleadoId,
+        chatId,
+        rol: "empleado",
+        texto: rapidaCommerce,
+        waId: "waId" in envioCom ? (envioCom as { waId?: string }).waId : undefined,
+        canal,
+      });
+      if (!guardadoCom.ok) {
+        await derivarPorFalloDeEnvio(supaCom, {
+          clienteId,
+          empleadoId,
+          chatId,
+          detalle: "respuesta commerce enviada pero no registrada",
+        });
+        return { accion: "envio_sin_registro_derivado" };
+      }
+      return { accion: "commerce_rapido", detalle: "enviado" };
     }
   }
 

@@ -67,6 +67,10 @@ export type Cita = {
    * la migración todavía no se aplicó: quien la use debe tolerarlo.
    */
   gestion_token?: string | null;
+  /**
+   * ID de la clase grupal si es una inscripción (migración 260).
+   */
+  clase_id?: string | null;
 };
 
 export type ResultadoCita =

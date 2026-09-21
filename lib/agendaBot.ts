@@ -21,6 +21,19 @@ import {
 import { detectarNota, esNotaMala, textoRespuestaEncuesta } from "@/lib/encuestaCore";
 import { avisarACliente, resumirParaAviso } from "@/lib/push";
 import { setModo } from "@/lib/estadoChat";
+import {
+  resolverContactoId,
+  construirBloqueCommercePrompt,
+} from "@/lib/whatsapp/commerceBookingBot";
+import {
+  inscribirConCredito,
+  cancelarInscripcionCredito,
+} from "@/lib/classes/atomicBooking";
+import {
+  iniciarRenovacionMembresiaFlow,
+  obtenerPlanes,
+} from "@/lib/memberships/membershipsCore";
+import { crearHoldReserva } from "@/lib/booking/bookingAnticipos";
 
 /**
  * PUENTE ENTRE LOS EMPLEADOS IA Y LA AGENDA (F2).
@@ -255,7 +268,10 @@ export async function contextoAgenda(
       (c) => nombrePorId.get(c.servicio_id) ?? "tu hora",
       clasesDisp,
     );
-    return { texto, cupos, citas, clases, servicios };
+
+    const bloqueCommerce = await construirBloqueCommercePrompt(clienteId, chatId, supa).catch(() => null);
+    const textoFinal = bloqueCommerce ? `${texto}\n\n${bloqueCommerce}` : texto;
+    return { texto: textoFinal, cupos, citas, clases, servicios };
   } catch (e) {
     // Migración no aplicada u otro problema: la agenda jamás rompe al bot.
     console.error("[agendaBot] contexto falló (se sigue sin agenda):", (e as Error).message);
@@ -355,6 +371,72 @@ export async function ejecutarAccionAgenda(params: {
         const nombre = String(params.cita?.nombre ?? "").trim();
         if (nombre.length < 2) return { tipo: "ninguna" }; // sin nombre no se reserva
 
+        const { data: tenantClase } = await supa
+          .from("ed_clientes")
+          .select("commerce_booking_v1_activo")
+          .eq("id", params.clienteId)
+          .maybeSingle();
+
+        if (tenantClase?.commerce_booking_v1_activo) {
+          const contactoId = await resolverContactoId(params.clienteId, params.chatId, supa);
+          if (contactoId) {
+            const rCred = await inscribirConCredito({
+              claseId: clase.claseId,
+              clienteId: params.clienteId,
+              contactoId,
+              nombre,
+              telefono: `+${params.chatId}`,
+              chatId: params.chatId,
+              origen: "whatsapp",
+              empleadoId: params.empleadoId,
+              supa,
+            });
+
+            if (!rCred.ok) {
+              if (rCred.motivo === "cupo_agotado") {
+                return {
+                  tipo: "cupo_tomado",
+                  textoReemplazo:
+                    "Uf, justo se tomaron el último lugar de esa clase mientras conversábamos 😅 " +
+                    "¿Te sirve alguno de los otros horarios? Te dejo el cupo al tiro.",
+                };
+              }
+              if (rCred.motivo === "sin_creditos" || rCred.motivo === "membresia_vencida" || rCred.motivo === "sin_membresia") {
+                const planes = await obtenerPlanes(params.clienteId, supa);
+                const planDefault = planes[0];
+                const renovacion = planDefault
+                  ? await iniciarRenovacionMembresiaFlow({
+                      clienteId: params.clienteId,
+                      contactoId,
+                      planId: planDefault.id,
+                      chatId: params.chatId,
+                      supa,
+                    }).catch(() => null)
+                  : null;
+                const link = renovacion?.ok && renovacion.url
+                  ? `\n\n💳 Puedes renovar tu plan aquí: ${renovacion.url}`
+                  : "";
+                return {
+                  tipo: "error",
+                  textoExtra: `⚠️ No tienes créditos disponibles en tu membresía para reservar esta clase.${link}`,
+                };
+              }
+              if (rCred.motivo === "ya_inscrito") {
+                return {
+                  tipo: "error",
+                  textoExtra: "Ya te encuentras inscrito/a en esta clase. ¡Te esperamos!",
+                };
+              }
+              return { tipo: "ninguna" };
+            }
+
+            return {
+              tipo: "agendada",
+              textoExtra: `✅ Listo, quedaste inscrito: ${clase.servicioNombre} · ${formatearSlot(clase.inicio)}. Te quedan ${rCred.saldoRestante} créditos disponibles 🙌`,
+            };
+          }
+        }
+
         const r = await inscribirEnClase({
           claseId: clase.claseId,
           clienteId: params.clienteId,
@@ -394,6 +476,44 @@ export async function ejecutarAccionAgenda(params: {
       if (!cupo) return { tipo: "ninguna" }; // token inválido: no se agenda nada
       const nombre = String(params.cita?.nombre ?? "").trim() || "Cliente WhatsApp";
       const preferido = profesionalPedido(cupo.profesionales, params.cita?.profesional);
+
+      const { data: tenantSvc } = await supa
+        .from("ed_clientes")
+        .select("commerce_booking_v1_activo")
+        .eq("id", params.clienteId)
+        .maybeSingle();
+
+      const { data: svcObj } = await supa
+        .from("ed_servicios")
+        .select("requiere_anticipo, anticipo_monto_fijo")
+        .eq("id", cupo.servicioId)
+        .maybeSingle();
+
+      if (tenantSvc?.commerce_booking_v1_activo && svcObj?.requiere_anticipo && (svcObj.anticipo_monto_fijo ?? 0) > 0) {
+        const hold = await crearHoldReserva({
+          clienteId: params.clienteId,
+          servicioId: cupo.servicioId,
+          profesionalId: preferido ?? cupo.profesionalId,
+          inicioIso: cupo.inicio,
+          nombreContacto: nombre,
+          telefono: `+${params.chatId}`,
+          chatId: params.chatId,
+          email: "cliente@respondo.cl",
+          empleadoId: params.empleadoId,
+          supa,
+        });
+
+        if (hold.ok && hold.checkoutUrl) {
+          return {
+            tipo: "agendada",
+            textoExtra:
+              `⏳ *Reserva en espera de confirmación:* ${cupo.servicioNombre} · ${formatearSlot(cupo.inicio)}.\n` +
+              `Tienes 15 minutos para asegurar tu cupo abonando el anticipo de $${(hold.montoAnticipo ?? 0).toLocaleString("es-CL")} CLP:\n` +
+              `👉 ${hold.checkoutUrl}\n` +
+              `¡Apenas pagues, tu cita quedará confirmada al 100%! 🙌`,
+          };
+        }
+      }
 
       /**
        * (Fase 2) Pasa por `reservarCupo`: revalida el cupo contra la agenda de
@@ -490,6 +610,29 @@ export async function ejecutarAccionAgenda(params: {
     // cancelar
     const vigente = ctx.citas.get(String(params.cita?.cita).trim().toUpperCase());
     if (!vigente) return { tipo: "ninguna" };
+
+    if (vigente.clase_id) {
+      const contactoId = await resolverContactoId(params.clienteId, params.chatId, supa);
+      if (contactoId) {
+        const rCred = await cancelarInscripcionCredito({
+          clienteId: params.clienteId,
+          contactoId,
+          citaId: vigente.id,
+          supa,
+        });
+        if (rCred.ok) {
+          await anularSeguimientosDeCita(vigente.id, params.clienteId, supa);
+          const dev = rCred.creditoDevuelto
+            ? `\nComo cancelaste con más de 2 horas de anticipación, tu crédito fue devuelto a tu saldo (+1). Te quedan ${rCred.saldoResultante ?? 0} créditos.`
+            : `\nAl cancelar con menos de 2 horas de anticipación, las políticas no permiten reembolsar el crédito utilizado.`;
+          return {
+            tipo: "cancelada",
+            textoExtra: `Tu inscripción a la clase del ${formatearSlot(vigente.inicio)} quedó cancelada ✅${dev}`,
+          };
+        }
+      }
+    }
+
     const r = await cambiarEstado(params.clienteId, vigente.id, "cancelada", supa);
     if (!r.ok) return { tipo: "error" };
     await anularSeguimientosDeCita(vigente.id, params.clienteId, supa);
