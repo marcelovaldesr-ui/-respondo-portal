@@ -31,6 +31,26 @@ export type EventoPagoConfirmado = {
   };
 };
 
+export type DominioListener = (evento: EventoPagoConfirmado, supa: SupabaseClient) => Promise<unknown>;
+
+const listeners: DominioListener[] = [];
+
+export function registrarDominioListener(listener: DominioListener) {
+  if (!listeners.includes(listener)) {
+    listeners.push(listener);
+  }
+}
+
+export async function despacharEventoDominio(evento: EventoPagoConfirmado, supa: SupabaseClient) {
+  for (const listener of listeners) {
+    try {
+      await listener(evento, supa);
+    } catch (err) {
+      console.error("[eventosComerciales] Error en listener de dominio:", err);
+    }
+  }
+}
+
 /**
  * Emite el evento de dominio PAYMENT_CONFIRMED de forma estrictamente idempotente.
  *
@@ -58,16 +78,22 @@ export async function emitirPagoConfirmado(
     if (error) {
       // 23505 = unique_violation → evento ya emitido previamente (idempotencia pura)
       if (error.code === "23505") {
+        // Ejecutar listeners idempotentes para garantizar consistencia
+        await despacharEventoDominio(evento, supa);
         return { ok: true, emitido: false };
       }
       // 42P01 = tabla aún no migrada en BD (migración 317 pendiente)
       if (error.code === "42P01") {
         console.warn("[eventosComerciales] ed_eventos_comerciales no existe aún (migración 317 pendiente).");
+        await despacharEventoDominio(evento, supa);
         return { ok: true, emitido: false };
       }
       console.error("[eventosComerciales] Error al registrar PAYMENT_CONFIRMED:", error.message);
       return { ok: false, emitido: false, error: error.message };
     }
+
+    // Despachar a los handlers de dominio registrados (Booking, Membresías, etc.)
+    await despacharEventoDominio(evento, supa);
 
     return { ok: true, emitido: true };
   } catch (err) {
