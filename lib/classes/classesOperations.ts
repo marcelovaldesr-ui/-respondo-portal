@@ -135,18 +135,56 @@ export async function obtenerDetalleClaseOperacional(
   const ocup = (f.cupo_ocupado as number) ?? 0;
 
   // Consultar alumnos inscritos en ed_citas
-  const { data: citas } = await supa
+  const citasConContacto = await supa
     .from("ed_citas")
     .select("id, contacto_id, nombre_contacto, telefono, chat_id, estado, creado_en")
     .eq("cliente_id", clienteId)
     .eq("clase_id", claseId)
     .order("creado_en", { ascending: true });
 
+  // Compatibilidad durante el despliegue de la migración 320.
+  const citasSinContacto = citasConContacto.error
+    ? await supa
+      .from("ed_citas")
+      .select("id, nombre_contacto, telefono, chat_id, estado, creado_en")
+      .eq("cliente_id", clienteId)
+      .eq("clase_id", claseId)
+      .order("creado_en", { ascending: true })
+    : null;
+
+  const citas = (citasConContacto.error ? citasSinContacto?.data : citasConContacto.data ?? []) as Array<{
+    id: string;
+    contacto_id?: string | null;
+    nombre_contacto?: string | null;
+    telefono?: string | null;
+    chat_id?: string | null;
+    estado?: string | null;
+    creado_en: string;
+  }>;
+
   const inscritos: AsistenteClase[] = [];
 
   if (citas && citas.length > 0) {
     // Resolver membresías activas para los contactos inscritos
-    const contactoIds = citas.map((c) => c.contacto_id).filter(Boolean) as string[];
+    const contactoPorChat = new Map<string, string>();
+    const chatsSinContacto = citas
+      .filter((c) => !c.contacto_id && c.chat_id)
+      .map((c) => c.chat_id as string);
+
+    if (chatsSinContacto.length > 0) {
+      const { data: contactos } = await supa
+        .from("ed_contactos")
+        .select("id, chat_id")
+        .eq("cliente_id", clienteId)
+        .in("chat_id", [...new Set(chatsSinContacto)]);
+      for (const contacto of contactos ?? []) {
+        if (contacto.chat_id) contactoPorChat.set(contacto.chat_id, contacto.id);
+      }
+    }
+
+    const contactoIds = citas
+      .map((c) => c.contacto_id ?? (c.chat_id ? contactoPorChat.get(c.chat_id) : null))
+      .filter(Boolean) as string[];
     const mapaPlanes = new Map<string, string>();
 
     if (contactoIds.length > 0) {
@@ -168,14 +206,15 @@ export async function obtenerDetalleClaseOperacional(
     }
 
     for (const c of citas) {
+      const contactoId = c.contacto_id ?? (c.chat_id ? contactoPorChat.get(c.chat_id) : null) ?? null;
       inscritos.push({
         citaId: c.id as string,
-        contactoId: (c.contacto_id as string) || null,
+        contactoId,
         nombre: (c.nombre_contacto as string) || "Sin nombre",
         telefono: (c.telefono as string) || null,
         chatId: (c.chat_id as string) || null,
         estado: (c.estado as AsistenteClase["estado"]) || "agendada",
-        planNombre: c.contacto_id ? mapaPlanes.get(c.contacto_id) ?? null : null,
+        planNombre: contactoId ? mapaPlanes.get(contactoId) ?? null : null,
         creadoEn: c.creado_en as string,
       });
     }
@@ -214,6 +253,9 @@ export async function marcarAsistenciaCita(
     .eq("cliente_id", clienteId)
     .eq("id", citaId);
 
-  if (error) return { ok: false, error: error.message };
+  if (error) {
+    console.error("[commerce] no se pudo marcar asistencia:", error.message);
+    return { ok: false, error: "No se pudo marcar la asistencia. Intenta nuevamente." };
+  }
   return { ok: true };
 }

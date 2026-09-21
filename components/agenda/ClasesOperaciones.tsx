@@ -349,8 +349,10 @@ export default function ClasesOperaciones({
                                   onClick={async () => {
                                     const fd = new FormData();
                                     fd.set("citaId", a.citaId);
-                                    await onMarcarAsistencia(fd);
-                                    await recargarInscritos(claseSeleccionada.id);
+                                    setErrorOperacion(null);
+                                    const res = await onMarcarAsistencia(fd);
+                                    if (res.ok) await recargarInscritos(claseSeleccionada.id);
+                                    else setErrorOperacion(res.error ?? "No se pudo marcar la asistencia.");
                                   }}
                                   className="rounded border border-emerald-300 bg-emerald-50 px-2 py-1 text-[11px] font-medium text-emerald-800 hover:bg-emerald-100"
                                 >
@@ -364,8 +366,10 @@ export default function ClasesOperaciones({
                                   onClick={async () => {
                                     const fd = new FormData();
                                     fd.set("citaId", a.citaId);
-                                    await onMarcarNoShow(fd);
-                                    await recargarInscritos(claseSeleccionada.id);
+                                    setErrorOperacion(null);
+                                    const res = await onMarcarNoShow(fd);
+                                    if (res.ok) await recargarInscritos(claseSeleccionada.id);
+                                    else setErrorOperacion(res.error ?? "No se pudo registrar la inasistencia.");
                                   }}
                                   className="rounded border border-rose-300 bg-rose-50 px-2 py-1 text-[11px] font-medium text-rose-800 hover:bg-rose-100"
                                 >
@@ -380,8 +384,10 @@ export default function ClasesOperaciones({
                                     const fd = new FormData();
                                     fd.set("citaId", a.citaId);
                                     if (a.contactoId) fd.set("contactoId", a.contactoId);
-                                    await onCancelarInscripcion(fd);
-                                    await recargarInscritos(claseSeleccionada.id);
+                                    setErrorOperacion(null);
+                                    const res = await onCancelarInscripcion(fd);
+                                    if (res.ok) await recargarInscritos(claseSeleccionada.id);
+                                    else setErrorOperacion(res.error ?? "No se pudo cancelar la inscripción.");
                                   }
                                 }}
                                 className="rounded border border-slate-200 bg-white px-2 py-1 text-[11px] font-medium text-slate-600 hover:bg-slate-50 hover:text-red-600"

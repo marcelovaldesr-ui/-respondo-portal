@@ -191,16 +191,29 @@ export async function obtenerFichaClienteOperacional(
 
   // 2. Próximas reservas
   const ahoraIso = new Date().toISOString();
-  const { data: citasFuturas } = await supa
+  let citasFuturasRes = await supa
     .from("ed_citas")
     .select("id, inicio, fin, estado, clase_id, ed_servicios!servicio_id(nombre)")
     .eq("cliente_id", clienteId)
-    .or(`contacto_id.eq.${contactoId}${contacto.chat_id ? `,chat_id.eq.${contacto.chat_id}` : ""}`)
+    .eq("contacto_id", contactoId)
+    .in("estado", ["agendada", "confirmada", "reagendada", "pendiente_pago"])
     .gte("inicio", ahoraIso)
     .order("inicio", { ascending: true })
     .limit(5);
 
-  const proximasReservas = (citasFuturas ?? []).map((c) => {
+  if (citasFuturasRes.error && contacto.chat_id) {
+    citasFuturasRes = await supa
+      .from("ed_citas")
+      .select("id, inicio, fin, estado, clase_id, ed_servicios!servicio_id(nombre)")
+      .eq("cliente_id", clienteId)
+      .eq("chat_id", contacto.chat_id)
+      .in("estado", ["agendada", "confirmada", "reagendada", "pendiente_pago"])
+      .gte("inicio", ahoraIso)
+      .order("inicio", { ascending: true })
+      .limit(5);
+  }
+
+  const proximasReservas = (citasFuturasRes.data ?? []).map((c) => {
     const s = Array.isArray(c.ed_servicios) ? c.ed_servicios[0] : c.ed_servicios;
     return {
       citaId: c.id as string,
@@ -213,16 +226,27 @@ export async function obtenerFichaClienteOperacional(
   });
 
   // 3. Historial reciente de reservas
-  const { data: citasPasadas } = await supa
+  let citasPasadasRes = await supa
     .from("ed_citas")
     .select("id, inicio, estado, ed_servicios!servicio_id(nombre)")
     .eq("cliente_id", clienteId)
-    .or(`contacto_id.eq.${contactoId}${contacto.chat_id ? `,chat_id.eq.${contacto.chat_id}` : ""}`)
+    .eq("contacto_id", contactoId)
     .lt("inicio", ahoraIso)
     .order("inicio", { ascending: false })
     .limit(8);
 
-  const historialReciente = (citasPasadas ?? []).map((c) => {
+  if (citasPasadasRes.error && contacto.chat_id) {
+    citasPasadasRes = await supa
+      .from("ed_citas")
+      .select("id, inicio, estado, ed_servicios!servicio_id(nombre)")
+      .eq("cliente_id", clienteId)
+      .eq("chat_id", contacto.chat_id)
+      .lt("inicio", ahoraIso)
+      .order("inicio", { ascending: false })
+      .limit(8);
+  }
+
+  const historialReciente = (citasPasadasRes.data ?? []).map((c) => {
     const s = Array.isArray(c.ed_servicios) ? c.ed_servicios[0] : c.ed_servicios;
     return {
       citaId: c.id as string,

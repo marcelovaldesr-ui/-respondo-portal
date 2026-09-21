@@ -86,7 +86,7 @@ export function CobrosLista({ pagos: iniciales }: { pagos: PagoListado[] }) {
         const e = ESTADO_COBRO[p.estado] ?? ESTADO_COBRO.pendiente;
         const conceptoMin = (p.concepto ?? "").toLowerCase();
         const esAnticipo = p.tipoTransaccion === "anticipo_cita" || conceptoMin.includes("anticipo") || conceptoMin.includes("reserva");
-        const esMembresia = p.tipoTransaccion === "membresia" || conceptoMin.includes("membresía") || conceptoMin.includes("membresia") || conceptoMin.includes("plan");
+        const esMembresia = p.tipoTransaccion === "compra_membresia" || p.tipoTransaccion === "renovacion_membresia" || conceptoMin.includes("membresía") || conceptoMin.includes("membresia") || conceptoMin.includes("plan");
 
         return (
           <div
@@ -94,7 +94,7 @@ export function CobrosLista({ pagos: iniciales }: { pagos: PagoListado[] }) {
             className="tarjeta flex flex-wrap items-center gap-x-4 gap-y-2 p-3.5"
           >
             <div className="min-w-0 flex-1">
-              <div className="flex items-baseline gap-2">
+              <div className="flex flex-wrap items-baseline gap-2">
                 <span className="cifra text-[15px] font-bold">{formatearMonto(p.monto)}</span>
                 <Estado tono={e.tono}>{e.label}</Estado>
                 {p.proveedor === "flow" && (
@@ -134,7 +134,7 @@ export function CobrosLista({ pagos: iniciales }: { pagos: PagoListado[] }) {
               </div>
             </div>
 
-            <div className="flex shrink-0 items-center gap-1.5">
+            <div className="flex w-full flex-wrap items-center gap-1.5 sm:w-auto sm:shrink-0">
               {p.estado === "pendiente" && p.proveedor === "flow" && (
                 <button
                   onClick={() => void conciliar(p)}
@@ -167,7 +167,9 @@ export function CobrosLista({ pagos: iniciales }: { pagos: PagoListado[] }) {
                 </>
               )}
               <Link
-                href={`/agenda/clientes?q=${encodeURIComponent(p.contacto)}`}
+                href={p.contactoId
+                  ? `/agenda/clientes?contacto=${encodeURIComponent(p.contactoId)}`
+                  : `/agenda/clientes?q=${encodeURIComponent(p.contacto)}`}
                 className="btn-suave px-2.5 py-1 text-[12px]"
                 title="Ver ficha del cliente"
               >
@@ -175,7 +177,7 @@ export function CobrosLista({ pagos: iniciales }: { pagos: PagoListado[] }) {
               </Link>
               {esAnticipo && (
                 <Link
-                  href="/agenda"
+                  href={p.citaId ? `/agenda?cita=${encodeURIComponent(p.citaId)}` : "/agenda"}
                   className="btn-suave px-2.5 py-1 text-[12px]"
                   title="Ver en la agenda"
                 >

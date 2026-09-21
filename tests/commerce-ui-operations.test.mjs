@@ -5,6 +5,7 @@ import {
   listarMembresiasOperacionales,
   obtenerDetalleMembresiaOperacional,
   ajusteManualCreditos,
+  renovarMembresiaManual,
 } from "../lib/memberships/membershipsOperations.ts";
 import { obtenerMovimientosLedger } from "../lib/memberships/creditLedger.ts";
 import {
@@ -332,6 +333,51 @@ test("Auditoría de Ledger: escribe registro inmutable con tipo ajuste_manual", 
   assert.match(movimientos[0].motivo, /Compensación clase feriado/);
 });
 
+test("Renovación manual: falla cerrado cuando el RPC atómico aún no está aplicado", async () => {
+  let escrituras = 0;
+  const supa = {
+    from() {
+      escrituras += 1;
+      throw new Error("No debe escribir por pasos");
+    },
+    async rpc() {
+      return { data: null, error: { code: "PGRST202", message: "RPC ausente" } };
+    },
+  };
+
+  const res = await renovarMembresiaManual({
+    clienteId: TENANT_A,
+    membresiaId: "m-atomic",
+    supa,
+  });
+
+  assert.equal(res.ok, false);
+  assert.match(res.error, /actualización operativa/i);
+  assert.equal(escrituras, 0);
+});
+
+test("Renovación manual: usa una sola operación transaccional", async () => {
+  let llamada = null;
+  const supa = {
+    async rpc(nombre, params) {
+      llamada = { nombre, params };
+      return { data: [{ ok: true, nueva_fin: "2026-12-01", saldo_resultante: 13 }], error: null };
+    },
+  };
+
+  const res = await renovarMembresiaManual({
+    clienteId: TENANT_A,
+    membresiaId: "m-atomic",
+    supa,
+  });
+
+  assert.equal(res.ok, true);
+  assert.equal(llamada.nombre, "ed_renovar_membresia_manual");
+  assert.equal(llamada.params.p_cliente_id, TENANT_A);
+  assert.equal(llamada.params.p_membresia_id, "m-atomic");
+  assert.match(llamada.params.p_idempotency_key, /^renov-manual-m-atomic-/);
+});
+
 // ── 4. CLASES Y ASISTENCIA ─────────────────────────────────────────
 
 test("Clases: marca asistencia como completada", async () => {
@@ -368,8 +414,8 @@ test("Operación de Hoy: calcula métricas correctamente cuando commerce está a
       { id: TENANT_A, commerce_booking_v1_activo: true },
     ],
     clases: [
-      { id: "cl-1", cliente_id: TENANT_A, horario_inicio: hoyIso, capacidad_maxima: 8, cupos_reservados: 6, estado: "programada" },
-      { id: "cl-2", cliente_id: TENANT_A, horario_inicio: hoyIso, capacidad_maxima: 10, cupos_reservados: 4, estado: "programada" },
+      { id: "cl-1", cliente_id: TENANT_A, inicio: hoyIso, cupo_maximo: 8, cupo_ocupado: 6, estado: "activa" },
+      { id: "cl-2", cliente_id: TENANT_A, inicio: hoyIso, cupo_maximo: 10, cupo_ocupado: 4, estado: "activa" },
     ],
     citas: [
       { id: "ci-1", cliente_id: TENANT_A, clase_id: null, inicio: hoyIso, estado: "confirmada" },
@@ -427,6 +473,34 @@ test("Membresías: detalle operacional obtiene plan y movimientos de ledger", as
   assert.equal(detalle.planNombre, "Pilates 8");
   assert.equal(detalle.movimientosLedger.length, 1);
   assert.equal(detalle.movimientosLedger[0].tipoMovimiento, "alta_plan");
+});
+
+test("Membresías: el detalle no mezcla reservas de otro contacto del mismo tenant", async () => {
+  const futuro = new Date(Date.now() + 86_400_000).toISOString();
+  const supa = crearMockDb({
+    membresias: [{
+      id: "m-contacto-1",
+      cliente_id: TENANT_A,
+      contacto_id: "contacto-1",
+      plan_id: "plan-1",
+      creditos_saldo: 4,
+      es_ilimitada: false,
+      inicio: new Date().toISOString(),
+      fin: new Date(Date.now() + 30 * 86_400_000).toISOString(),
+      estado: "activa",
+      ed_contactos: { nombre: "Socio Uno", chat_id: "56911111111" },
+      ed_planes: { nombre: "Plan 4", creditos_totales: 4 },
+    }],
+    citas: [
+      { id: "reserva-propia", cliente_id: TENANT_A, contacto_id: "contacto-1", inicio: futuro, estado: "confirmada", ed_servicios: { nombre: "Pilates" } },
+      { id: "reserva-ajena", cliente_id: TENANT_A, contacto_id: "contacto-2", inicio: futuro, estado: "confirmada", ed_servicios: { nombre: "Yoga" } },
+    ],
+    ledger: [],
+    pagos: [],
+  });
+
+  const detalle = await obtenerDetalleMembresiaOperacional(TENANT_A, "m-contacto-1", supa);
+  assert.deepEqual(detalle.proximasReservas.map((r) => r.citaId), ["reserva-propia"]);
 });
 
 test("Clases: detalle operacional lista asistentes inscritos", async () => {

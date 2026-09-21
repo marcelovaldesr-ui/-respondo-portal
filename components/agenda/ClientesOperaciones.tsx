@@ -29,21 +29,25 @@ function fechaHora(iso: string): string {
 
 export default function ClientesOperaciones({
   clientesIniciales,
+  busquedaInicial = "",
+  fichaInicial = null,
   onBuscar,
   onObtenerFicha,
   onAjustarCreditos,
   onRenovarMembresia,
 }: {
   clientesIniciales: ClienteOperacionalFila[];
+  busquedaInicial?: string;
+  fichaInicial?: FichaClienteOperacional | null;
   onBuscar: (q: string) => Promise<ClienteOperacionalFila[]>;
   onObtenerFicha: (contactoId: string) => Promise<FichaClienteOperacional | null>;
   onAjustarCreditos: (fd: FormData) => Promise<{ ok: boolean; nuevoSaldo?: number; error?: string }>;
   onRenovarMembresia: (fd: FormData) => Promise<{ ok: boolean; error?: string }>;
 }) {
   const [clientes, setClientes] = useState(clientesIniciales);
-  const [busqueda, setBusqueda] = useState("");
+  const [busqueda, setBusqueda] = useState(busquedaInicial);
   const [buscando, setBuscando] = useState(false);
-  const [ficha, setFicha] = useState<FichaClienteOperacional | null>(null);
+  const [ficha, setFicha] = useState<FichaClienteOperacional | null>(fichaInicial);
   const [cargandoFicha, setCargandoFicha] = useState(false);
   const [mostrarAjuste, setMostrarAjuste] = useState(false);
   const [errorAjuste, setErrorAjuste] = useState<string | null>(null);
@@ -255,9 +259,14 @@ export default function ClientesOperaciones({
                       action={async (fd) => {
                         if (confirm(`¿Renovar plan "${ficha.membresia?.planNombre}"?`)) {
                           setEnviando(true);
+                          setErrorAjuste(null);
                           fd.set("membresiaId", ficha.membresia!.id);
-                          await onRenovarMembresia(fd);
-                          await recargarFicha(ficha.contactoId);
+                          const res = await onRenovarMembresia(fd);
+                          if (res.ok) {
+                            await recargarFicha(ficha.contactoId);
+                          } else {
+                            setErrorAjuste(res.error ?? "No se pudo renovar la membresía");
+                          }
                           setEnviando(false);
                         }
                       }}
@@ -270,6 +279,11 @@ export default function ClientesOperaciones({
                         Renovar membresía
                       </button>
                     </form>
+                    {errorAjuste && !mostrarAjuste && (
+                      <div className="w-full rounded bg-red-100 p-2 text-[12px] text-red-800">
+                        {errorAjuste}
+                      </div>
+                    )}
                   </>
                 )}
               </div>
@@ -287,6 +301,14 @@ export default function ClientesOperaciones({
                     if (res.ok) {
                       setMostrarAjuste(false);
                       await recargarFicha(ficha.contactoId);
+                      setFicha((actual) =>
+                        actual?.membresia && res.nuevoSaldo !== undefined
+                          ? {
+                              ...actual,
+                              membresia: { ...actual.membresia, creditosSaldo: res.nuevoSaldo },
+                            }
+                          : actual,
+                      );
                     } else {
                       setErrorAjuste(res.error ?? "No se pudo realizar el ajuste");
                     }

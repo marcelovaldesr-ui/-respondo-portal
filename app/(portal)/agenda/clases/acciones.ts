@@ -2,8 +2,9 @@
 
 import { revalidatePath } from "next/cache";
 import { obtenerUsuarioConPermiso } from "@/lib/auth";
+import { commerceActivoParaCliente } from "@/lib/commerce/featureFlag";
 import { horaChileAUtc } from "@/lib/agendaCore";
-import { crearClase, generarSerie, cancelarClase } from "@/lib/clases";
+import { crearClase, generarSerie, cancelarClase, inscribirEnClase } from "@/lib/clases";
 import {
   obtenerDetalleClaseOperacional,
   marcarAsistenciaCita,
@@ -15,13 +16,19 @@ import {
 } from "@/lib/classes/atomicBooking";
 import { db } from "@/lib/db";
 
+async function obtenerUsuarioCommerce() {
+  const usuario = await obtenerUsuarioConPermiso("operar_agenda");
+  if (!usuario || !(await commerceActivoParaCliente(usuario.clienteId))) return null;
+  return usuario;
+}
+
 /**
  * Acciones del portal para las clases grupales.
  */
 
 /** Crea una sesión suelta. */
 export async function crearClaseAccion(formData: FormData) {
-  const usuario = await obtenerUsuarioConPermiso("operar_agenda");
+  const usuario = await obtenerUsuarioCommerce();
   if (!usuario) return;
 
   const servicioId = String(formData.get("servicioId") ?? "");
@@ -53,7 +60,7 @@ export async function crearClaseAccion(formData: FormData) {
 
 /** Genera la parrilla de varias semanas. */
 export async function generarSerieAccion(formData: FormData) {
-  const usuario = await obtenerUsuarioConPermiso("operar_agenda");
+  const usuario = await obtenerUsuarioCommerce();
   if (!usuario) return;
 
   const dias = (formData.getAll("dias") as string[]).map(Number).filter((n) => !isNaN(n));
@@ -75,7 +82,7 @@ export async function generarSerieAccion(formData: FormData) {
 
 /** Cancela una sesión completa. */
 export async function cancelarClaseAccion(formData: FormData) {
-  const usuario = await obtenerUsuarioConPermiso("operar_agenda");
+  const usuario = await obtenerUsuarioCommerce();
   if (!usuario) return;
   const claseId = String(formData.get("claseId") ?? "");
   if (!claseId) return;
@@ -86,51 +93,67 @@ export async function cancelarClaseAccion(formData: FormData) {
 
 /** Obtiene el detalle de inscritos de una clase. */
 export async function obtenerDetalleClaseAccion(claseId: string) {
-  const usuario = await obtenerUsuarioConPermiso("operar_agenda");
+  const usuario = await obtenerUsuarioCommerce();
   if (!usuario) return null;
   return obtenerDetalleClaseOperacional(usuario.clienteId, claseId);
 }
 
 /** Inscribe manualmente a un alumno. */
 export async function inscribirAlumnoManualAccion(formData: FormData) {
-  const usuario = await obtenerUsuarioConPermiso("operar_agenda");
-  if (!usuario) return { ok: false, error: "No autorizado" };
+  const usuario = await obtenerUsuarioCommerce();
+  if (!usuario) return { ok: false, error: "Commerce no está habilitado para este negocio." };
 
   const claseId = String(formData.get("claseId") ?? "");
   const nombre = String(formData.get("nombre") ?? "").trim();
   const telefono = String(formData.get("telefono") ?? "").trim();
 
-  if (!claseId || !nombre) {
+  if (!claseId || !nombre || !telefono) {
     return { ok: false, error: "Faltan datos obligatorios." };
   }
 
   const supa = db();
+  const chatId = telefono.replace(/\D/g, "");
+  if (!chatId) return { ok: false, error: "Ingresa un teléfono válido." };
 
   // Buscar o crear contacto en ed_contactos para mantener contacto_id canónico
   let contactoId: string | null = null;
-  if (telefono) {
-    const { data: contactoExistente } = await supa
+  let contactoChatId: string | null = null;
+  const { data: contactoPorTelefono } = await supa
       .from("ed_contactos")
-      .select("id")
+      .select("id, chat_id")
       .eq("cliente_id", usuario.clienteId)
       .eq("telefono", telefono)
       .maybeSingle();
 
-    if (contactoExistente) {
-      contactoId = contactoExistente.id;
-    } else {
-      const { data: nuevoContacto } = await supa
+  const contactoExistente = contactoPorTelefono ?? (
+    await supa
+      .from("ed_contactos")
+      .select("id, chat_id")
+      .eq("cliente_id", usuario.clienteId)
+      .eq("chat_id", chatId)
+      .maybeSingle()
+  ).data;
+
+  if (contactoExistente) {
+    contactoId = contactoExistente.id;
+    contactoChatId = contactoExistente.chat_id;
+  } else {
+    const { data: nuevoContacto, error: errorContacto } = await supa
         .from("ed_contactos")
         .insert({
           cliente_id: usuario.clienteId,
           nombre,
           telefono,
+          chat_id: chatId,
           origen: "manual",
         })
-        .select("id")
+        .select("id, chat_id")
         .single();
-      if (nuevoContacto) contactoId = nuevoContacto.id;
+    if (errorContacto || !nuevoContacto) {
+      return { ok: false, error: "No se pudo crear la ficha del cliente. Intenta nuevamente." };
     }
+    contactoId = nuevoContacto.id;
+    contactoChatId = nuevoContacto.chat_id;
   }
 
   if (contactoId) {
@@ -140,53 +163,68 @@ export async function inscribirAlumnoManualAccion(formData: FormData) {
       claseId,
       nombre,
       telefono,
+      chatId: contactoChatId ?? chatId,
       origen: "portal",
       supa,
     });
 
     if (resCredito.ok) {
+      // La migración 320 agrega la identidad canónica a la cita. El update es
+      // compatible con el breve período de despliegue en que aún no exista.
+      await supa
+        .from("ed_citas")
+        .update({ contacto_id: contactoId })
+        .eq("cliente_id", usuario.clienteId)
+        .eq("id", resCredito.citaId);
       revalidatePath("/agenda/clases");
       revalidatePath("/agenda");
       return { ok: true };
     }
 
-    if (resCredito.motivo === "cupo_agotado") {
-      return { ok: false, error: "La clase ya no tiene cupos disponibles." };
+    if (resCredito.motivo !== "sin_membresia") {
+      const mensajes = {
+        membresia_vencida: "La membresía está vencida. Renueva el plan antes de inscribir.",
+        sin_creditos: "La membresía no tiene créditos disponibles.",
+        cupo_agotado: "La clase ya no tiene cupos disponibles.",
+        ya_inscrito: "Este cliente ya está inscrito en la clase.",
+        clase_no_existe: "La clase ya no existe o no pertenece a este negocio.",
+        clase_cancelada: "La clase está cancelada.",
+        clase_ya_paso: "No puedes inscribir en una clase que ya comenzó.",
+        error: "No se pudo completar la inscripción. Intenta nuevamente.",
+      } as const;
+      return { ok: false, error: mensajes[resCredito.motivo] };
     }
   }
 
-  // Fallback de inscripción directa en ed_citas si no tiene membresía
-  const { data: clase } = await supa
-    .from("ed_clases")
-    .select("id, servicio_id, profesional_id, inicio, fin, cupo_maximo, cupo_ocupado")
-    .eq("id", claseId)
-    .eq("cliente_id", usuario.clienteId)
-    .single();
-
-  if (!clase || (clase.cupo_ocupado >= clase.cupo_maximo)) {
-    return { ok: false, error: "Clase sin cupo disponible." };
-  }
-
-  const { error: errCita } = await supa.from("ed_citas").insert({
-    cliente_id: usuario.clienteId,
-    servicio_id: clase.servicio_id,
-    profesional_id: clase.profesional_id,
-    clase_id: clase.id,
-    contacto_id: contactoId,
-    nombre_contacto: nombre,
-    telefono: telefono || null,
-    inicio: clase.inicio,
-    fin: clase.fin,
-    estado: "confirmada",
+  // Los clientes sin membresía pueden inscribirse manualmente, pero el cupo
+  // siempre se toma mediante el RPC atómico de clases.
+  const resDirecto = await inscribirEnClase({
+    clienteId: usuario.clienteId,
+    claseId,
+    nombre,
+    telefono,
+    chatId: contactoChatId ?? chatId,
     origen: "portal",
+    supa,
   });
 
-  if (errCita) return { ok: false, error: errCita.message };
+  if (!resDirecto.ok) {
+    const mensajes = {
+      no_existe: "La clase ya no existe o no pertenece a este negocio.",
+      cancelada: "La clase está cancelada.",
+      ya_paso: "No puedes inscribir en una clase que ya comenzó.",
+      cupo_tomado: "La clase ya no tiene cupos disponibles.",
+      ya_inscrito: "Este cliente ya está inscrito en la clase.",
+      error: "No se pudo completar la inscripción. Intenta nuevamente.",
+    } as const;
+    return { ok: false, error: mensajes[resDirecto.motivo] };
+  }
 
   await supa
-    .from("ed_clases")
-    .update({ cupo_ocupado: clase.cupo_ocupado + 1, actualizado_en: new Date().toISOString() })
-    .eq("id", claseId);
+    .from("ed_citas")
+    .update({ contacto_id: contactoId })
+    .eq("cliente_id", usuario.clienteId)
+    .eq("id", resDirecto.citaId);
 
   revalidatePath("/agenda/clases");
   revalidatePath("/agenda");
@@ -195,8 +233,8 @@ export async function inscribirAlumnoManualAccion(formData: FormData) {
 
 /** Cancela la inscripción de un alumno. */
 export async function cancelarInscripcionAlumnoAccion(formData: FormData) {
-  const usuario = await obtenerUsuarioConPermiso("operar_agenda");
-  if (!usuario) return { ok: false, error: "No autorizado" };
+  const usuario = await obtenerUsuarioCommerce();
+  if (!usuario) return { ok: false, error: "Commerce no está habilitado para este negocio." };
 
   const citaId = String(formData.get("citaId") ?? "");
   const contactoId = formData.get("contactoId") ? String(formData.get("contactoId")) : undefined;
@@ -212,13 +250,14 @@ export async function cancelarInscripcionAlumnoAccion(formData: FormData) {
 
   revalidatePath("/agenda/clases");
   revalidatePath("/agenda");
-  return { ok: res.ok };
+  if (!res.ok) return { ok: false, error: "No se pudo cancelar la inscripción." };
+  return { ok: true };
 }
 
 /** Marca asistencia de un alumno (vino). */
 export async function marcarAsistenciaAlumnoAccion(formData: FormData) {
-  const usuario = await obtenerUsuarioConPermiso("operar_agenda");
-  if (!usuario) return { ok: false, error: "No autorizado" };
+  const usuario = await obtenerUsuarioCommerce();
+  if (!usuario) return { ok: false, error: "Commerce no está habilitado para este negocio." };
 
   const citaId = String(formData.get("citaId") ?? "");
   if (!citaId) return { ok: false, error: "ID de cita requerido" };
@@ -231,8 +270,8 @@ export async function marcarAsistenciaAlumnoAccion(formData: FormData) {
 
 /** Registra no-show de un alumno (no llegó). */
 export async function marcarNoShowAlumnoAccion(formData: FormData) {
-  const usuario = await obtenerUsuarioConPermiso("operar_agenda");
-  if (!usuario) return { ok: false, error: "No autorizado" };
+  const usuario = await obtenerUsuarioCommerce();
+  if (!usuario) return { ok: false, error: "Commerce no está habilitado para este negocio." };
 
   const citaId = String(formData.get("citaId") ?? "");
   if (!citaId) return { ok: false, error: "ID de cita requerido" };

@@ -2,6 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { obtenerUsuarioConPermiso } from "@/lib/auth";
+import { commerceActivoParaCliente } from "@/lib/commerce/featureFlag";
 import {
   buscarClientesOperacionales,
   obtenerFichaClienteOperacional,
@@ -13,19 +14,21 @@ import {
 
 export async function buscarClientesAccion(busqueda: string) {
   const usuario = await obtenerUsuarioConPermiso("operar_agenda");
-  if (!usuario) return [];
+  if (!usuario || !(await commerceActivoParaCliente(usuario.clienteId))) return [];
   return buscarClientesOperacionales(usuario.clienteId, busqueda);
 }
 
 export async function obtenerFichaClienteAccion(contactoId: string) {
   const usuario = await obtenerUsuarioConPermiso("operar_agenda");
-  if (!usuario) return null;
+  if (!usuario || !(await commerceActivoParaCliente(usuario.clienteId))) return null;
   return obtenerFichaClienteOperacional(usuario.clienteId, contactoId);
 }
 
 export async function ajusteManualCreditosClienteAccion(formData: FormData) {
   const usuario = await obtenerUsuarioConPermiso("operar_agenda");
-  if (!usuario) return { ok: false, error: "No autorizado" };
+  if (!usuario || !(await commerceActivoParaCliente(usuario.clienteId))) {
+    return { ok: false, error: "Commerce no está habilitado para este negocio." };
+  }
 
   const membresiaId = String(formData.get("membresiaId") ?? "");
   const delta = Number(formData.get("delta") ?? 0);
@@ -54,7 +57,9 @@ export async function ajusteManualCreditosClienteAccion(formData: FormData) {
 
 export async function renovarMembresiaClienteAccion(formData: FormData) {
   const usuario = await obtenerUsuarioConPermiso("operar_agenda");
-  if (!usuario) return { ok: false, error: "No autorizado" };
+  if (!usuario || !(await commerceActivoParaCliente(usuario.clienteId))) {
+    return { ok: false, error: "Commerce no está habilitado para este negocio." };
+  }
 
   const membresiaId = String(formData.get("membresiaId") ?? "");
   if (!membresiaId) return { ok: false, error: "Membresía no especificada." };

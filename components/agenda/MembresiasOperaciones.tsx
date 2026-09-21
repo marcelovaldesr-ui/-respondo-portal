@@ -38,9 +38,15 @@ export default function MembresiasOperaciones({
   membresias: MembresiaFilaOperacional[];
   kpis: MembresiasKpis;
   onObtenerDetalle: (membresiaId: string) => Promise<DetalleMembresiaOperacional | null>;
-  onAjustarCreditos: (fd: FormData) => Promise<{ ok: boolean; nuevoSaldo?: number; error?: string }>;
+  onAjustarCreditos: (fd: FormData) => Promise<{
+    ok: boolean;
+    nuevoSaldo?: number;
+    error?: string;
+    detalle?: DetalleMembresiaOperacional | null;
+  }>;
   onRenovarMembresia: (fd: FormData) => Promise<{ ok: boolean; error?: string }>;
 }) {
+  const [membresiasVista, setMembresiasVista] = useState(membresias);
   const [seleccionada, setSeleccionada] = useState<DetalleMembresiaOperacional | null>(null);
   const [cargandoDetalle, setCargandoDetalle] = useState(false);
   const [mostrarAjuste, setMostrarAjuste] = useState(false);
@@ -48,7 +54,7 @@ export default function MembresiasOperaciones({
   const [errorAjuste, setErrorAjuste] = useState<string | null>(null);
   const [filtroTexto, setFiltroTexto] = useState("");
 
-  const listaFiltrada = membresias.filter((m) => {
+  const listaFiltrada = membresiasVista.filter((m) => {
     if (!filtroTexto.trim()) return true;
     const term = filtroTexto.toLowerCase();
     return (
@@ -121,7 +127,7 @@ export default function MembresiasOperaciones({
           />
         </div>
         <div className="text-[13px] text-slate-500">
-          Mostrando {listaFiltrada.length} de {membresias.length} membresías
+          Mostrando {listaFiltrada.length} de {membresiasVista.length} membresías
         </div>
       </div>
 
@@ -308,9 +314,14 @@ export default function MembresiasOperaciones({
                   action={async (fd) => {
                     if (confirm(`¿Renovar plan "${seleccionada.planNombre}" para ${seleccionada.contactoNombre}?`)) {
                       setEnviando(true);
+                      setErrorAjuste(null);
                       fd.set("membresiaId", seleccionada.id);
-                      await onRenovarMembresia(fd);
-                      await recargarDetalle(seleccionada.id);
+                      const res = await onRenovarMembresia(fd);
+                      if (res.ok) {
+                        await recargarDetalle(seleccionada.id);
+                      } else {
+                        setErrorAjuste(res.error ?? "No se pudo renovar la membresía");
+                      }
                       setEnviando(false);
                     }
                   }}
@@ -323,6 +334,12 @@ export default function MembresiasOperaciones({
                     Renovar plan
                   </button>
                 </form>
+
+                {errorAjuste && !mostrarAjuste && (
+                  <div className="w-full rounded bg-red-100 p-2 text-[12px] text-red-800">
+                    {errorAjuste}
+                  </div>
+                )}
 
                 {seleccionada.contactoChatId && (
                   <Link
@@ -357,7 +374,25 @@ export default function MembresiasOperaciones({
                     setEnviando(false);
                     if (res.ok) {
                       setMostrarAjuste(false);
-                      await recargarDetalle(seleccionada.id);
+                      if (res.nuevoSaldo !== undefined) {
+                        setMembresiasVista((actuales) =>
+                          actuales.map((m) =>
+                            m.id === seleccionada.id
+                              ? { ...m, creditosSaldo: res.nuevoSaldo as number }
+                              : m,
+                          ),
+                        );
+                      }
+                      if (res.detalle) {
+                        setSeleccionada(res.detalle);
+                      } else {
+                        await recargarDetalle(seleccionada.id);
+                        setSeleccionada((actual) =>
+                          actual && res.nuevoSaldo !== undefined
+                            ? { ...actual, creditosSaldo: res.nuevoSaldo }
+                            : actual,
+                        );
+                      }
                     } else {
                       setErrorAjuste(res.error ?? "No se pudo realizar el ajuste");
                     }

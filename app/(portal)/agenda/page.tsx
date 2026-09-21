@@ -212,10 +212,10 @@ export default async function Agenda({
     cliente?.commerce_booking_v1_activo
       ? supa
           .from("ed_clases")
-          .select("id, nombre, instructor, capacidad_maxima, cupos_reservados, horario_inicio, horario_fin, estado")
+          .select("id, servicio_id, profesional_id, inicio, fin, cupo_maximo, cupo_ocupado, estado, ed_servicios!servicio_id(nombre), ed_profesionales!profesional_id(nombre)")
           .eq("cliente_id", usuario.clienteId)
-          .gte("horario_inicio", desdeIso)
-          .lte("horario_inicio", hastaIso)
+          .gte("inicio", desdeIso)
+          .lte("inicio", hastaIso)
           .neq("estado", "cancelada")
       : Promise.resolve({ data: [] as Record<string, unknown>[] }),
   ]);
@@ -229,28 +229,30 @@ export default async function Agenda({
   // ── Datos para el calendario ──────────────────────────────────────────
   const clasesCal: CitaCal[] = ((clasesRaw ?? []) as {
     id: string;
-    nombre: string;
-    instructor?: string | null;
-    capacidad_maxima: number;
-    cupos_reservados: number;
-    horario_inicio: string;
-    horario_fin: string;
+    servicio_id: string;
+    profesional_id: string;
+    inicio: string;
+    fin: string;
+    cupo_maximo: number;
+    cupo_ocupado: number;
     estado: string;
+    ed_servicios: { nombre: string } | { nombre: string }[] | null;
+    ed_profesionales: { nombre: string } | { nombre: string }[] | null;
   }[]).map((c) => ({
     id: `clase-${c.id}`,
-    inicio: c.horario_inicio,
-    fin: c.horario_fin,
+    inicio: c.inicio,
+    fin: c.fin,
     estado: c.estado === "cancelada" ? "cancelada" : "confirmada",
     origen: "portal",
-    nombre: c.nombre,
+    nombre: (Array.isArray(c.ed_servicios) ? c.ed_servicios[0]?.nombre : c.ed_servicios?.nombre) ?? "Clase",
     telefono: null,
     servicio: "Clase grupal",
-    profesionalId: profActivos[0]?.id ?? "",
-    profesional: c.instructor || "Instructor",
+    profesionalId: c.profesional_id,
+    profesional: (Array.isArray(c.ed_profesionales) ? c.ed_profesionales[0]?.nombre : c.ed_profesionales?.nombre) ?? "Instructor",
     tipo: "clase",
     claseId: c.id,
-    capacidadMaxima: c.capacidad_maxima,
-    cuposReservados: c.cupos_reservados,
+    capacidadMaxima: c.cupo_maximo,
+    cuposReservados: c.cupo_ocupado,
   }));
 
   const citasCal: CitaCal[] = [

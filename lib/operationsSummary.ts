@@ -42,10 +42,10 @@ export async function obtenerOperacionHoy(
   const [clasesRes, citasRes, holdsRes, membresiasRes] = await Promise.all([
     supa
       .from("ed_clases")
-      .select("id, capacidad_maxima, cupos_reservados")
+      .select("id, cupo_maximo, cupo_ocupado")
       .eq("cliente_id", clienteId)
-      .gte("horario_inicio", inicioHoyUtc)
-      .lte("horario_inicio", finHoyUtc)
+      .gte("inicio", inicioHoyUtc)
+      .lte("inicio", finHoyUtc)
       .neq("estado", "cancelada"),
     supa
       .from("ed_citas")
@@ -73,7 +73,7 @@ export async function obtenerOperacionHoy(
   const clases = clasesRes.data ?? [];
   const clasesHoy = clases.length;
   const cuposLibresHoy = clases.reduce(
-    (acc, c) => acc + Math.max(0, (c.capacidad_maxima ?? 0) - (c.cupos_reservados ?? 0)),
+    (acc, c) => acc + Math.max(0, (c.cupo_maximo ?? 0) - (c.cupo_ocupado ?? 0)),
     0,
   );
   const citasHoy = citasRes.count ?? 0;

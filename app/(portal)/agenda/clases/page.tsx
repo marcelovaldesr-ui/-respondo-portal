@@ -1,6 +1,8 @@
 import Link from "next/link";
+import { redirect } from "next/navigation";
 import { exigirUsuarioPortal } from "@/lib/auth";
 import { db } from "@/lib/db";
+import { commerceActivoParaCliente } from "@/lib/commerce/featureFlag";
 import { listarClasesOperacionales } from "@/lib/classes/classesOperations";
 import AgendaSubnav from "@/components/agenda/AgendaSubnav";
 import ClasesOperaciones from "@/components/agenda/ClasesOperaciones";
@@ -31,13 +33,11 @@ export default async function ClasesPage() {
   const usuario = await exigirUsuarioPortal();
   const supa = db();
 
-  const [{ data: cliente }, gruposClases, { data: servicios }, { data: profesionales }] =
+  const commerceActivo = await commerceActivoParaCliente(usuario.clienteId, supa);
+  if (!commerceActivo) redirect("/agenda");
+
+  const [gruposClases, { data: servicios }, { data: profesionales }] =
     await Promise.all([
-      supa
-        .from("ed_clientes")
-        .select("commerce_booking_v1_activo")
-        .eq("id", usuario.clienteId)
-        .maybeSingle(),
       listarClasesOperacionales(usuario.clienteId, supa),
       supa
         .from("ed_servicios")
@@ -51,7 +51,6 @@ export default async function ClasesPage() {
         .order("nombre"),
     ]);
 
-  const commerceActivo = Boolean(cliente?.commerce_booking_v1_activo);
   const servs = servicios ?? [];
   const profs = profesionales ?? [];
   const listos = servs.length > 0 && profs.length > 0;

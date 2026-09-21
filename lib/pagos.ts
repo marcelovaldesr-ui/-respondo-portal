@@ -315,6 +315,7 @@ export type PagoListado = Pago & {
   empleadoId: string;
   contacto: string;
   contactoId?: string | null;
+  citaId?: string | null;
   tipoTransaccion?: string | null;
 };
 
@@ -356,13 +357,22 @@ export async function listarPagos(p: {
   if (!filas.length) return [];
 
   const chatIds = [...new Set(filas.map((f) => f.chat_id as string))];
-  const { data: contactos } = await supa
-    .from("ed_contactos")
-    .select("chat_id, nombre")
-    .eq("cliente_id", p.clienteId)
-    .in("chat_id", chatIds)
-    .limit(500);
+  const pagoIds = filas.map((f) => f.id as string);
+  const [{ data: contactos }, { data: citasPago }] = await Promise.all([
+    supa
+      .from("ed_contactos")
+      .select("chat_id, nombre")
+      .eq("cliente_id", p.clienteId)
+      .in("chat_id", chatIds)
+      .limit(500),
+    supa
+      .from("ed_citas")
+      .select("id, pago_id")
+      .eq("cliente_id", p.clienteId)
+      .in("pago_id", pagoIds),
+  ]);
   const nombreDe = new Map((contactos ?? []).map((c) => [c.chat_id as string, (c.nombre as string | null) ?? ""]));
+  const citaDePago = new Map((citasPago ?? []).map((c) => [c.pago_id as string, c.id as string]));
 
   return filas.map((f) => ({
     id: f.id as string,
@@ -379,6 +389,7 @@ export async function listarPagos(p: {
     proveedorOrden: (f.proveedor_orden as string | null) ?? null,
     proveedorUrl: (f.proveedor_url as string | null) ?? null,
     contactoId: (f.contacto_id as string | null) ?? null,
+    citaId: citaDePago.get(f.id as string) ?? null,
     tipoTransaccion: (f.tipo_transaccion as string | null) ?? null,
     // Un chat de Instagram no es un teléfono: «+ig:1436…» confundiría.
     contacto:

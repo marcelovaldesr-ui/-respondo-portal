@@ -251,12 +251,23 @@ export async function cancelarInscripcionCredito(
   const horasMin = params.horasAnticipacionMin ?? HORAS_ANTICIPACION_CANCELACION_DEFECTO;
 
   // 1. Obtener cita y clase
-  const { data: cita, error: errCita } = await supa
+  let citaRes = await supa
     .from("ed_citas")
-    .select("id, cliente_id, clase_id, inicio, estado, chat_id")
+    .select("id, cliente_id, clase_id, contacto_id, inicio, estado, chat_id")
     .eq("id", params.citaId)
     .eq("cliente_id", params.clienteId)
     .maybeSingle();
+
+  if (citaRes.error) {
+    citaRes = await supa
+      .from("ed_citas")
+      .select("id, cliente_id, clase_id, inicio, estado, chat_id")
+      .eq("id", params.citaId)
+      .eq("cliente_id", params.clienteId)
+      .maybeSingle();
+  }
+
+  const { data: cita, error: errCita } = citaRes;
 
   if (errCita || !cita) {
     return { ok: false, cancelada: false, creditoDevuelto: false, motivo: "cita_invalida" };
@@ -270,33 +281,22 @@ export async function cancelarInscripcionCredito(
   const dentroDeVentana = (inicioMs - Date.now()) >= horasMin * 3600_000;
 
   // 2. Cancelar cita
-  await supa
+  const { error: errorCancelacion } = await supa
     .from("ed_citas")
     .update({
       estado: "cancelada",
       notas: params.motivo ? `Cancelado: ${params.motivo}` : "Cancelado por usuario",
       actualizado_en: new Date().toISOString(),
     })
+    .eq("cliente_id", params.clienteId)
     .eq("id", cita.id);
 
-  // 3. Liberar cupo en la clase si aplica
-  if (cita.clase_id) {
-    const { data: clase } = await supa
-      .from("ed_clases")
-      .select("cupo_ocupado")
-      .eq("id", cita.clase_id)
-      .maybeSingle();
-
-    if (clase) {
-      await supa
-        .from("ed_clases")
-        .update({
-          cupo_ocupado: Math.max(0, (clase.cupo_ocupado ?? 1) - 1),
-          actualizado_en: new Date().toISOString(),
-        })
-        .eq("id", cita.clase_id);
-    }
+  if (errorCancelacion) {
+    return { ok: false, cancelada: false, creditoDevuelto: false, motivo: "error" };
   }
+
+  // El trigger trg_liberar_cupo_clase libera exactamente un cupo al cambiar
+  // desde un estado activo a cancelada. No se toca el contador desde JS.
 
   // 4. Evaluar devolución de crédito
   if (!dentroDeVentana) {
@@ -309,12 +309,23 @@ export async function cancelarInscripcionCredito(
   }
 
   // Devolver crédito al socio si encontramos su membresía
-  if (params.contactoId) {
+  let contactoId = params.contactoId ?? ("contacto_id" in cita ? (cita.contacto_id as string | null) : null);
+  if (!contactoId && cita.chat_id) {
+    const { data: contacto } = await supa
+      .from("ed_contactos")
+      .select("id")
+      .eq("cliente_id", params.clienteId)
+      .eq("chat_id", cita.chat_id)
+      .maybeSingle();
+    contactoId = contacto?.id ?? null;
+  }
+
+  if (contactoId) {
     const { data: mem } = await supa
       .from("ed_membresias")
       .select("id, es_ilimitada")
       .eq("cliente_id", params.clienteId)
-      .eq("contacto_id", params.contactoId)
+      .eq("contacto_id", contactoId)
       .in("estado", ["activa", "agotada"])
       .order("fin", { ascending: false })
       .limit(1)
@@ -369,6 +380,9 @@ export async function registrarNoShow(
     .eq("id", params.citaId)
     .eq("cliente_id", params.clienteId);
 
-  if (error) return { ok: false, error: error.message };
+  if (error) {
+    console.error("[commerce] no se pudo registrar inasistencia:", error.message);
+    return { ok: false, error: "No se pudo registrar la inasistencia. Intenta nuevamente." };
+  }
   return { ok: true };
 }

@@ -35,7 +35,45 @@ export async function registrarMovimientoCredito(
 ): Promise<ResultadoMovimientoLedger> {
   const supa = p.supa ?? db();
 
-  // 1. Obtener la membresía
+  // Camino productivo: lock, ledger y saldo cacheado en una sola transacción.
+  if (typeof supa.rpc === "function") {
+    const { data, error } = await supa.rpc("ed_registrar_movimiento_credito", {
+      p_cliente_id: p.clienteId,
+      p_membresia_id: p.membresiaId,
+      p_tipo_movimiento: p.tipoMovimiento,
+      p_delta: p.delta,
+      p_referencia: p.referencia ?? null,
+      p_idempotency_key: p.idempotencyKey,
+      p_motivo: p.motivo ?? null,
+    });
+
+    if (!error) {
+      const resultado = Array.isArray(data) ? data[0] : data;
+      if (resultado && !resultado.ok) {
+        return {
+          ok: false,
+          error: resultado?.motivo === "saldo_insuficiente"
+            ? "Saldo de créditos insuficiente"
+            : "No se pudo registrar el movimiento de créditos",
+        };
+      }
+      if (resultado) {
+        return {
+          ok: true,
+          saldoResultante: resultado.saldo_resultante as number,
+          yaRegistrado: Boolean(resultado.ya_registrado),
+        };
+      }
+    }
+
+    // Durante el orden de despliegue, la API puede tardar en conocer el RPC.
+    if (error && error.code !== "PGRST202" && error.code !== "42883") {
+      console.error("[commerce] RPC de ledger falló:", error.message);
+      return { ok: false, error: "No se pudo registrar el movimiento de créditos" };
+    }
+  }
+
+  // Compatibilidad para tests y para el breve período previo a SQL 320.
   const { data: membresia, error: errMem } = await supa
     .from("ed_membresias")
     .select("id, cliente_id, creditos_saldo, es_ilimitada, estado")
@@ -179,4 +217,3 @@ export async function obtenerMovimientosLedger(
     creadoEn: d.creado_en as string,
   }));
 }
-

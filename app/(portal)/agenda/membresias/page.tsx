@@ -1,5 +1,7 @@
+import { redirect } from "next/navigation";
 import { exigirUsuarioPortal } from "@/lib/auth";
 import { db } from "@/lib/db";
+import { commerceActivoParaCliente } from "@/lib/commerce/featureFlag";
 import { listarMembresiasOperacionales } from "@/lib/memberships/membershipsOperations";
 import AgendaSubnav from "@/components/agenda/AgendaSubnav";
 import MembresiasOperaciones from "@/components/agenda/MembresiasOperaciones";
@@ -15,16 +17,10 @@ export default async function MembresiasPage() {
   const usuario = await exigirUsuarioPortal();
   const supa = db();
 
-  const [{ data: cliente }, { membresias, kpis }] = await Promise.all([
-    supa
-      .from("ed_clientes")
-      .select("commerce_booking_v1_activo")
-      .eq("id", usuario.clienteId)
-      .maybeSingle(),
-    listarMembresiasOperacionales(usuario.clienteId, supa),
-  ]);
+  const commerceActivo = await commerceActivoParaCliente(usuario.clienteId, supa);
+  if (!commerceActivo) redirect("/agenda");
 
-  const commerceActivo = Boolean(cliente?.commerce_booking_v1_activo);
+  const { membresias, kpis } = await listarMembresiasOperacionales(usuario.clienteId, supa);
 
   return (
     <main className="mx-auto max-w-6xl px-4 py-6 sm:px-6 lg:px-10 lg:py-9">

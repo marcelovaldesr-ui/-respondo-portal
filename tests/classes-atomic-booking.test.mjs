@@ -78,7 +78,17 @@ function crearMockDb(datosIniciales = {}) {
         if (updateData) {
           const matched = t.filter((r) => matchFilters(r, filters));
           for (const m of matched) {
+            const estadoAnterior = m.estado;
             Object.assign(m, updateData);
+            if (
+              tabla === "ed_citas" &&
+              m.clase_id &&
+              ["agendada", "confirmada", "reagendada"].includes(estadoAnterior) &&
+              !["agendada", "confirmada", "reagendada"].includes(m.estado)
+            ) {
+              const clase = tablas.ed_clases.find((c) => c.id === m.clase_id);
+              if (clase) clase.cupo_ocupado = Math.max(0, clase.cupo_ocupado - 1);
+            }
           }
           resolve({ data: matched, error: null });
           return;
@@ -101,7 +111,7 @@ function crearMockDb(datosIniciales = {}) {
   return {
     tablas,
     from: (tabla) => crearQuery(tabla),
-    rpc: async () => ({ data: null, error: { message: "RPC mocked fallback" } }),
+    rpc: async () => ({ data: null, error: { code: "PGRST202", message: "RPC mocked fallback" } }),
   };
 }
 

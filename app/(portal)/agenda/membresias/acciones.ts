@@ -2,6 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { obtenerUsuarioConPermiso } from "@/lib/auth";
+import { commerceActivoParaCliente } from "@/lib/commerce/featureFlag";
 import {
   obtenerDetalleMembresiaOperacional,
   ajusteManualCreditos,
@@ -14,13 +15,15 @@ import {
 
 export async function obtenerDetalleMembresiaAccion(membresiaId: string) {
   const usuario = await obtenerUsuarioConPermiso("operar_agenda");
-  if (!usuario) return null;
+  if (!usuario || !(await commerceActivoParaCliente(usuario.clienteId))) return null;
   return obtenerDetalleMembresiaOperacional(usuario.clienteId, membresiaId);
 }
 
 export async function ajusteManualCreditosAccion(formData: FormData) {
   const usuario = await obtenerUsuarioConPermiso("operar_agenda");
-  if (!usuario) return { ok: false, error: "No autorizado" };
+  if (!usuario || !(await commerceActivoParaCliente(usuario.clienteId))) {
+    return { ok: false, error: "Commerce no está habilitado para este negocio." };
+  }
 
   const membresiaId = String(formData.get("membresiaId") ?? "");
   const delta = Number(formData.get("delta") ?? 0);
@@ -43,12 +46,17 @@ export async function ajusteManualCreditosAccion(formData: FormData) {
 
   revalidatePath("/agenda/membresias");
   revalidatePath("/agenda");
-  return res;
+  const detalle = res.ok
+    ? await obtenerDetalleMembresiaOperacional(usuario.clienteId, membresiaId)
+    : null;
+  return { ...res, detalle };
 }
 
 export async function renovarMembresiaAccion(formData: FormData) {
   const usuario = await obtenerUsuarioConPermiso("operar_agenda");
-  if (!usuario) return { ok: false, error: "No autorizado" };
+  if (!usuario || !(await commerceActivoParaCliente(usuario.clienteId))) {
+    return { ok: false, error: "Commerce no está habilitado para este negocio." };
+  }
 
   const membresiaId = String(formData.get("membresiaId") ?? "");
   if (!membresiaId) return { ok: false, error: "Membresía no especificada." };

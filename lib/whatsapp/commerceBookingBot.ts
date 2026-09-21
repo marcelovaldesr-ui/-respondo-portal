@@ -362,7 +362,7 @@ export async function ejecutarAccionCommerce(
       const ahoraIso = new Date().toISOString();
       const { data: citas } = await supa
         .from("ed_citas")
-        .select("id, inicio, servicio_id, clase_id, estado, ed_servicios(nombre)")
+        .select("id, inicio, servicio_id, clase_id, estado, ed_servicios!servicio_id(nombre)")
         .eq("cliente_id", params.clienteId)
         .or(`chat_id.eq.${params.chatId}${contactoId ? `,contacto_id.eq.${contactoId}` : ""}`)
         .gte("inicio", ahoraIso)

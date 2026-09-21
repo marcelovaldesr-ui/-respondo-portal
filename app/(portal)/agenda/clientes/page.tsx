@@ -1,6 +1,8 @@
+import { redirect } from "next/navigation";
 import { exigirUsuarioPortal } from "@/lib/auth";
 import { db } from "@/lib/db";
-import { buscarClientesOperacionales } from "@/lib/clients/clientsOperations";
+import { commerceActivoParaCliente } from "@/lib/commerce/featureFlag";
+import { buscarClientesOperacionales, obtenerFichaClienteOperacional } from "@/lib/clients/clientsOperations";
 import AgendaSubnav from "@/components/agenda/AgendaSubnav";
 import ClientesOperaciones from "@/components/agenda/ClientesOperaciones";
 import {
@@ -12,20 +14,26 @@ import {
 
 export const dynamic = "force-dynamic";
 
-export default async function ClientesPage() {
+export default async function ClientesPage({
+  searchParams,
+}: {
+  searchParams?: Promise<{ q?: string; contacto?: string }>;
+}) {
+  const params = searchParams ? await searchParams : undefined;
+  const busquedaInicial = typeof params?.q === "string" ? params.q.slice(0, 80) : "";
+  const contactoInicialId = typeof params?.contacto === "string" ? params.contacto : null;
   const usuario = await exigirUsuarioPortal();
   const supa = db();
 
-  const [{ data: cliente }, clientesIniciales] = await Promise.all([
-    supa
-      .from("ed_clientes")
-      .select("commerce_booking_v1_activo")
-      .eq("id", usuario.clienteId)
-      .maybeSingle(),
-    buscarClientesOperacionales(usuario.clienteId, "", supa),
-  ]);
+  const commerceActivo = await commerceActivoParaCliente(usuario.clienteId, supa);
+  if (!commerceActivo) redirect("/agenda");
 
-  const commerceActivo = Boolean(cliente?.commerce_booking_v1_activo);
+  const [clientesIniciales, fichaInicial] = await Promise.all([
+    buscarClientesOperacionales(usuario.clienteId, busquedaInicial, supa),
+    contactoInicialId
+      ? obtenerFichaClienteOperacional(usuario.clienteId, contactoInicialId, supa)
+      : Promise.resolve(null),
+  ]);
 
   return (
     <main className="mx-auto max-w-6xl px-4 py-6 sm:px-6 lg:px-10 lg:py-9">
@@ -47,6 +55,8 @@ export default async function ClientesPage() {
       <div className="mt-6">
         <ClientesOperaciones
           clientesIniciales={clientesIniciales}
+          busquedaInicial={busquedaInicial}
+          fichaInicial={fichaInicial}
           onBuscar={buscarClientesAccion}
           onObtenerFicha={obtenerFichaClienteAccion}
           onAjustarCreditos={ajusteManualCreditosClienteAccion}

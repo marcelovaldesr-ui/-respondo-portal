@@ -192,16 +192,30 @@ export async function obtenerDetalleMembresiaOperacional(
   const movimientosLedger = await obtenerMovimientosLedger(clienteId, membresiaId, supa);
 
   // Consultar próximas reservas del contacto
-  const { data: citas } = await supa
+  let citasRes = await supa
     .from("ed_citas")
     .select("id, inicio, fin, estado, ed_servicios!servicio_id(nombre)")
     .eq("cliente_id", clienteId)
+    .eq("contacto_id", f.contacto_id)
     .in("estado", ["agendada", "confirmada", "reagendada"])
     .gte("inicio", new Date().toISOString())
     .order("inicio", { ascending: true })
     .limit(5);
 
-  const proximasReservas = (citas ?? []).map((c) => {
+  // Compatibilidad mientras se aplica la migración 320 en producción.
+  if (citasRes.error && contacto?.chat_id) {
+    citasRes = await supa
+      .from("ed_citas")
+      .select("id, inicio, fin, estado, ed_servicios!servicio_id(nombre)")
+      .eq("cliente_id", clienteId)
+      .eq("chat_id", contacto.chat_id)
+      .in("estado", ["agendada", "confirmada", "reagendada"])
+      .gte("inicio", new Date().toISOString())
+      .order("inicio", { ascending: true })
+      .limit(5);
+  }
+
+  const proximasReservas = (citasRes.data ?? []).map((c) => {
     const s = Array.isArray(c.ed_servicios) ? c.ed_servicios[0] : c.ed_servicios;
     return {
       citaId: c.id as string,
@@ -289,7 +303,12 @@ export async function ajusteManualCreditos(
   });
 
   if (!res.ok) {
-    return { ok: false, error: res.error };
+    return {
+      ok: false,
+      error: res.error.toLowerCase().includes("insuficiente")
+        ? "El ajuste dejaría un saldo negativo."
+        : "No se pudo guardar el ajuste en el ledger. Intenta nuevamente.",
+    };
   }
 
   return { ok: true, nuevoSaldo: res.saldoResultante };
@@ -309,48 +328,30 @@ export async function renovarMembresiaManual(
 ): Promise<{ ok: boolean; error?: string }> {
   const supa = params.supa ?? db();
 
-  const { data: mem, error: errMem } = await supa
-    .from("ed_membresias")
-    .select(`
-      id, fin, estado, plan_id,
-      ed_planes!plan_id (creditos_totales, vigencia_dias, nombre)
-    `)
-    .eq("id", params.membresiaId)
-    .eq("cliente_id", params.clienteId)
-    .single();
-
-  if (errMem || !mem) {
-    return { ok: false, error: "Membresía no encontrada." };
-  }
-
-  const plan = Array.isArray(mem.ed_planes) ? mem.ed_planes[0] : mem.ed_planes;
-  const dias = (plan?.vigencia_dias as number) || 30;
-  const creditosPlan = plan?.creditos_totales ?? null;
-
-  const finActual = new Date(mem.fin as string).getTime();
-  const nuevaFin = new Date(Math.max(Date.now(), finActual) + dias * 86_400_000);
-
-  await supa
-    .from("ed_membresias")
-    .update({
-      fin: nuevaFin.toISOString(),
-      estado: "activa",
-      actualizado_en: new Date().toISOString(),
-    })
-    .eq("id", params.membresiaId);
-
-  if (creditosPlan !== null) {
-    const key = `renov-manual-${params.membresiaId}-${Date.now()}`;
-    await registrarMovimientoCredito({
-      clienteId: params.clienteId,
-      membresiaId: params.membresiaId,
-      tipoMovimiento: "renovacion",
-      delta: creditosPlan,
-      idempotencyKey: key,
-      motivo: `Renovación manual de plan: ${plan?.nombre ?? "Plan"}`,
-      supa,
+  const idempotencyKey = `renov-manual-${params.membresiaId}-${Date.now()}`;
+  if (typeof supa.rpc === "function") {
+    const { data, error } = await supa.rpc("ed_renovar_membresia_manual", {
+      p_cliente_id: params.clienteId,
+      p_membresia_id: params.membresiaId,
+      p_idempotency_key: idempotencyKey,
     });
+
+    if (!error) {
+      const resultado = Array.isArray(data) ? data[0] : data;
+      return resultado?.ok
+        ? { ok: true }
+        : { ok: false, error: "No se pudo renovar la membresía." };
+    }
+
+    if (error.code !== "PGRST202" && error.code !== "42883") {
+      console.error("[commerce] Renovación atómica falló:", error.message);
+      return { ok: false, error: "No se pudo renovar la membresía." };
+    }
   }
 
-  return { ok: true };
+  // Sin el RPC no es seguro extender la vigencia y acreditar saldo en dos pasos.
+  return {
+    ok: false,
+    error: "La renovación estará disponible al completar la actualización operativa.",
+  };
 }
