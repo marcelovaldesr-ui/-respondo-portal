@@ -246,6 +246,16 @@ export async function publicarCampanaNativaAccion(
       | string
       | undefined;
 
+    /**
+     * A dónde lleva el anuncio: el sitio web del propio negocio, del perfil de
+     * marketing. Nunca un dominio fijo: antes caía a respondo.cl y el anuncio
+     * de Impresora Color habría llevado a un sitio que no es suyo.
+     */
+    const { obtenerPerfilMarketing } = await import("@/lib/marketing/perfilMarketing");
+    const perfil = await obtenerPerfilMarketing(usuario.clienteId).catch(() => null);
+    const sitio = perfil?.business?.sitioWeb?.trim();
+    const sitioWebUrl = sitio ? (/^https?:\/\//i.test(sitio) ? sitio : `https://${sitio}`) : null;
+
     resultado = await publicarCampanaEnMeta({
       clienteId: usuario.clienteId,
       borradorId,
@@ -257,6 +267,7 @@ export async function publicarCampanaNativaAccion(
       audiencia: borrador.audiencia,
       copies: borrador.copies,
       pageId,
+      sitioWebUrl,
     });
   } else {
     const { publicarCampanaEnGoogle } = await import("@/lib/ads/googlePublicar");

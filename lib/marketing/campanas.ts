@@ -173,6 +173,10 @@ export async function registrarPublicacionCampana(
       campaignId: resultado.campaignId,
       adGroupOrAdSetId: resultado.adGroupOrAdSetId,
       adIds: resultado.adIds,
+      creativeIds: resultado.creativeIds,
+      // Si una etapa falló (AdSet, creatividad o anuncio), queda registrado
+      // junto a la campaña en vez de perderse.
+      fallas: resultado.nativeErrors ?? null,
       estadoPlataforma: resultado.status,
       publicadoEn: resultado.createdAt,
       urlNativa: resultado.urlNativa,

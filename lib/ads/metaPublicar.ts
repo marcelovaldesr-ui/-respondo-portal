@@ -1,5 +1,6 @@
 import { db } from "@/lib/db";
 import { descifrar } from "@/lib/cifrado";
+import { decimalesDe } from "@/lib/ads/moneda";
 import {
   generarClaveIdempotencia,
   registrarFinPublicacion,
@@ -44,6 +45,11 @@ export function traducirErrorMeta(status: number, cuerpo: unknown): FallaPublica
   const codigo = Number(err.code || status);
   const subcode = Number(err.error_subcode || 0);
   const rawMsg = sanitizarMensajeError(err.message || c.message || `HTTP ${status}`);
+  // El fbtrace_id y el mensaje para el usuario de Meta son lo que pide soporte
+  // de Meta para rastrear un rechazo; antes se descartaban.
+  const userMsg = err.error_user_msg ? sanitizarMensajeError(err.error_user_msg) : "";
+  const traza = err.fbtrace_id ? ` · fbtrace_id ${sanitizarMensajeError(err.fbtrace_id)}` : "";
+  const detalle = `Code ${codigo} (Subcode ${subcode}): ${rawMsg}${userMsg ? ` — ${userMsg}` : ""}${traza}`;
 
   if (codigo === 100 && (subcode === 33 || /missing permissions|does not support this operation/i.test(rawMsg))) {
     return {
@@ -51,7 +57,7 @@ export function traducirErrorMeta(status: number, cuerpo: unknown): FallaPublica
       tipo: "permiso",
       mensaje:
         "Meta rechazó la creación porque el token actual solo tiene permiso de lectura (`ads_read`). Se requiere autorizar con permiso de administración (`ads_management`) y rol de anunciante en la cuenta.",
-      detalleTecnico: `Code ${codigo} (Subcode ${subcode}): ${rawMsg}`,
+      detalleTecnico: detalle,
       accionSugerida: "Reconectar la cuenta de Meta solicitando el permiso de gestión de anuncios.",
     };
   }
@@ -61,7 +67,7 @@ export function traducirErrorMeta(status: number, cuerpo: unknown): FallaPublica
       codigo: "META_TOKEN_EXPIRADO",
       tipo: "autenticacion",
       mensaje: "El token de autorización con Meta ha expirado o fue revocado. Se debe reconectar la cuenta en Integraciones.",
-      detalleTecnico: `Code ${codigo}: ${rawMsg}`,
+      detalleTecnico: detalle,
       accionSugerida: "Reconectar Meta Ads en el portal.",
     };
   }
@@ -71,7 +77,7 @@ export function traducirErrorMeta(status: number, cuerpo: unknown): FallaPublica
       codigo: "META_ACCESO_DENEGADO",
       tipo: "permiso",
       mensaje: "No tienes permisos de Administrador o Anunciante en la cuenta publicitaria seleccionada en Meta.",
-      detalleTecnico: `Code ${codigo}: ${rawMsg}`,
+      detalleTecnico: detalle,
       accionSugerida: "Verificar en Meta Business Suite que el usuario tenga rol de administrador o anunciante en la cuenta publicitaria.",
     };
   }
@@ -81,7 +87,7 @@ export function traducirErrorMeta(status: number, cuerpo: unknown): FallaPublica
       codigo: "META_PRESUPUESTO_INVALIDO",
       tipo: "validacion",
       mensaje: "El presupuesto diario configurado está por debajo del monto mínimo aceptado por Meta para esta moneda.",
-      detalleTecnico: `Code ${codigo}: ${rawMsg}`,
+      detalleTecnico: detalle,
       accionSugerida: "Aumentar el presupuesto diario de la campaña.",
     };
   }
@@ -91,7 +97,7 @@ export function traducirErrorMeta(status: number, cuerpo: unknown): FallaPublica
       codigo: "META_PAGINA_FALTANTE",
       tipo: "identidad",
       mensaje: "Meta requiere una Página de Facebook comercial asociada para publicar el anuncio.",
-      detalleTecnico: `Code ${codigo}: ${rawMsg}`,
+      detalleTecnico: detalle,
       accionSugerida: "Asociar una Página de Facebook en Meta Business Suite con acceso a la cuenta publicitaria.",
     };
   }
@@ -100,7 +106,7 @@ export function traducirErrorMeta(status: number, cuerpo: unknown): FallaPublica
     codigo: "META_ERROR_NATIVO",
     tipo: "plataforma",
     mensaje: `Meta respondió con un error al publicar: ${rawMsg}`,
-    detalleTecnico: `Code ${codigo} (Subcode ${subcode}): ${rawMsg}`,
+    detalleTecnico: detalle,
   };
 }
 
@@ -314,8 +320,12 @@ export async function publicarCampanaEnMeta(
   const campaignId = rCampana.datos.id;
 
   // 4. Paso 2: Crear Conjunto de Anuncios (AdSet) (PAUSED)
-  // Meta requiere el presupuesto en centavos de la moneda de la cuenta
-  const presupuestoCentavos = Math.round(entrada.presupuestoDiario * 100);
+  // Meta recibe el presupuesto en la unidad mínima de la moneda de la CUENTA:
+  // centavos en USD (×100), pero pesos enteros en CLP (×1; el mínimo diario
+  // que informa Meta para CLP es ~965). Multiplicar siempre por 100 convertía
+  // un presupuesto de $5.000 CLP diarios en $500.000.
+  const monedaCuenta = String(con.moneda || entrada.moneda || "");
+  const presupuestoCentavos = Math.round(entrada.presupuestoDiario * 10 ** decimalesDe(monedaCuenta));
 
   const edadMin = Math.max(18, entrada.audiencia?.edadDesde ?? 18);
   const edadMax = Math.min(65, entrada.audiencia?.edadHasta ?? 65);
@@ -329,7 +339,9 @@ export async function publicarCampanaEnMeta(
       campaign_id: campaignId,
       daily_budget: presupuestoCentavos,
       billing_event: "IMPRESSIONS",
-      optimization_goal: "LEAD_GENERATION",
+      // LEAD_GENERATION es para formularios instantáneos: Meta no lo acepta
+      // para tráfico a un sitio web, que se optimiza por clics en el enlace.
+      optimization_goal: objetivoMeta === "OUTCOME_TRAFFIC" ? "LINK_CLICKS" : "LEAD_GENERATION",
       destination_type: entrada.destino === "whatsapp" ? "WHATSAPP" : "WEBSITE",
       targeting: {
         geo_locations: { countries: ["CL"] },
@@ -340,14 +352,41 @@ export async function publicarCampanaEnMeta(
     },
   );
 
+  /**
+   * Fallas de las etapas posteriores a la campaña. Antes se descartaban: si el
+   * AdSet, la creatividad o el anuncio fallaban, igual se respondía «creada con
+   * éxito» con solo la campaña, y el código de Meta se perdía.
+   */
+  const fallasEtapas: FallaPublicacion[] = [];
+
   let adSetId: string | undefined;
   if (rAdSet.ok) {
     adSetId = rAdSet.datos.id;
+  } else {
+    fallasEtapas.push({ ...rAdSet.error, campo: "adset" });
   }
 
   // 5. Paso 3: Crear Creatividad y Anuncio si AdSet se creó
   let adId: string | undefined;
-  if (adSetId && entrada.pageId) {
+  let creativeId: string | undefined;
+  if (adSetId && !entrada.pageId) {
+    fallasEtapas.push({
+      codigo: "SIN_PAGINA",
+      tipo: "identidad",
+      campo: "creative",
+      mensaje: "El negocio no tiene una Página de Facebook vinculada: se creó la campaña y el conjunto, pero no el anuncio.",
+      accionSugerida: "Reconectar Meta en Integraciones compartiendo la Página del negocio.",
+    });
+  } else if (adSetId && !entrada.sitioWebUrl) {
+    fallasEtapas.push({
+      codigo: "SIN_SITIO_WEB",
+      tipo: "validacion",
+      campo: "creative",
+      mensaje: "El negocio no tiene sitio web en su perfil: el anuncio no tiene a dónde llevar a la gente.",
+      accionSugerida: "Agregar el sitio web en el perfil de marketing del negocio.",
+    });
+  }
+  if (adSetId && entrada.pageId && entrada.sitioWebUrl) {
     const rCreative = await peticionMeta<{ id: string }>(
       `${GRAPH}/${cuentaId}/adcreatives`,
       token,
@@ -359,7 +398,9 @@ export async function publicarCampanaEnMeta(
           link_data: {
             message: copyPrincipal.texto,
             name: copyPrincipal.titular,
-            link: entrada.sitioWebUrl || "https://respondo.cl",
+            // El sitio del propio negocio. Antes caía a respondo.cl: el anuncio
+            // de un cliente llevaba a un dominio que no es suyo.
+            link: entrada.sitioWebUrl,
             call_to_action: {
               type: entrada.destino === "whatsapp" ? "WHATSAPP_MESSAGE" : "LEARN_MORE",
             },
@@ -368,8 +409,10 @@ export async function publicarCampanaEnMeta(
       },
     );
 
-    if (rCreative.ok) {
-      const creativeId = rCreative.datos.id;
+    if (!rCreative.ok) {
+      fallasEtapas.push({ ...rCreative.error, campo: "creative" });
+    } else {
+      creativeId = rCreative.datos.id;
       const rAd = await peticionMeta<{ id: string }>(
         `${GRAPH}/${cuentaId}/ads`,
         token,
@@ -383,6 +426,8 @@ export async function publicarCampanaEnMeta(
       );
       if (rAd.ok) {
         adId = rAd.datos.id;
+      } else {
+        fallasEtapas.push({ ...rAd.error, campo: "ad" });
       }
     }
   }
@@ -396,11 +441,17 @@ export async function publicarCampanaEnMeta(
     campaignId,
     adGroupOrAdSetId: adSetId,
     adIds: adId ? [adId] : undefined,
+    creativeIds: creativeId ? [creativeId] : undefined,
+    nativeErrors: fallasEtapas.length ? fallasEtapas : undefined,
     status: "pausada",
     createdAt: new Date().toISOString(),
     urlNativa,
     idempotencyKey: claveIdem,
-    mensaje: "Campaña creada con éxito en Meta Ads en estado PAUSADA.",
+    mensaje: fallasEtapas.length
+      ? `La campaña quedó creada en Meta en estado PAUSADA, pero incompleta: ${fallasEtapas
+          .map((f) => `${f.campo ?? "etapa"} — ${f.mensaje}`)
+          .join(" · ")}`
+      : "Campaña creada con éxito en Meta Ads en estado PAUSADA.",
   };
 
   registrarFinPublicacion(claveIdem, resultadoExitoso);

@@ -134,3 +134,24 @@ test("publicarCampanaEnMeta: rechaza presupuesto <= 0 sin hacer llamadas", async
   assert.ok(res.mensaje.includes("presupuesto diario debe ser mayor a 0"));
 });
 
+
+test("traducirErrorMeta: sin permiso de escritura en la cuenta conserva subcode, mensaje de Meta y fbtrace_id", () => {
+  // Respuesta real de Meta (22-sep-2026) cuando el usuario de sistema solo tiene ANALYZE.
+  const errorCrudo = {
+    error: {
+      message: "Permissions error",
+      type: "OAuthException",
+      code: 200,
+      error_subcode: 2490585,
+      error_user_title: "No dispones de permiso de escritura en la cuenta publicitaria",
+      error_user_msg: "Para crear o editar anuncios de la cuenta publicitaria, ponte en contacto con un administrador.",
+      fbtrace_id: "AAKt3MN14U--2dE2WQHqBlJ",
+    },
+  };
+
+  const falla = traducirErrorMeta(400, errorCrudo);
+  assert.equal(falla.codigo, "META_ACCESO_DENEGADO");
+  assert.ok(falla.detalleTecnico?.includes("Subcode 2490585"));
+  assert.ok(falla.detalleTecnico?.includes("fbtrace_id AAKt3MN14U--2dE2WQHqBlJ"));
+  assert.ok(falla.detalleTecnico?.includes("ponte en contacto con un administrador"));
+});

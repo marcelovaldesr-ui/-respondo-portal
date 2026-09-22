@@ -67,6 +67,8 @@ export type ResultadoPublicacion = {
   campaignId?: string;
   adGroupOrAdSetId?: string;
   adIds?: string[];
+  /** Creatividades creadas (Meta). Se guardan para poder rastrear el anuncio. */
+  creativeIds?: string[];
   status: EstadoPublicacionPlataforma;
   createdAt: string;
   urlNativa?: string;

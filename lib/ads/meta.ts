@@ -15,7 +15,7 @@ import type {
   Resultado,
   TipoResultado,
 } from "@/lib/ads/canal";
-import type { Monto } from "@/lib/ads/moneda";
+import { decimalesDe, type Monto } from "@/lib/ads/moneda";
 
 /**
  * META COMO PROVEEDOR DE ANUNCIOS — el único archivo que sabe de la Graph API.
@@ -638,8 +638,9 @@ export async function rendimientoMetaMulti(
       meta.set(String(c.id), {
         estado: estadoMeta(c.effective_status ?? c.status),
         objetivo: objetivoMetaLegible(c.objective),
-        // Meta entrega el presupuesto en centavos de la moneda de la cuenta.
-        presupuesto: diario > 0 ? { valor: diario / 100, moneda: con.moneda } : null,
+        // Meta entrega el presupuesto en la unidad mínima de la moneda de la
+        // cuenta: centavos en USD, pesos enteros en CLP (no hay que dividir).
+        presupuesto: diario > 0 ? { valor: diario / 10 ** decimalesDe(con.moneda), moneda: con.moneda } : null,
       });
     }
   }
