@@ -67,7 +67,7 @@ test("presupuesto CLP: micros múltiplo de 1 peso (Google rechaza fracciones)", 
   assert.equal(microsPresupuesto(10.005, "USD") % 10_000, 0);
 });
 
-test("URL final: sin sitio del negocio NO se publica (antes caía a respondo.cl)", () => {
+test("URL final: sin sitio del negocio NO se publica (antes caía a un dominio ajeno)", () => {
   for (const u of [null, "", "no es url", "javascript:alert(1)"]) {
     const r = construirOperacionesGoogle({ ...base, urlFinal: u }, "1234567890", "2026-09-22");
     assert.equal(r.ok, false, String(u));

@@ -19,12 +19,12 @@ import {
 const PROD = { NEXT_PUBLIC_SITE_URL: "https://respondo-portal.vercel.app", NODE_ENV: "production" };
 
 test("normalizar: solo orígenes exactos", () => {
-  assert.equal(normalizarOrigen("https://portal.respondo.cl/"), "https://portal.respondo.cl");
+  assert.equal(normalizarOrigen("https://portal.respon-do.com/"), "https://portal.respon-do.com");
   assert.equal(normalizarOrigen("https://*.vercel.app"), null);
-  assert.equal(normalizarOrigen("https://portal.respondo.cl/login"), null);
-  assert.equal(normalizarOrigen("http://portal.respondo.cl"), null);
+  assert.equal(normalizarOrigen("https://portal.respon-do.com/login"), null);
+  assert.equal(normalizarOrigen("http://portal.respon-do.com"), null);
   assert.equal(normalizarOrigen("http://localhost:3000"), "http://localhost:3000");
-  assert.equal(normalizarOrigen("https://user:pw@portal.respondo.cl"), null);
+  assert.equal(normalizarOrigen("https://user:pw@portal.respon-do.com"), null);
   assert.equal(normalizarOrigen("javascript:alert(1)"), null);
   assert.equal(normalizarOrigen(""), null);
 });
@@ -38,10 +38,10 @@ test("canónico: variable o respaldo; localhost nunca en producción", () => {
 });
 
 test("previews y copias no son confiables; staging explícito sí", () => {
-  const env = { ...PROD, NEXT_PUBLIC_ORIGENES_PERMITIDOS: "https://staging.respondo.cl, https://*.vercel.app, http://localhost:3000" };
-  assert.deepEqual(origenesConfiables(env), ["https://respondo-portal.vercel.app", "https://staging.respondo.cl"]);
+  const env = { ...PROD, NEXT_PUBLIC_ORIGENES_PERMITIDOS: "https://staging.respon-do.com, https://*.vercel.app, http://localhost:3000" };
+  assert.deepEqual(origenesConfiables(env), ["https://respondo-portal.vercel.app", "https://staging.respon-do.com"]);
   assert.equal(esOrigenConfiable("https://respondo-portal-git-rama-marcelo.vercel.app", env), false);
-  assert.equal(esOrigenConfiable("https://staging.respondo.cl", env), true);
+  assert.equal(esOrigenConfiable("https://staging.respon-do.com", env), true);
   assert.equal(esOrigenConfiable("http://localhost:3000", env), false, "localhost no vale en un build de producción");
   assert.equal(esOrigenConfiable("http://localhost:3000", { ...env, NODE_ENV: "development" }), true);
 });

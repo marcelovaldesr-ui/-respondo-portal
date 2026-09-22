@@ -520,7 +520,9 @@ export async function ejecutarAccionCommerce(
         nombreContacto: params.nombreContacto ?? "Cliente WhatsApp",
         telefono: `+${params.chatId}`,
         chatId: params.chatId,
-        email: "contacto@respondo.cl",
+        // Sin correo inventado: flowPagos toma el del contacto si lo tiene.
+        // Antes iba un correo fijo de un dominio ajeno y además tapaba el real.
+        email: null,
         empleadoId: params.empleadoId,
         supa,
       });

@@ -309,7 +309,7 @@ reviso qué la escribe antes de decidir.
 - En Vercel, si trabajas con un dominio extra (staging o un dominio propio),
   agrégalo como variable `NEXT_PUBLIC_ORIGENES_PERMITIDOS` con los orígenes
   exactos separados por coma (por ejemplo
-  `https://portal.respondo.cl,https://staging.respondo.cl`). Si no la defines,
+  `https://portal.respon-do.com,https://staging.respon-do.com`). Si no la defines,
   solo vale el dominio canónico: es lo más seguro y probablemente lo que quieres.
 
 ### 3. ¿Cambio el índigo por el azul nuevo en TODO el portal?

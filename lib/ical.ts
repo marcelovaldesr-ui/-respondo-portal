@@ -73,7 +73,7 @@ export function construirIcal(params: {
   eventos: EventoIcal[];
   dominio?: string;
 }): string {
-  const dominio = params.dominio ?? "respondo.cl";
+  const dominio = params.dominio ?? "respon-do.com";
   const lineas: string[] = [
     "BEGIN:VCALENDAR",
     "VERSION:2.0",

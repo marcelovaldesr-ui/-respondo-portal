@@ -67,7 +67,7 @@ Cualquier duda, respóndenos por este mismo chat.
 ```
 
 `{{1}}` nombre · `{{2}}` servicio · `{{3}}` día y hora · `{{4}}` enlace de gestión
-Ejemplos: `Cristian` · `mantención programada` · `jueves 21 a las 10:00` · `https://respondo.cl/cita/abc123`
+Ejemplos: `Cristian` · `mantención programada` · `jueves 21 a las 10:00` · `https://respondo-portal.vercel.app/cita/abc123`
 
 ### 3.2 `cita_recordatorio` — utilidad
 
@@ -81,7 +81,7 @@ Si no vas a poder llegar, avísanos acá y liberamos la hora:
 ```
 
 `{{1}}` nombre · `{{2}}` servicio · `{{3}}` hora · `{{4}}` enlace de gestión
-Ejemplos: `Cristian` · `mantención programada` · `10:00` · `https://respondo.cl/cita/abc123`
+Ejemplos: `Cristian` · `mantención programada` · `10:00` · `https://respondo-portal.vercel.app/cita/abc123`
 
 ### 3.3 `encuesta_postventa` — utilidad · **Vera**
 

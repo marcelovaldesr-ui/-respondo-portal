@@ -120,7 +120,9 @@ export function validarParametrosCrearPago(p: {
     return { ok: false, error: "El concepto es demasiado largo (máx 120 caracteres)." };
   }
 
-  const email = (p.email ?? "").trim() || "contacto@respondo.io";
+  // Respaldo en NUESTRO dominio (respon-do.com). Antes era un correo de
+  // un dominio ajeno que habría recibido los comprobantes de Flow.
+  const email = (p.email ?? "").trim() || "hola@respon-do.com";
   if (!email.includes("@")) {
     return { ok: false, error: "El email del pagador no tiene un formato válido." };
   }

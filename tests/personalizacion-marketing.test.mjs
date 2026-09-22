@@ -221,7 +221,7 @@ test("Customer Zero: tres negocios reales tienen perfiles y restricciones totalm
       nombre: "Respondo",
       rubro: "Software y Automatización de Ventas",
       categoria: "SaaS B2B",
-      sitioWeb: "https://respondo.io",
+      sitioWeb: "https://respon-do.com",
       ubicacion: "Santiago",
       cobertura: "Nacional / Hispanoamérica",
       tipoNegocio: "b2b",
@@ -345,7 +345,7 @@ test("Bug B: rutaDeImagen decodifica /api/marketing/imagen?r= y rechaza traversa
   assert.equal(rutaDeImagen(`/api/marketing/imagen?r=${encodeURIComponent(rutaValida)}`), rutaValida);
 
   // Admite URL completa con query r
-  assert.equal(rutaDeImagen(`https://app.respondo.io/api/marketing/imagen?r=${encodeURIComponent(rutaValida)}`), rutaValida);
+  assert.equal(rutaDeImagen(`https://app.respon-do.com/api/marketing/imagen?r=${encodeURIComponent(rutaValida)}`), rutaValida);
 
   // Rechaza traversal en query
   assert.equal(rutaDeImagen(`/api/marketing/imagen?r=${encodeURIComponent(`${clienteId}/../../etc/passwd`)}`), null);

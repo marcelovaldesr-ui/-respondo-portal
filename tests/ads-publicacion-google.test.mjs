@@ -112,7 +112,7 @@ test("publicarCampanaEnGoogle: rechaza presupuesto <= 0 sin hacer llamadas", asy
     nombre: "Test Google",
     presupuestoDiario: 0,
     moneda: "CLP",
-    urlFinal: "https://respondo.cl",
+    urlFinal: "https://respon-do.com",
     palabrasClave: [{ texto: "impresion", concordancia: "frase" }],
     titulares: ["Impresión rápida", "Calidad garantizada", "Cotiza hoy"],
     descripciones: ["Servicio profesional", "Contáctanos"],

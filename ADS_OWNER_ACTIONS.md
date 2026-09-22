@@ -220,7 +220,7 @@ principal**, **política de privacidad**, **condiciones del servicio** y
 
 ⚠️ **`respondo-portal.vercel.app` NO sirve como dominio autorizado.** Google
 exige un dominio que puedas verificar como tuyo en Search Console, y `vercel.app`
-es un dominio compartido de Vercel. Usa **`respondo.cl`**, que sí es de Respondo,
+es un dominio compartido de Vercel. Usa **`respon-do.com`**, que sí es de Respondo,
 y verifícalo primero en Search Console. Las URIs de redirección del cliente OAuth
 pueden seguir apuntando a `vercel.app`: son cosas distintas.
 

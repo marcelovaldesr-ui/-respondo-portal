@@ -272,7 +272,7 @@ export async function publicarCampanaNativaAccion(
 
     /**
      * A dónde lleva el anuncio: el sitio web del propio negocio, del perfil de
-     * marketing. Nunca un dominio fijo: antes caía a respondo.cl y el anuncio
+     * marketing. Nunca un dominio fijo: antes caía a un dominio fijo ajeno y el anuncio
      * de Impresora Color habría llevado a un sitio que no es suyo.
      */
     const { obtenerPerfilMarketing } = await import("@/lib/marketing/perfilMarketing");
@@ -313,8 +313,8 @@ export async function publicarCampanaNativaAccion(
 
     /**
      * A dónde lleva el anuncio: el sitio del propio negocio (perfil de
-     * Marketing), igual que en Meta. Antes decía "https://respondo.cl", un
-     * dominio que no es ni nuestro ni del negocio. Sin sitio, el publicador
+     * Marketing), igual que en Meta. Antes decía un dominio fijo que no era ni
+     * nuestro ni del negocio. Sin sitio, el publicador
      * se niega y lo dice.
      */
     const { obtenerPerfilMarketing } = await import("@/lib/marketing/perfilMarketing");

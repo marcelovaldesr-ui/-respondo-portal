@@ -716,7 +716,7 @@ test("solo se acepta un puntero con la forma exacta que escribimos nosotros", ()
   }
   for (const ext of ["jpg", "png", "webp"]) {
     assert.equal(rutaDeImagen(`/api/marketing/imagen?r=${encodeURIComponent(`${A}/1700000000000.${ext}`)}`), `${A}/1700000000000.${ext}`);
-    assert.equal(rutaDeImagen(`https://app.respondo.io/api/marketing/imagen?r=${encodeURIComponent(`${A}/1700000000000.${ext}`)}`), `${A}/1700000000000.${ext}`);
+    assert.equal(rutaDeImagen(`https://app.respon-do.com/api/marketing/imagen?r=${encodeURIComponent(`${A}/1700000000000.${ext}`)}`), `${A}/1700000000000.${ext}`);
   }
   for (const malo of [
     `${PREFIJO}${A}/../../otro/1.jpg`,

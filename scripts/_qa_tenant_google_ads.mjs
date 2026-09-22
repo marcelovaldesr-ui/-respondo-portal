@@ -7,7 +7,7 @@
  *   node scripts/_qa_tenant_google_ads.mjs
  */
 const ID = "66666666-6666-6666-6666-666666666666";
-const EMAIL = "qa.googleads@demo.respondo.cl";
+const EMAIL = "qa.googleads@respon-do.com";
 const u = process.env.SUPABASE_URL;
 const k = process.env.SUPABASE_SERVICE_ROLE_KEY;
 if (!u || !k) throw new Error("faltan SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY");

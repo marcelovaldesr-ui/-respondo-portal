@@ -161,7 +161,7 @@ async function main() {
   Agenda:        ${resultado.agendaActiva ? "Activada" : "Desactivada"}
 
 Pasos siguientes recomendados:
-  1. Conectar WhatsApp en: https://portal.respondo.io/whatsapp (usando ${resultado.emailDueno})
+  1. Conectar WhatsApp en: https://respondo-portal.vercel.app/whatsapp (usando ${resultado.emailDueno})
   2. Generar plantillas Meta: npx tsx scripts/crear_plantillas_meta.ts --cliente "${resultado.nombre}" --crear
   3. Validar estado completo: npx tsx scripts/readiness_tenant.ts --cliente "${resultado.slug}"
 `);

@@ -96,7 +96,7 @@ export const PLANTILLAS: Record<string, Plantilla> = {
       "{{4}}\n\n" +
       "Cualquier duda, respóndenos por este mismo chat.",
     variables: ["nombre del cliente", "servicio", "día y hora", "enlace de gestión de la cita"],
-    ejemplos: ["Cristian", "mantención programada", "jueves 21 a las 10:00", "https://respondo.cl/cita/abc123"],
+    ejemplos: ["Cristian", "mantención programada", "jueves 21 a las 10:00", "https://respondo-portal.vercel.app/cita/abc123"],
     rubros: CON_AGENDA,
   },
 
@@ -110,7 +110,7 @@ export const PLANTILLAS: Record<string, Plantilla> = {
       "{{4}}\n\n" +
       "¡Te esperamos!",
     variables: ["nombre del cliente", "servicio", "hora", "enlace de gestión de la cita"],
-    ejemplos: ["Cristian", "mantención programada", "10:00", "https://respondo.cl/cita/abc123"],
+    ejemplos: ["Cristian", "mantención programada", "10:00", "https://respondo-portal.vercel.app/cita/abc123"],
     rubros: CON_AGENDA,
   },
 

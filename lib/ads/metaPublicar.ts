@@ -398,7 +398,7 @@ export async function publicarCampanaEnMeta(
           link_data: {
             message: copyPrincipal.texto,
             name: copyPrincipal.titular,
-            // El sitio del propio negocio. Antes caía a respondo.cl: el anuncio
+            // El sitio del propio negocio. Antes caía a un dominio fijo ajeno: el anuncio
             // de un cliente llevaba a un dominio que no es suyo.
             link: entrada.sitioWebUrl,
             call_to_action: {

@@ -31,7 +31,7 @@ import {
  *     la moneda: en CLP, pesos enteros. `2000.5 * 1e6` era rechazable.
  *  3. Sin segmentación geográfica la campaña, al activarse, se muestra en el
  *     mundo entero. Ahora sale con país (Chile por omisión) e idioma español.
- *  4. La URL final caía a `https://respondo.cl`, un dominio que no es nuestro
+ *  4. La URL final caía a un dominio fijo que no es nuestro
  *     ni del negocio. Ahora sin URL válida NO se publica.
  *  5. Idempotencia que sobrevive a otra instancia del servidor: se mira lo
  *     guardado en el borrador y, si no hay, Google mismo (campaña con el mismo

@@ -124,7 +124,7 @@ create index if not exists idx_ed_citas_chat on ed_citas(cliente_id, chat_id);
 **Config del cliente (columnas nuevas en `ed_clientes`):**
 
 ```sql
-alter table ed_clientes add column if not exists slug text unique;             -- respondo.cl/reservar/estetica-aurora
+alter table ed_clientes add column if not exists slug text unique;             -- respondo-portal.vercel.app/reservar/estetica-aurora
 alter table ed_clientes add column if not exists reservas_online boolean not null default false;
 alter table ed_clientes add column if not exists confirmacion_automatica boolean not null default true;  -- false = el dueño aprueba cada reserva web
 alter table ed_clientes add column if not exists anticipacion_min_horas int not null default 2;          -- no reservar con menos de X horas

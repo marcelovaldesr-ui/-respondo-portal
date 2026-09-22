@@ -91,8 +91,8 @@ test("FlowCore - Generación de commerceOrder", async (t) => {
 
 test("FlowCore - Validación de montos y parámetros", async (t) => {
   const urlsValidas = {
-    urlConfirmation: "https://api.respondo.io/api/flow/confirmacion",
-    urlReturn: "https://api.respondo.io/api/flow/retorno",
+    urlConfirmation: "https://api.respon-do.com/api/flow/confirmacion",
+    urlReturn: "https://api.respon-do.com/api/flow/retorno",
   };
 
   await t.test("rechaza montos menores a $350 CLP (mínimo de Flow en Webpay)", () => {
