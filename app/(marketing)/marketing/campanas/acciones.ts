@@ -225,6 +225,27 @@ export async function publicarCampanaNativaAccion(
 
   if (proveedor === "meta") {
     const { publicarCampanaEnMeta } = await import("@/lib/ads/metaPublicar");
+    /**
+     * `pageId` sale de la Página que el propio negocio vinculó en
+     * Integraciones (descubierta en app/api/ads/callback/route.ts), NUNCA de
+     * un valor fijo en el código: cada tenant tiene la suya (Impresora Color,
+     * AYP Abogados, ...) y un ID de otro negocio publicaría con su identidad.
+     * Sin Página vinculada todavía, se manda `undefined` a propósito: el
+     * publicador arma Campaign + AdSet igual y se detiene ahí (documentado en
+     * metaPublicar.ts), en vez de fallar la campaña completa por algo que el
+     * negocio puede resolver después desde Integraciones.
+     */
+    const { db } = await import("@/lib/db");
+    const { data: conexionMeta } = await db()
+      .from("ed_ads_conexion")
+      .select("datos")
+      .eq("cliente_id", usuario.clienteId)
+      .eq("proveedor", "meta")
+      .maybeSingle();
+    const pageId = (conexionMeta?.datos as Record<string, unknown> | null)?.paginaId as
+      | string
+      | undefined;
+
     resultado = await publicarCampanaEnMeta({
       clienteId: usuario.clienteId,
       borradorId,
@@ -235,6 +256,7 @@ export async function publicarCampanaNativaAccion(
       moneda: borrador.moneda,
       audiencia: borrador.audiencia,
       copies: borrador.copies,
+      pageId,
     });
   } else {
     const { publicarCampanaEnGoogle } = await import("@/lib/ads/googlePublicar");

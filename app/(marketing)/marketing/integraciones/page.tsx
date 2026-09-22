@@ -240,6 +240,13 @@ export default async function Integraciones({
                     etiqueta: "Última lectura",
                     valor: leido ? `${formatearNumero(leido.anuncios)} anuncios · 30 días` : "—",
                   },
+                  {
+                    etiqueta: "Página",
+                    valor: conexion.paginaNombre || "Sin vincular todavía",
+                  },
+                  ...(conexion.instagramUsuario
+                    ? [{ etiqueta: "Instagram", valor: `@${conexion.instagramUsuario}` }]
+                    : []),
                 ]
               : []
           }

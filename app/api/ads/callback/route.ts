@@ -3,6 +3,7 @@ import { nombreCookieVinculo, vinculoValido } from "@/lib/oauthVinculo";
 import { db } from "@/lib/db";
 import { cifrar, verificarEstado } from "@/lib/cifrado";
 import { intercambiarCodigoAds, metaAdsConfigurado, proveedorMeta } from "@/lib/ads/meta";
+import type { PaginaMeta } from "@/lib/ads/proveedor";
 
 export const dynamic = "force-dynamic";
 
@@ -74,15 +75,60 @@ export async function GET(request: NextRequest) {
    *      otro de sus negocios sin que se note.
    */
   let elegida = cuentas.datos.length === 1 ? cuentas.datos[0] : null;
+  const { data: previa } = await db()
+    .from("ed_ads_conexion")
+    .select("cuenta_id, datos")
+    .eq("cliente_id", clienteId)
+    .eq("proveedor", "meta")
+    .maybeSingle();
   if (!elegida) {
-    const { data: previa } = await db()
-      .from("ed_ads_conexion")
-      .select("cuenta_id")
-      .eq("cliente_id", clienteId)
-      .eq("proveedor", "meta")
-      .maybeSingle();
     const anterior = String(previa?.cuenta_id ?? "");
     if (anterior) elegida = cuentas.datos.find((c) => c.id === anterior) ?? null;
+  }
+
+  /**
+   * DESCUBRIMIENTO DE PÁGINA/INSTAGRAM — mismo criterio que la cuenta de
+   * arriba: una sola Página, se elige sola; si ya había una elegida y sigue
+   * entre las autorizadas, se conserva; si no, queda para elegir después.
+   *
+   * ⚠️ NO ES BLOQUEANTE. Si el token todavía no tiene el activo «Páginas»
+   * autorizado (reconexión pendiente) o el negocio no tiene ninguna Página,
+   * esto devuelve una lista vacía y la conexión de todos modos se guarda con
+   * la cuenta publicitaria: leer el gasto no depende de tener una Página.
+   */
+  const datosPrevios = (previa?.datos ?? {}) as Record<string, unknown>;
+  let paginas: PaginaMeta[] = [];
+  try {
+    const r = await proveedorMeta.paginasConToken(token.datos);
+    if (r.ok) paginas = r.datos;
+  } catch (e) {
+    console.error("[ads] no se pudo listar páginas (no bloqueante):", (e as Error).message);
+  }
+
+  let paginaElegida: PaginaMeta | null = paginas.length === 1 ? paginas[0] : null;
+  if (!paginaElegida) {
+    const anteriorPaginaId = String(datosPrevios.paginaId ?? "");
+    if (anteriorPaginaId) {
+      paginaElegida = paginas.find((p) => p.id === anteriorPaginaId) ?? null;
+    }
+  }
+
+  const datosActualizados: Record<string, unknown> = {
+    ...datosPrevios,
+    // Lista completa para cuando el selector de Integraciones deje elegir
+    // entre varias — hoy no bloquea nada, mañana no exige otra llamada a Meta.
+    paginasDisponibles: paginas.map((p) => ({ id: p.id, nombre: p.nombre })),
+  };
+  if (paginaElegida) {
+    datosActualizados.paginaId = paginaElegida.id;
+    datosActualizados.paginaNombre = paginaElegida.nombre;
+    if (paginaElegida.instagramId) {
+      datosActualizados.instagramId = paginaElegida.instagramId;
+      datosActualizados.instagramUsuario = paginaElegida.instagramUsuario;
+    } else {
+      delete datosActualizados.instagramId;
+      delete datosActualizados.instagramUsuario;
+    }
   }
 
   try {
@@ -113,6 +159,7 @@ export async function GET(request: NextRequest) {
                 estado: "conectada",
               }
             : { estado: "pendiente" }),
+          datos: datosActualizados,
           ultimo_error: null,
           actualizado_en: new Date().toISOString(),
         },

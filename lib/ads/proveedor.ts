@@ -129,6 +129,19 @@ export type CuentaPublicitaria = {
   activa: boolean;
 };
 
+/**
+ * Una Página de Facebook a la que llega el token, con su Instagram vinculado
+ * si tiene uno. Se usa para elegir con qué Página/Instagram queda asociada la
+ * conexión del negocio — nunca se adivina ni se hardcodea.
+ */
+export type PaginaMeta = {
+  id: string;
+  nombre: string;
+  /** null si la Página no tiene una cuenta de Instagram profesional vinculada. */
+  instagramId: string | null;
+  instagramUsuario: string | null;
+};
+
 /** Métricas de UN anuncio en un período. Vocabulario nuestro, no de la API. */
 export type RendimientoAnuncio = {
   anuncioId: string;

@@ -3,6 +3,7 @@ import { descifrar } from "@/lib/cifrado";
 import {
   fallo,
   type CuentaPublicitaria,
+  type PaginaMeta,
   type ProveedorAds,
   type RendimientoAnuncio,
   type ResultadoAds,
@@ -65,6 +66,12 @@ export type ConexionAds = {
   estado: string;
   ultimaSync: string | null;
   ultimoError: string | null;
+  /** Página de Facebook vinculada (descubierta en el callback de OAuth). null si aún no hay ninguna. */
+  paginaId: string | null;
+  paginaNombre: string | null;
+  /** Instagram profesional vinculado a esa Página. null si la Página no tiene uno. */
+  instagramId: string | null;
+  instagramUsuario: string | null;
 };
 
 /**
@@ -95,7 +102,7 @@ export async function conexionDe(clienteId: string): Promise<ConexionAds | null>
     const { data, error } = await db()
       .from("ed_ads_conexion")
       .select(
-        "cuenta_id, cuenta_nombre, moneda, zona_horaria, token_cifrado, estado, ultima_sync, ultimo_error",
+        "cuenta_id, cuenta_nombre, moneda, zona_horaria, token_cifrado, estado, ultima_sync, ultimo_error, datos",
       )
       .eq("cliente_id", clienteId)
       .eq("proveedor", "meta")
@@ -105,6 +112,7 @@ export async function conexionDe(clienteId: string): Promise<ConexionAds | null>
     const token = descifrar(data.token_cifrado as string, "ads-token");
     if (!token) return null;
 
+    const datos = (data.datos ?? {}) as Record<string, unknown>;
     return {
       clienteId,
       cuentaId: String(data.cuenta_id ?? ""),
@@ -115,6 +123,10 @@ export async function conexionDe(clienteId: string): Promise<ConexionAds | null>
       estado: String(data.estado ?? "conectada"),
       ultimaSync: (data.ultima_sync as string | null) ?? null,
       ultimoError: (data.ultimo_error as string | null) ?? null,
+      paginaId: (datos.paginaId as string | undefined) || null,
+      paginaNombre: (datos.paginaNombre as string | undefined) || null,
+      instagramId: (datos.instagramId as string | undefined) || null,
+      instagramUsuario: (datos.instagramUsuario as string | undefined) || null,
     };
   } catch {
     return null;
@@ -247,11 +259,50 @@ async function cuentasConToken(token: string): Promise<ResultadoAds<CuentaPublic
   };
 }
 
+/**
+ * Las Páginas de Facebook a las que llega el token, con su Instagram
+ * profesional vinculado (si tiene uno).
+ *
+ * Requiere que la Configuración de «Inicio de sesión con Facebook para
+ * empresas» pida el activo «Páginas» además de «Cuentas publicitarias» — sin
+ * eso, Meta devuelve una lista vacía aunque el negocio sí administre Páginas,
+ * y no es un error: es que no se pidió el activo.
+ *
+ * `instagram_business_account` solo viene si la Página tiene una cuenta de
+ * Instagram profesional (no personal) vinculada desde la propia Meta Business
+ * Suite. Una Página sin Instagram vinculado es un caso normal, no un error.
+ */
+async function paginasConToken(token: string): Promise<ResultadoAds<PaginaMeta[]>> {
+  const url =
+    `${GRAPH}/me/accounts?limit=50&fields=` +
+    encodeURIComponent("id,name,instagram_business_account{id,username}");
+
+  const r = await pedirTodo(url, token);
+  if (!r.ok) return r;
+
+  return {
+    ok: true,
+    datos: r.datos.map((f) => {
+      const ig = f.instagram_business_account as
+        | { id?: unknown; username?: unknown }
+        | undefined;
+      return {
+        id: String(f.id ?? ""),
+        nombre: String(f.name ?? "Página sin nombre"),
+        instagramId: ig?.id != null ? String(ig.id) : null,
+        instagramUsuario: ig?.username != null ? String(ig.username) : null,
+      };
+    }),
+  };
+}
+
 export const proveedorMeta: ProveedorAds & {
   cuentasConToken: typeof cuentasConToken;
+  paginasConToken: typeof paginasConToken;
 } = {
   nombre: "Meta",
   cuentasConToken,
+  paginasConToken,
 
   async cuentas(clienteId: string) {
     if (!metaAdsConfigurado()) return fallo("no_configurado");
