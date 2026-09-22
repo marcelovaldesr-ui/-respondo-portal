@@ -46,11 +46,26 @@ export async function elegirCuenta(formData: FormData): Promise<{ ok: boolean; m
     return { ok: false, motivo: "Esa cuenta no está entre las que autorizaste en Meta." };
   }
 
+  // Se conserva lo descubierto en el callback (Página, etc.) y se agrega el
+  // portafolio dueño de la cuenta recién elegida.
+  const { data: previa } = await db()
+    .from("ed_ads_conexion")
+    .select("datos")
+    .eq("cliente_id", usuario.clienteId)
+    .eq("proveedor", "meta")
+    .maybeSingle();
+  const datos = {
+    ...((previa?.datos as Record<string, unknown> | null) ?? {}),
+    businessId: elegida.negocioId ?? null,
+    businessNombre: elegida.negocioNombre ?? null,
+  };
+
   try {
     const { error } = await db()
       .from("ed_ads_conexion")
       .update({
         cuenta_id: elegida.id,
+        datos,
         cuenta_nombre: elegida.nombre,
         moneda: elegida.moneda,
         zona_horaria: elegida.zonaHoraria,

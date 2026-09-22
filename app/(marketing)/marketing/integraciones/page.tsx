@@ -234,6 +234,9 @@ export default async function Integraciones({
             conexion && conexion.cuentaId
               ? [
                   { etiqueta: "Cuenta", valor: conexion.cuentaNombre || conexion.cuentaId },
+                  ...(conexion.negocioNombre
+                    ? [{ etiqueta: "Portafolio", valor: conexion.negocioNombre }]
+                    : []),
                   { etiqueta: "Factura en", valor: conexion.moneda },
                   { etiqueta: "Zona horaria", valor: conexion.zonaHoraria },
                   {

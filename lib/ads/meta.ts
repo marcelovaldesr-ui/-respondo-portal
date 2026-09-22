@@ -72,6 +72,9 @@ export type ConexionAds = {
   /** Instagram profesional vinculado a esa Página. null si la Página no tiene uno. */
   instagramId: string | null;
   instagramUsuario: string | null;
+  /** Portafolio empresarial dueño de la cuenta publicitaria. */
+  negocioId: string | null;
+  negocioNombre: string | null;
 };
 
 /**
@@ -127,6 +130,8 @@ export async function conexionDe(clienteId: string): Promise<ConexionAds | null>
       paginaNombre: (datos.paginaNombre as string | undefined) || null,
       instagramId: (datos.instagramId as string | undefined) || null,
       instagramUsuario: (datos.instagramUsuario as string | undefined) || null,
+      negocioId: (datos.businessId as string | undefined) || null,
+      negocioNombre: (datos.businessNombre as string | undefined) || null,
     };
   } catch {
     return null;
@@ -240,7 +245,7 @@ function numero(v: unknown): number {
 async function cuentasConToken(token: string): Promise<ResultadoAds<CuentaPublicitaria[]>> {
   const url =
     `${GRAPH}/me/adaccounts?limit=50&fields=` +
-    encodeURIComponent("account_id,name,currency,timezone_name,account_status");
+    encodeURIComponent("account_id,name,currency,timezone_name,account_status,business{id,name}");
 
   const r = await pedirTodo(url, token);
   if (!r.ok) return r;
@@ -255,6 +260,13 @@ async function cuentasConToken(token: string): Promise<ResultadoAds<CuentaPublic
       zonaHoraria: String(f.timezone_name ?? "America/Santiago"),
       // 1 = ACTIVE en la tabla de Meta. Cualquier otro estado es «no publica».
       activa: numero(f.account_status) === 1,
+      // Requiere business_management: es el portafolio dueño de la cuenta.
+      negocioId: (f.business as { id?: unknown } | undefined)?.id
+        ? String((f.business as { id: unknown }).id)
+        : null,
+      negocioNombre: (f.business as { name?: unknown } | undefined)?.name
+        ? String((f.business as { name: unknown }).name)
+        : null,
     })),
   };
 }

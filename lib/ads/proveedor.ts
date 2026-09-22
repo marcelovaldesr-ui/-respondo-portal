@@ -127,6 +127,12 @@ export type CuentaPublicitaria = {
   zonaHoraria: string;
   /** 1 = activa en Meta. Se guarda tal cual para poder avisar si se apaga. */
   activa: boolean;
+  /**
+   * Portafolio empresarial (Business) dueño de la cuenta, si Meta lo informa.
+   * Se guarda por negocio para saber bajo qué portafolio se publica.
+   */
+  negocioId?: string | null;
+  negocioNombre?: string | null;
 };
 
 /**

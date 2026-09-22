@@ -119,6 +119,11 @@ export async function GET(request: NextRequest) {
     // entre varias — hoy no bloquea nada, mañana no exige otra llamada a Meta.
     paginasDisponibles: paginas.map((p) => ({ id: p.id, nombre: p.nombre })),
   };
+  // Portafolio dueño de la cuenta elegida: se guarda por negocio, nunca fijo.
+  if (elegida) {
+    datosActualizados.businessId = elegida.negocioId ?? null;
+    datosActualizados.businessNombre = elegida.negocioNombre ?? null;
+  }
   if (paginaElegida) {
     datosActualizados.paginaId = paginaElegida.id;
     datosActualizados.paginaNombre = paginaElegida.nombre;
