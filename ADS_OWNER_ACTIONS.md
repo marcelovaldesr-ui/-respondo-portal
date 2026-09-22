@@ -110,8 +110,14 @@ página **Descripción general (Overview)** de esa API, abrir la sección
 **Qué valor copiar:** nada que copiar. Se aprieta **«Apply for access»** y se
 completa un formulario corto. Cuando pregunte para qué la vas a usar, algo así:
 
-> «Leemos el rendimiento de las cuentas publicitarias de nuestros clientes para
-> mostrarlo en nuestro portal. Sólo lectura: no creamos ni modificamos campañas.»
+> «Respondo reads advertising performance and, with customer authorization, can
+> create and manage Google Search campaigns (always created paused).»
+
+⚠️ Corregido el 22-sep-2026: antes decía «sólo lectura», y desde que existe el
+publicador de campañas de Búsqueda eso ya no es cierto. Lo que se declara a
+Google tiene que ser lo que el producto hace. (Al 22-sep la solicitud de
+Explorer se resetea sola sin pedir ningún texto; ver
+`docs/GOOGLE_ADS_EXPLORER_SUPPORT_PACKET.md`.)
 
 **Dónde pegarlo:** en ese formulario de la consola de Cloud.
 

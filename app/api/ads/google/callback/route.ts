@@ -51,7 +51,7 @@ function volver(motivo: string): NextResponse {
 }
 
 /**
- * Vuelta de Google después de autorizar la lectura de Google Ads.
+ * Vuelta de Google después de autorizar Google Ads (lectura y publicación en pausa).
  *
  * MISMO ORDEN DE VERIFICACIONES QUE EN META, POR LAS MISMAS RAZONES:
  *   1. **La firma del `state` primero**, porque de ahí sale el `cliente_id` y

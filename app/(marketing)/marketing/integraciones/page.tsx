@@ -325,7 +325,7 @@ export default async function Integraciones({
           logo="indigo"
           icono={Ico.grafico({ className: "h-5 w-5" })}
           titulo="Google Ads"
-          descripcion="Campañas, grupos, anuncios, palabras clave y términos de búsqueda. Solo lectura: Respondo no crea, pausa ni cambia pujas."
+          descripcion="Campañas, grupos, anuncios, palabras clave y términos de búsqueda. Lee el rendimiento y, con tu autorización, crea campañas de Búsqueda en pausa."
           estado={
             !googleAdsConfigurado()
               ? "manual"
@@ -424,8 +424,10 @@ export default async function Integraciones({
                 </p>
               )}
               <p className="mt-3" style={{ fontSize: "11.5px", color: "var(--muted-2)" }}>
-                Respondo lee tu cuenta de Google Ads pero no la modifica: no crea campañas, no pausa palabras clave ni
-                agrega negativas. Los cambios propuestos se muestran para que los apliques tú.
+                Respondo lee el rendimiento de tu cuenta de Google Ads. Solo escribe cuando tú apruebas publicar una
+                campaña de Búsqueda: crea el presupuesto, la campaña, el grupo, las palabras clave y el anuncio, todo en
+                PAUSA, y activarla (y gastar) lo decides tú en Google Ads. No toca campañas que no creó Respondo, ni
+                pujas, ni facturación.
               </p>
             </>
           }

@@ -311,6 +311,15 @@ export async function publicarCampanaNativaAccion(
       ? grupo.descripciones
       : borrador.copies.map((c) => c.texto).filter(Boolean);
 
+    /**
+     * A dónde lleva el anuncio: el sitio del propio negocio (perfil de
+     * Marketing), igual que en Meta. Antes decía "https://respondo.cl", un
+     * dominio que no es ni nuestro ni del negocio. Sin sitio, el publicador
+     * se niega y lo dice.
+     */
+    const { obtenerPerfilMarketing } = await import("@/lib/marketing/perfilMarketing");
+    const perfilG = await obtenerPerfilMarketing(usuario.clienteId).catch(() => null);
+
     resultado = await publicarCampanaEnGoogle({
       clienteId: usuario.clienteId,
       borradorId,
@@ -318,7 +327,8 @@ export async function publicarCampanaNativaAccion(
       objetivo: borrador.objetivo,
       presupuestoDiario: borrador.presupuestoDiario ?? 0,
       moneda: borrador.moneda,
-      urlFinal: "https://respondo.cl",
+      urlFinal: perfilG?.business?.sitioWeb ?? null,
+      planGuardado: borrador.plan,
       palabrasClave: palabras,
       negativas: grupo?.negativasSugeridas || [],
       titulares,

@@ -7,14 +7,21 @@ import { MONEDA_DESCONOCIDA, normalizarMoneda, sumarPorMoneda, type Monto } from
 import { composicionDesdeFilas, fusionarComposicion, gaqlComposicion } from "@/lib/ads/googleConversiones";
 
 /**
- * GOOGLE ADS — el único archivo que sabe de GAQL y de la Google Ads API.
+ * GOOGLE ADS — LECTURA (GAQL) y la sesión compartida con la escritura.
  *
  * ═══════════════════════════════════════════════════════════════════════════
- * ALCANCE, A PROPÓSITO: **SOLO LECTURA.**
- * Lee cuentas, campañas, grupos, anuncios, palabras clave y términos de
- * búsqueda. No crea, no pausa, no cambia pujas ni presupuestos. Misma decisión
- * que en Meta y por la misma razón: el criterio es el valor, el botón es el
- * costo, y el Administrador de Google ya tiene el botón.
+ * ALCANCE (corregido el 22-sep-2026 — antes decía «solo lectura» y dejó de
+ * ser cierto cuando entró el publicador):
+ *   · ESTE archivo lee: cuentas, campañas, grupos, anuncios, palabras clave y
+ *     términos de búsqueda, con sus métricas.
+ *   · `googlePublicar.ts` CREA, con autorización del negocio y a pedido de una
+ *     persona, una campaña de Búsqueda completa (presupuesto, campaña, grupo,
+ *     palabras clave y anuncio adaptable) SIEMPRE en PAUSA.
+ *   · `googleGestion.ts` lee la estructura de esas campañas y las pausa; sólo
+ *     reactiva en cuentas de PRUEBA de Google Ads.
+ * Nada de esto toca campañas que Respondo no creó, ni pujas, ni facturación.
+ * La frase de producto es: «Respondo lee el rendimiento de tu publicidad y,
+ * con tu autorización, puede crear y gestionar campañas de Búsqueda».
  *
  * ═══════════════════════════════════════════════════════════════════════════
  * ⚠️⚠️ POR QUÉ ESTO TIENE SU PROPIO PROYECTO DE GOOGLE CLOUD
@@ -102,7 +109,7 @@ function credenciales(): CredencialesGoogleAds | null {
 }
 
 /**
- * ¿Está habilitada la lectura de Google Ads en esta instalación?
+ * ¿Está habilitada la integración de Google Ads en esta instalación?
  *
  * Obligatorias sólo las DOS del cliente OAuth. El token de desarrollador NO se
  * exige: Google lo apagó el 9-sep-2026 y el nivel de acceso pasó a ser una
@@ -353,6 +360,44 @@ async function accessToken(refreshToken: string): Promise<ResultadoAds<string>> 
 /** Para los tests y para forzar una renovación tras un 401. */
 export function olvidarTokens(): void {
   tokensVivos.clear();
+}
+
+/**
+ * La sesión de un negocio contra la API: token vigente + a qué cuenta se habla
+ * + por qué administradora se entra. Es lo MISMO que arma `rendimientoGoogle`,
+ * expuesto para `googleGestion.ts` y el publicador, para que lectura, gestión
+ * y escritura usen un único camino de credenciales (el del proyecto de Cloud
+ * dueño de GOOGLE_ADS_CLIENT_ID) y no tres copias que se desincronizan.
+ */
+export async function sesionGoogleDe(clienteId: string): Promise<
+  ResultadoAds<{ token: string; cuentaId: string; login: string | null; moneda: string }>
+> {
+  const cred = credenciales();
+  if (!cred) return fallo("no_configurado");
+  const con = await conexionGoogleDe(clienteId);
+  if (!con) return fallo("sin_conexion");
+  if (!con.cuentaId) return fallo("cuenta_invalida", "no hay cuenta de Google elegida");
+  const t = await accessToken(con.refreshToken);
+  if (!t.ok) return t;
+  return {
+    ok: true,
+    datos: {
+      token: t.datos,
+      cuentaId: con.cuentaId,
+      login: con.cuentaPadreId || cred.loginCustomerId || null,
+      moneda: con.moneda,
+    },
+  };
+}
+
+/** GAQL con la sesión de un negocio. Sin métricas obligatorias: sirve para leer estructura. */
+export async function consultarComoNegocio(
+  sesion: { token: string; cuentaId: string; login: string | null },
+  gaql: string,
+): Promise<ResultadoAds<Record<string, unknown>[]>> {
+  const cred = credenciales();
+  if (!cred) return fallo("no_configurado");
+  return consultar(sesion.cuentaId, gaql, sesion.token, cred, sesion.login);
 }
 
 /* ── La llamada ───────────────────────────────────────────────────────────── */

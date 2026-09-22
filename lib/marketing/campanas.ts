@@ -174,6 +174,8 @@ export async function registrarPublicacionCampana(
       adGroupOrAdSetId: resultado.adGroupOrAdSetId,
       adIds: resultado.adIds,
       creativeIds: resultado.creativeIds,
+      budgetId: resultado.budgetId,
+      keywordIds: resultado.keywordIds,
       // Si una etapa falló (AdSet, creatividad o anuncio), queda registrado
       // junto a la campaña en vez de perderse.
       fallas: resultado.nativeErrors ?? null,
@@ -192,6 +194,11 @@ export async function registrarPublicacionCampana(
 
   if (resultado.plataforma === "meta" && resultado.campaignId) {
     fila.meta_campaign_id = resultado.campaignId;
+  }
+  // Cierre del ciclo en Google: sin esta columna, la guardia de gestión
+  // (googleGestion.ts) no reconoce la campaña como de este negocio.
+  if (resultado.plataforma === "google" && resultado.campaignId) {
+    fila.google_campaign_id = resultado.campaignId;
   }
 
   const { data, error } = await modificarEn(clienteId, TABLA, id, fila);

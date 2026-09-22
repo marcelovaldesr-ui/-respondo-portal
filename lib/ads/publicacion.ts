@@ -76,6 +76,10 @@ export type ResultadoPublicacion = {
   adIds?: string[];
   /** Creatividades creadas (Meta). Se guardan para poder rastrear el anuncio. */
   creativeIds?: string[];
+  /** Google: presupuesto creado (campaignBudgets/{id}). */
+  budgetId?: string;
+  /** Google: criterios de palabra clave creados (adGroupCriteria/{grupo}~{id}). */
+  keywordIds?: string[];
   status: EstadoPublicacionPlataforma;
   createdAt: string;
   urlNativa?: string;
@@ -154,6 +158,8 @@ export function sanitizarMensajeError(crudo: unknown): string {
   texto = texto.replace(/EAA[A-Za-z0-9]+/g, "[REDACTED_META_TOKEN]");
   // Redactar refresh tokens de Google (1//0...)
   texto = texto.replace(/1\/\/[A-Za-z0-9_-]+/g, "[REDACTED_GOOGLE_TOKEN]");
+  // Access tokens de Google (ya29....) — viajan en cabeceras y pueden aparecer en un error.
+  texto = texto.replace(/ya29\.[A-Za-z0-9._-]+/g, "[REDACTED_GOOGLE_ACCESS_TOKEN]");
   // Redactar Bearer tokens y secrets
   texto = texto.replace(/Bearer\s+[A-Za-z0-9._-]+/gi, "Bearer [REDACTED]");
   texto = texto.replace(/client_secret=[^&\s]+/gi, "client_secret=[REDACTED]");

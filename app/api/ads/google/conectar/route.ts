@@ -8,7 +8,8 @@ import { origenCanonico } from "@/lib/origenes";
 export const dynamic = "force-dynamic";
 
 /**
- * Arranca la autorización de Google Ads (solo lectura).
+ * Arranca la autorización de Google Ads (lectura de rendimiento y, a pedido
+ * de una persona, creación de campañas de Búsqueda en pausa).
  *
  * Mismo esqueleto que `/api/ads/conectar` para Meta, y a propósito: el `state`
  * firmado + la cookie de vínculo son la única barrera del callback, que no
