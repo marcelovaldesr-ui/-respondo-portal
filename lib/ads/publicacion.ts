@@ -53,6 +53,13 @@ export type VistaPreviaPublicacion = {
   palabrasClave?: { texto: string; concordancia: string }[];
   negativas?: string[];
   trackingUtm: Record<string, string>;
+  /** Meta: Página a cuyo nombre sale el anuncio (nombre y foto de perfil). */
+  identidad?: {
+    paginaId: string;
+    nombre: string;
+    fotoUrl: string | null;
+    enlace: string | null;
+  } | null;
   estadoInicial: "PAUSED";
   puedePublicar: boolean;
   advertencias: string[];

@@ -228,7 +228,7 @@ export default async function Integraciones({
           logo="meta"
           icono={Ico.meta({ className: "h-5 w-5" })}
           titulo="Meta Ads"
-          descripcion="Pone el costo al lado de los resultados. Solo lectura: Respondo no crea, pausa ni cambia presupuestos."
+          descripcion="Pone el costo al lado de los resultados y publica, cuando tú lo pides, las campañas que armas acá: siempre en pausa. Respondo nunca activa anuncios ni gasta."
           estado={iMeta?.estado ?? "falta"}
           hechos={
             conexion && conexion.cuentaId
@@ -313,8 +313,8 @@ export default async function Integraciones({
                 </p>
               )}
               <p className="mt-3" style={{ fontSize: "11.5px", color: "var(--muted-2)" }}>
-                Respondo lee tu cuenta publicitaria pero no la modifica: no crea, no pausa ni cambia presupuestos.
-                Por ahora el asistente arma la campaña completa y la dejas en Meta en dos minutos.
+                Respondo lee el rendimiento de tu cuenta publicitaria. Solo escribe cuando tú aprietas «Publicar»
+                en una campaña: la crea en PAUSA a nombre de tu Página, y activarla (y gastar) lo decides tú en Meta.
               </p>
             </>
           }

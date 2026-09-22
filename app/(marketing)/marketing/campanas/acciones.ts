@@ -118,6 +118,29 @@ export async function obtenerVistaPreviaPublicacionAccion(
     ? `${borrador.audiencia.ubicacion} (${borrador.audiencia.edadDesde ?? 18}-${borrador.audiencia.edadHasta ?? 65} años)`
     : "Sin ubicación definida (se usará Chile completo)";
 
+  /**
+   * Meta: a nombre de qué Página sale el anuncio y a dónde lleva. Son los dos
+   * datos sin los cuales el publicador crea campaña y conjunto pero NO el
+   * anuncio; mejor que el dueño lo sepa antes de apretar «Publicar».
+   */
+  let identidad: import("@/lib/ads/publicacion").VistaPreviaPublicacion["identidad"] = null;
+  if (proveedor === "meta" && !demo) {
+    const { identidadPaginaMeta } = await import("@/lib/ads/meta");
+    identidad = await identidadPaginaMeta(usuario.clienteId).catch(() => null);
+    if (!identidad) {
+      advertencias.push(
+        "No hay una Página de Facebook vinculada: se crearán la campaña y el conjunto, pero no el anuncio. Reconecta Meta en Integraciones compartiendo tu Página.",
+      );
+    }
+    const { obtenerPerfilMarketing } = await import("@/lib/marketing/perfilMarketing");
+    const perfil = await obtenerPerfilMarketing(usuario.clienteId).catch(() => null);
+    if (!perfil?.business?.sitioWeb?.trim()) {
+      advertencias.push(
+        "Tu perfil de marketing no tiene sitio web: el anuncio no tendría a dónde llevar. Agrégalo antes de publicar.",
+      );
+    }
+  }
+
   const plan = borrador.plan as import("@/lib/marketing/arquitectoCore").PlanCampana | null;
   const campanaPlan = plan?.campanas?.find((c) => c.canal === proveedor);
 
@@ -157,6 +180,7 @@ export async function obtenerVistaPreviaPublicacionAccion(
     palabrasClave: palabrasClave.map((p) => ({ texto: p.texto, concordancia: p.concordancia })),
     negativas,
     trackingUtm,
+    identidad,
     estadoInicial: "PAUSED",
     puedePublicar: bloqueos.length === 0,
     advertencias,

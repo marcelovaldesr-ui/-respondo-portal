@@ -308,6 +308,50 @@ async function paginasConToken(token: string): Promise<ResultadoAds<PaginaMeta[]
   };
 }
 
+/**
+ * CON QUÉ IDENTIDAD SALE EL ANUNCIO (usa `pages_read_engagement`).
+ *
+ * Todo anuncio de Meta se publica a nombre de una Página: es la cara y el
+ * nombre que ve la gente sobre el aviso. Antes de crear nada, el dueño tiene
+ * que ver cuál es — nombre y foto de perfil de SU Página — para no publicar
+ * con la identidad equivocada (por ejemplo, si administra más de un negocio).
+ * La foto de perfil y los metadatos de la Página son justamente lo que cubre
+ * `pages_read_engagement`; `pages_show_list` solo entrega la lista.
+ *
+ * Devuelve null si el negocio no tiene Página vinculada. Si Meta no responde,
+ * devuelve lo que ya se sabía (nombre guardado) sin foto: la vista previa no
+ * se cae por esto.
+ */
+export type IdentidadPagina = {
+  paginaId: string;
+  nombre: string;
+  fotoUrl: string | null;
+  enlace: string | null;
+};
+
+export async function identidadPaginaMeta(clienteId: string): Promise<IdentidadPagina | null> {
+  const con = await conexionDe(clienteId);
+  if (!con?.paginaId) return null;
+  const base: IdentidadPagina = {
+    paginaId: con.paginaId,
+    nombre: con.paginaNombre ?? "Página vinculada",
+    fotoUrl: null,
+    enlace: null,
+  };
+  const r = await pedir(
+    `${GRAPH}/${con.paginaId}?fields=` + encodeURIComponent("id,name,link,picture.type(large){url}"),
+    con.token,
+  );
+  if (!r || !r.ok) return base;
+  const foto = ((r.cuerpo.picture as Record<string, unknown> | undefined)?.data ?? {}) as Record<string, unknown>;
+  return {
+    paginaId: String(r.cuerpo.id ?? con.paginaId),
+    nombre: String(r.cuerpo.name ?? base.nombre),
+    fotoUrl: typeof foto.url === "string" ? foto.url : null,
+    enlace: typeof r.cuerpo.link === "string" ? r.cuerpo.link : null,
+  };
+}
+
 export const proveedorMeta: ProveedorAds & {
   cuentasConToken: typeof cuentasConToken;
   paginasConToken: typeof paginasConToken;

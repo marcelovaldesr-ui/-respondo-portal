@@ -1149,8 +1149,13 @@ test("el token de Google nunca sale del módulo ni se registra", () => {
   assert.doesNotMatch(fuente, /console\.(log|error)\([^)]*token\b/);
 });
 
-test("Respondo sigue sin publicar campañas por API en ninguna plataforma", () => {
-  assert.match(codigo("lib/marketing/capacidades.ts"), /PUEDE_PUBLICAR_EN_META = false/);
+test("Respondo solo publica en Meta en PAUSA y la lectura de Google sigue sin mutar", () => {
+  // Desde 6ed3084 Respondo SÍ publica en Meta (lib/ads/metaPublicar.ts), pero
+  // nunca activo: campaña, conjunto y anuncio nacen en PAUSED y ningún camino
+  // manda ACTIVE. Este test antes exigía que no se publicara nada y quedó viejo.
+  const publicador = codigo("lib/ads/metaPublicar.ts");
+  assert.equal((publicador.match(/status: "PAUSED"/g) ?? []).length, 3, "campaña, adset y anuncio en PAUSED");
+  assert.doesNotMatch(publicador, /"ACTIVE"/);
   const google = codigo("lib/ads/google.ts");
   assert.doesNotMatch(google, /:mutate|googleAds:mutate/, "solo lectura");
   assert.doesNotMatch(google, /method:\s*"POST"[\s\S]{0,200}mutate/);

@@ -185,6 +185,11 @@ export default function ModalPublicarCampana({
                       <code>{resultado.adGroupOrAdSetId}</code>
                     </p>
                   )}
+                  {resultado.creativeIds?.length ? (
+                    <p className="text-xs">
+                      <strong>Creative ID:</strong> <code>{resultado.creativeIds.join(", ")}</code>
+                    </p>
+                  ) : null}
                   {resultado.adIds?.length ? (
                     <p className="text-xs">
                       <strong>Anuncio ID:</strong> <code>{resultado.adIds.join(", ")}</code>
@@ -244,6 +249,24 @@ export default function ModalPublicarCampana({
                   <p className="text-xs text-muted">Activación posterior manual</p>
                 </div>
               </div>
+
+              {proveedor === "meta" && vista.identidad ? (
+                <div className="flex items-center gap-3 rounded-lg p-3" style={{ background: "var(--fondo-2)" }}>
+                  {vista.identidad.fotoUrl ? (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img
+                      src={vista.identidad.fotoUrl}
+                      alt={`Foto de perfil de ${vista.identidad.nombre}`}
+                      className="h-10 w-10 rounded-full object-cover"
+                    />
+                  ) : null}
+                  <div>
+                    <span className="mk-dato-mini-etiqueta">Se publicará como</span>
+                    <p className="font-medium">{vista.identidad.nombre}</p>
+                    <p className="text-xs text-muted">Página de Facebook · ID {vista.identidad.paginaId}</p>
+                  </div>
+                </div>
+              ) : null}
 
               <div>
                 <span className="mk-dato-mini-etiqueta">Audiencia / Ubicación</span>
