@@ -6,6 +6,7 @@ import { origenCanonico } from "@/lib/origenes";
 import type { ErrorAds } from "@/lib/ads/proveedor";
 import {
   cifrarRefreshToken,
+  codigoPublicoGoogle,
   cuentasDeGoogle,
   googleAdsConfigurado,
   intercambiarCodigoGoogleAds,
@@ -46,9 +47,14 @@ function registrar(etapa: string, error: ErrorAds): void {
  * Solo viaja el CÓDIGO y la plataforma. El `detalle` técnico sigue sin salir
  * nunca a la URL: puede traer fragmentos de la respuesta de Google.
  */
-function volver(motivo: string): NextResponse {
-  return NextResponse.redirect(new URL(`/marketing/integraciones?e=${motivo}&p=google`, origenCanonico()));
+function volver(motivo: string, etapa?: "canje" | "cuentas", detalle?: string | null): NextResponse {
+  const url = new URL(`/marketing/integraciones?e=${motivo}&p=google`, origenCanonico());
+  if (etapa) url.searchParams.set("etapa", etapa);
+  const g = codigoPublicoGoogle(detalle);
+  if (g) url.searchParams.set("g", g);
+  return NextResponse.redirect(url);
 }
+
 
 /**
  * Vuelta de Google después de autorizar Google Ads (lectura y publicación en pausa).
@@ -89,7 +95,7 @@ export async function GET(request: NextRequest) {
   const refresh = await intercambiarCodigoGoogleAds(codigo);
   if (!refresh.ok) {
     registrar("el canje del código por el refresh token", refresh.error);
-    return volver(refresh.error.codigo);
+    return volver(refresh.error.codigo, "canje", refresh.error.detalle);
   }
 
   /**
@@ -101,7 +107,7 @@ export async function GET(request: NextRequest) {
   const cuentas = await cuentasDeGoogle(refresh.datos);
   if (!cuentas.ok) {
     registrar("la lectura de cuentas accesibles en la API de Ads", cuentas.error);
-    return volver(cuentas.error.codigo);
+    return volver(cuentas.error.codigo, "cuentas", cuentas.error.detalle);
   }
 
   const operativas = cuentas.datos.filter((c) => !c.administradora);

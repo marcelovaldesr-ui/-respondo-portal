@@ -156,3 +156,11 @@ test("errores: el mensaje al usuario no trae JSON ni secretos; request-id queda 
 test("sanitizar: access tokens de Google (ya29.) también se redactan", () => {
   assert.ok(!sanitizarMensajeError("token ya29.a0AfH6SMB_x-y.z").includes("ya29.a0"));
 });
+
+test("callback: sólo códigos públicos de Google viajan a la URL, nunca texto libre", async () => {
+  const { codigoPublicoGoogle } = await import("../lib/ads/google.ts");
+  assert.equal(codigoPublicoGoogle("invalid_client"), "invalid_client");
+  assert.equal(codigoPublicoGoogle('{"error":{"details":[{"errors":[{"errorCode":{"authorizationError":"CLOUD_PROJECT_NOT_APPROVED_FOR_PRODUCTION"}}]}]}}'), "CLOUD_PROJECT_NOT_APPROVED_FOR_PRODUCTION");
+  assert.equal(codigoPublicoGoogle("token 1//0abc ya29.xyz algo raro"), null);
+  assert.equal(codigoPublicoGoogle(null), null);
+});

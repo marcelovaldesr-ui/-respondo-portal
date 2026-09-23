@@ -275,7 +275,9 @@ export async function intercambiarCodigoGoogleAds(codigo: string): Promise<Resul
     });
     const j = (await r.json().catch(() => ({}))) as Record<string, unknown>;
     if (!r.ok || !j.refresh_token) {
-      return fallo("respuesta_rara", String(j.error_description ?? j.error ?? `HTTP ${r.status}`));
+      // El CÓDIGO (`invalid_client`, `invalid_grant`…) va primero: es lo que
+      // distingue un secreto mal cargado de un código vencido.
+      return fallo("respuesta_rara", `${String(j.error ?? `HTTP ${r.status}`)}: ${String(j.error_description ?? "")}`);
     }
     return { ok: true, datos: String(j.refresh_token) };
   } catch {
@@ -965,4 +967,34 @@ export async function pruebaDeLecturaGoogle(
       gasto,
     },
   };
+}
+
+/**
+ * ⭐ Diagnóstico sin log (22-sep-2026). `respuesta_rara` tiene dos orígenes que
+ * se arreglan al revés —el canje (credenciales nuestras) y la API (nivel de
+ * acceso)— y el detalle sólo vivía en el log de Vercel. Ahora viajan la ETAPA y,
+ * si lo hay, el código de error de Google, pero SÓLO si calza con una lista
+ * cerrada de códigos públicos de OAuth/Google Ads: nunca texto libre, nunca un
+ * token ni un fragmento de respuesta.
+ */
+const CODIGOS_PUBLICOS = [
+  "invalid_client",
+  "unauthorized_client",
+  "invalid_grant",
+  "redirect_uri_mismatch",
+  "invalid_request",
+  "access_denied",
+  "CLOUD_PROJECT_NOT_APPROVED_FOR_PRODUCTION",
+  "DEVELOPER_TOKEN_NOT_APPROVED",
+  "USER_PERMISSION_DENIED",
+  "NOT_ADS_USER",
+  "CUSTOMER_NOT_ENABLED",
+  "AUTHORIZATION_ERROR",
+  "PERMISSION_DENIED",
+  "UNAUTHENTICATED",
+] as const;
+
+export function codigoPublicoGoogle(detalle: string | null | undefined): string | null {
+  const t = String(detalle ?? "");
+  return CODIGOS_PUBLICOS.find((c) => t.includes(c)) ?? null;
 }
