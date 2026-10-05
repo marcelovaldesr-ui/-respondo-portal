@@ -6,6 +6,8 @@ import { obtenerUsuarioConPermiso } from "@/lib/auth";
 import { proveedorMeta } from "@/lib/ads/meta";
 import { conexionGoogleDe, cuentasDeGoogle, soloDigitos } from "@/lib/ads/google";
 import { traducirFalla } from "@/lib/marketing/fallas";
+import { cifrar } from "@/lib/cifrado";
+import { puedeUsarTokenSistema } from "@/lib/ads/tokenSistema";
 
 /**
  * Acciones de la pantalla de conexión.
@@ -237,6 +239,89 @@ export async function desconectarGoogle(): Promise<{ ok: boolean; motivo?: strin
       .delete()
       .eq("cliente_id", usuario.clienteId)
       .eq("proveedor", "google");
+    if (error) throw new Error(error.message);
+  } catch (e) {
+    return { ok: false, motivo: traducirFalla({ proveedor: "almacen", operacion: "integraciones", clienteId: usuario.clienteId, crudo: e }) };
+  }
+
+  revalidatePath("/marketing", "layout");
+  return { ok: true };
+}
+
+/**
+ * CONEXIÓN DE LA CUENTA PROPIA DE RESPONDO POR TOKEN DE USUARIO DEL SISTEMA.
+ *
+ * Por qué existe: Facebook Login for Business deshabilita el portafolio DUEÑO
+ * de la app («This Meta Business Account owns the app»), así que el botón
+ * Conectar no sirve para las cuentas publicitarias de Respondo mismo. Para los
+ * activos propios, Meta documenta el token de usuario del sistema. Solo se
+ * ofrece en los tenants de `lib/ads/tokenSistema.ts`; ningún cliente lo ve.
+ *
+ * El token se valida contra Meta antes de guardarse, se guarda cifrado con el
+ * mismo propósito que el de OAuth y nunca vuelve a mostrarse.
+ */
+export async function conectarConTokenSistema(formData: FormData): Promise<{ ok: boolean; motivo?: string }> {
+  const usuario = await obtenerUsuarioConPermiso("gestionar_integraciones");
+  if (!usuario) return { ok: false, motivo: "Sesión no válida" };
+  if (!puedeUsarTokenSistema(usuario.clienteId)) {
+    return { ok: false, motivo: "Esta opción no está disponible para este negocio." };
+  }
+
+  const token = String(formData.get("token") ?? "").trim();
+  if (token.length < 40 || /\s/.test(token)) return { ok: false, motivo: "Ese no parece un token de Meta." };
+
+  const cuentas = await proveedorMeta.cuentasConToken(token);
+  if (!cuentas.ok) return { ok: false, motivo: `Meta rechazó el token: ${cuentas.error.mensaje}` };
+  if (!cuentas.datos.length) {
+    return { ok: false, motivo: "El token es válido, pero no tiene ninguna cuenta publicitaria asignada. Asígnala al usuario del sistema en Meta." };
+  }
+  const pedida = String(formData.get("cuentaId") ?? "").trim();
+  const elegida = pedida ? cuentas.datos.find((c) => c.id === pedida) : cuentas.datos.length === 1 ? cuentas.datos[0] : null;
+  if (!elegida) {
+    return {
+      ok: false,
+      motivo: `El token ve ${cuentas.datos.length} cuentas (${cuentas.datos.map((c) => `${c.nombre} ${c.id}`).join(", ")}). Deja asignada solo la de este negocio al usuario del sistema.`,
+    };
+  }
+
+  const datos: Record<string, unknown> = {
+    origen: "usuario_sistema",
+    businessId: elegida.negocioId ?? null,
+    businessNombre: elegida.negocioNombre ?? null,
+  };
+  const paginas = await proveedorMeta.paginasConToken(token);
+  if (paginas.ok) {
+    datos.paginasDisponibles = paginas.datos.map((p) => ({ id: p.id, nombre: p.nombre }));
+    if (paginas.datos.length === 1) {
+      datos.paginaId = paginas.datos[0].id;
+      datos.paginaNombre = paginas.datos[0].nombre;
+      if (paginas.datos[0].instagramId) {
+        datos.instagramId = paginas.datos[0].instagramId;
+        datos.instagramUsuario = paginas.datos[0].instagramUsuario;
+      }
+    }
+  }
+
+  try {
+    const { error } = await db()
+      .from("ed_ads_conexion")
+      .upsert(
+        {
+          cliente_id: usuario.clienteId,
+          proveedor: "meta",
+          token_cifrado: cifrar(token, "ads-token"),
+          token_vence: null,
+          cuenta_id: elegida.id,
+          cuenta_nombre: elegida.nombre,
+          moneda: elegida.moneda,
+          zona_horaria: elegida.zonaHoraria,
+          estado: "conectada",
+          datos,
+          ultimo_error: null,
+          actualizado_en: new Date().toISOString(),
+        },
+        { onConflict: "cliente_id,proveedor" },
+      );
     if (error) throw new Error(error.message);
   } catch (e) {
     return { ok: false, motivo: traducirFalla({ proveedor: "almacen", operacion: "integraciones", clienteId: usuario.clienteId, crudo: e }) };

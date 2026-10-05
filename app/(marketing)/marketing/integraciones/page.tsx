@@ -24,6 +24,8 @@ import SelectorCuentaGoogle from "@/components/marketing/SelectorCuentaGoogle";
 import { Pildora } from "@/components/marketing/Estado";
 import { Ico } from "@/components/marketing/Iconos";
 
+import FormTokenSistema from "@/components/marketing/FormTokenSistema";
+import { puedeUsarTokenSistema } from "@/lib/ads/tokenSistema";
 export const dynamic = "force-dynamic";
 
 /** Mensajes de vuelta del OAuth. Cada uno dice qué pasó y qué hacer. */
@@ -257,16 +259,23 @@ export default async function Integraciones({
             !metaAdsConfigurado() ? (
               <span style={{ fontSize: "12.5px", color: "var(--alerta)" }}>Todavía no está activada.</span>
             ) : !conexion ? (
-              <a href="/api/ads/conectar" className="btn-primario">
-                Conectar Meta
-              </a>
+              puedeUsarTokenSistema(usuario.clienteId) ? (
+                <FormTokenSistema />
+              ) : (
+                <a href="/api/ads/conectar" className="btn-primario">
+                  Conectar Meta
+                </a>
+              )
             ) : necesitaElegir ? (
               <span style={{ fontSize: "12.5px", color: "var(--alerta)" }}>Falta elegir la cuenta publicitaria.</span>
             ) : (
               <>
-                <a href="/api/ads/conectar" className="btn-chico">
-                  Reconectar
-                </a>
+                {/* Con token de sistema, «Reconectar» abriría Business Login, que no sirve para cuentas propias. */}
+                {!puedeUsarTokenSistema(usuario.clienteId) && (
+                  <a href="/api/ads/conectar" className="btn-chico">
+                    Reconectar
+                  </a>
+                )}
                 <SelectorCuenta cuentas={[]} soloDesconectar />
               </>
             )

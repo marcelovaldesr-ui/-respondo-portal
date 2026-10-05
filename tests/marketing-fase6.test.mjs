@@ -1392,6 +1392,7 @@ test("el callback de Google devuelve la plataforma junto con el código", () => 
   // Sin `p=google` en la vuelta, la pantalla no puede saber qué texto mostrar.
   const ruta = codigo("app/api/ads/google/callback/route.ts");
   assert.match(ruta, /integraciones\?e=\$\{motivo\}&p=google/);
+  assert.match(ruta, /searchParams\.set\("etapa"/);
   // Y el detalle técnico sigue sin salir a la URL.
-  assert.equal(/detalle/.test(ruta.split("function volver")[1]?.slice(0, 300) ?? ""), false);
+  assert.equal(/url\.searchParams\.set\("detalle"/.test(ruta), false);
 });
