@@ -342,14 +342,27 @@ export async function publicarCampanaEnMeta(
       campaign_id: campaignId,
       daily_budget: presupuestoCentavos,
       billing_event: "IMPRESSIONS",
-      // LEAD_GENERATION es para formularios instantáneos: Meta no lo acepta
-      // para tráfico a un sitio web, que se optimiza por clics en el enlace.
-      optimization_goal: objetivoMeta === "OUTCOME_TRAFFIC" ? "LINK_CLICKS" : "LEAD_GENERATION",
+      // Meta exige declarar la estrategia de puja (sin tope = menor costo).
+      bid_strategy: "LOWEST_COST_WITHOUT_CAP",
+      // WhatsApp: se optimiza por conversaciones y exige la Página en promoted_object
+      // (la Página debe estar vinculada a una cuenta de WhatsApp Business).
+      // Tráfico web: clics en el enlace. Resto: LEAD_GENERATION.
+      optimization_goal:
+        entrada.destino === "whatsapp"
+          ? "CONVERSATIONS"
+          : objetivoMeta === "OUTCOME_TRAFFIC"
+            ? "LINK_CLICKS"
+            : "LEAD_GENERATION",
       destination_type: entrada.destino === "whatsapp" ? "WHATSAPP" : "WEBSITE",
+      ...(entrada.pageId && (entrada.destino === "whatsapp" || objetivoMeta !== "OUTCOME_TRAFFIC")
+        ? { promoted_object: { page_id: entrada.pageId } }
+        : {}),
       targeting: {
         geo_locations: { countries: ["CL"] },
         age_min: edadMin,
         age_max: edadMax,
+        // Meta exige indicar explícitamente si usa Advantage audience (0 = no).
+        targeting_automation: { advantage_audience: 0 },
       },
       status: "PAUSED",
     },
@@ -406,6 +419,7 @@ export async function publicarCampanaEnMeta(
             link: entrada.sitioWebUrl,
             call_to_action: {
               type: entrada.destino === "whatsapp" ? "WHATSAPP_MESSAGE" : "LEARN_MORE",
+              ...(entrada.destino === "whatsapp" ? { value: { app_destination: "WHATSAPP" } } : {}),
             },
           },
         },
