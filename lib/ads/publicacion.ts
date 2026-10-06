@@ -100,6 +100,9 @@ type EntradaIdempotencia = {
 
 const memoriaIdempotencia = new Map<string, EntradaIdempotencia>();
 const TTL_IDEMPOTENCIA_MS = 15 * 60 * 1000;
+// Una publicación «en curso» que nunca terminó (función cortada, error de red) no debe
+// bloquear al usuario 15 minutos: publicar toma segundos.
+const TTL_EN_PROGRESO_MS = 90 * 1000;
 
 export function generarClaveIdempotencia(
   clienteId: string,
@@ -116,7 +119,7 @@ export function verificarIdempotencia(clave: string): {
   const ahora = Date.now();
   const entrada = memoriaIdempotencia.get(clave);
   if (!entrada) return { enProgreso: false };
-  if (ahora - entrada.tiempo > TTL_IDEMPOTENCIA_MS) {
+  if (ahora - entrada.tiempo > (entrada.enProgreso ? TTL_EN_PROGRESO_MS : TTL_IDEMPOTENCIA_MS)) {
     memoriaIdempotencia.delete(clave);
     return { enProgreso: false };
   }
