@@ -1,16 +1,18 @@
 # Recording Pack — Meta App Review, RONDA 1 (4 permisos)
-App **Respondo Ads** (`1771222117337476`) · actualizado 22-sep-2026 · **PREPARADO, NO ENVIADO**
+App **Respondo Ads** (`1771222117337476`) · actualizado 06-oct-2026 · **PREPARADO, NO ENVIADO**
+La app ya está **publicada (modo En vivo)** y las URLs de privacidad, eliminación de datos y condiciones están cargadas en la consola.
 
 Permisos de esta ronda: `business_management`, `ads_read`, `pages_show_list`, `pages_read_engagement`.
 `ads_management` queda **DIFERIDO** (ver `META_ADS_MANAGEMENT_BACKLOG` al final).
 
 ## Reglas para todos los videos
-- Navegador: **Opera**, ventana normal, zoom 100 %, 1080p. Grabación de pantalla completa del navegador; que se vea la barra de direcciones.
-- Sesión del portal: **Respondo Demo**. Hoy entra con marcelo.valdes.r@mail.pucv.cl; para el envío, con el Gmail del revisor.
+- Navegador: **Chrome** (el que usas hoy), ventana normal, zoom 100 %, 1080p. Grabación de pantalla completa del navegador; que se vea la barra de direcciones.
+- Sesión del portal: **Respondo Demo**. Graba con tu sesión ya iniciada (marcelo.valdes.r@mail.pucv.cl); el inicio de sesión con enlace por correo **no se graba** (mostraría el Gmail). El revisor usará `revision.metarespondo@gmail.com`, ya activo y probado.
 - Sesión de Facebook: tu cuenta personal (Marcelo), la que administra el portafolio **Cecilia Roa**.
 - Idioma de la interfaz: español. En cada video, agrega un **rótulo en inglés** (texto sobre el video o narración) con la frase indicada en "PERMISO DEMOSTRADO".
 - **Nunca mostrar:** tokens, `.env`, Supabase, Vercel, consola del navegador, Graph API Explorer, facturación o métodos de pago, otras pestañas, Gmail, conversaciones de clientes.
-- **No hacer clic en "Confirmar" dentro del modal de publicación** (ese paso es `ads_management`, que no va en esta ronda).
+- **No hacer clic en "Confirmar" dentro del modal de publicación** (ese paso es `ads_management`, que no va en esta ronda). Esa regla vale incluso ahora que la publicación en pausa funciona: en estos videos solo se **cancela**.
+- Antes de grabar: una sola vez, comprueba que en Facebook estás con tu cuenta personal que administra el portafolio **Cecilia Roa** y que Respondo Demo aparece como único negocio al entrar al portal.
 - Datos: la cuenta publicitaria "Cecilia Roa" **nunca ha pautado**. Todas las cifras son **cero reales**. No se inventa nada y no se edita el video para cambiar números.
 
 ---
@@ -53,15 +55,15 @@ Permisos de esta ronda: `business_management`, `ads_read`, `pages_show_list`, `p
   - Objetivo: **Conseguir conversaciones**.
   - Oferta: "Demo de Respondo".
   - Audiencia: Chile, 25–55.
-  - Presupuesto diario: **1000**.
+  - Presupuesto diario: **3000**.
   - Creatividades: salta este paso.
   - Copy: Titular "Conoce Respondo" · Texto "Asistentes con IA para tu pyme".
-  - Destino: el que venga por defecto (en Revisión dice "WhatsApp").
+  - Destino: ahora el paso 7 te deja elegir **WhatsApp** o **Sitio web**; deja **WhatsApp** (en Revisión debe decir "WhatsApp").
 - **CLICK 2:** paso **8 · Revisión** → **Publicar en Meta Ads**.
 - **CLICK 3:** en el modal, **no confirmes**. Muestra el bloque **"Se publicará como"** con la **foto de perfil y el nombre "Impresora color"** y el ID de la Página. Luego clic en **Cancelar**.
 - **WHAT TO SHOW:** que antes de crear cualquier cosa, el dueño ve con qué identidad (Página) saldría su anuncio.
 - **PERMISO DEMOSTRADO (rótulo EN):** "Before anything is published, Respondo reads the linked Page's name and profile picture (pages_read_engagement) to show the owner which Page the ad will run under."
-- **WHAT NOT TO SHOW:** el botón **Confirmar** apretado; el paso de creatividades con IA.
+- **WHAT NOT TO SHOW:** el botón **Confirmar** apretado; el paso de creatividades con IA; la pantalla de otros negocios (Respondo o Impresora Color) si abres el menú de negocios.
 - **END STATE:** modal cerrado con Cancelar; el borrador queda guardado como borrador.
 
 ---
@@ -69,3 +71,11 @@ Permisos de esta ronda: `business_management`, `ads_read`, `pages_show_list`, `p
 ## Después de grabar
 - **Deja Respondo Demo conectado a Meta** durante la revisión. Así el revisor ve el producto funcionando aunque su cuenta de prueba no tenga una cuenta publicitaria. Por el portal solo puede leer cifras en cero y ver el nombre público de la Página: no tiene acceso de administrador al negocio en Meta.
 - Cuando Meta responda, clic en **Desconectar** en Respondo Demo y desactiva al usuario revisor.
+- Después de grabar y **antes de enviar**: desactivar `marcelo.valdes.r@mail.pucv.cl` de Respondo Demo (lo hace Claude con un script). Si grabas de nuevo, hay que reactivarlo.
+
+## Lista de comprobación antes de apretar "grabar"
+1. Chrome en zoom 100 %, sin pestañas ajenas visibles, notificaciones del sistema silenciadas.
+2. Portal abierto en **Respondo Demo** (no en Respondo ni en Impresora Color).
+3. Facebook iniciado con tu cuenta personal.
+4. Video 1: Meta Ads **desconectado** antes de empezar. Video 2 y 3 continúan con la conexión del video 1. Video 4: borrador nuevo.
+5. Al terminar cada video, revisa que no se vea ningún token, Gmail ni método de pago.
