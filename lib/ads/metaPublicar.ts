@@ -151,6 +151,30 @@ async function peticionMeta<T>(
 }
 
 /**
+ * Convierte la ubicación escrita en la campaña («Chillán», «Viña del Mar y
+ * alrededores») en la segmentación geográfica de Meta. Antes se ignoraba y
+ * todo salía a «Chile» completo. Si no hay ubicación, o es el país entero, o
+ * Meta no encuentra la ciudad, cae a Chile.
+ */
+export async function geoLocationsMeta(
+  token: string,
+  ubicacion: string | undefined,
+): Promise<{ countries: string[] } | { cities: { key: string; radius: number; distance_unit: "kilometer" }[] }> {
+  const pais = { countries: ["CL"] };
+  const texto = (ubicacion ?? "")
+    .replace(/\s+y\s+alrededores\s*$/i, "")
+    .split(",")[0]
+    .trim();
+  if (!texto || /^chile$/i.test(texto)) return pais;
+  const url =
+    `${GRAPH}/search?type=adgeolocation&location_types=${encodeURIComponent('["city"]')}` +
+    `&country_code=CL&limit=1&q=${encodeURIComponent(texto)}`;
+  const r = await peticionMeta<{ data?: { key?: string }[] }>(url, token, "GET");
+  const key = r.ok ? r.datos.data?.[0]?.key : undefined;
+  return key ? { cities: [{ key: String(key), radius: 20, distance_unit: "kilometer" }] } : pais;
+}
+
+/**
  * Obtiene el enlace directo a la campaña en Meta Ads Manager.
  */
 export function linkMetaAdsManager(cuentaId: string, campaignId?: string): string {
@@ -333,6 +357,8 @@ export async function publicarCampanaEnMeta(
   const edadMin = Math.max(18, entrada.audiencia?.edadDesde ?? 18);
   const edadMax = Math.min(65, entrada.audiencia?.edadHasta ?? 65);
 
+  const geoLocations = await geoLocationsMeta(token, entrada.audiencia?.ubicacion);
+
   const rAdSet = await peticionMeta<{ id: string }>(
     `${GRAPH}/${cuentaId}/adsets`,
     token,
@@ -358,7 +384,7 @@ export async function publicarCampanaEnMeta(
         ? { promoted_object: { page_id: entrada.pageId } }
         : {}),
       targeting: {
-        geo_locations: { countries: ["CL"] },
+        geo_locations: geoLocations,
         age_min: edadMin,
         age_max: edadMax,
         // Meta exige indicar explícitamente si usa Advantage audience (0 = no).
