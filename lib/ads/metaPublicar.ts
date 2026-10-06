@@ -105,7 +105,7 @@ export function traducirErrorMeta(status: number, cuerpo: unknown): FallaPublica
   return {
     codigo: "META_ERROR_NATIVO",
     tipo: "plataforma",
-    mensaje: `Meta respondió con un error al publicar: ${rawMsg}`,
+    mensaje: `Meta respondió con un error al publicar: ${userMsg || rawMsg}`,
     detalleTecnico: detalle,
   };
 }
@@ -298,6 +298,9 @@ export async function publicarCampanaEnMeta(
       objective: objetivoMeta,
       status: "PAUSED",
       special_ad_categories: ["NONE"],
+      // Meta lo exige cuando el presupuesto va en el conjunto de anuncios (subcode
+      // 4834011); sin este campo la creación falla con «Invalid parameter».
+      is_adset_budget_sharing_enabled: false,
     },
   );
 

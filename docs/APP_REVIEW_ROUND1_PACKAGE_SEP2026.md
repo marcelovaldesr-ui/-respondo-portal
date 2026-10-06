@@ -102,9 +102,9 @@ Fuera de esta ronda: `ads_management` (DIFERIDO, ver el final del documento).
 | Pregunta de Meta | Respuesta propuesta | Estado |
 |---|---|---|
 | ¿Hay procesadores o proveedores con acceso a datos de la plataforma? | **Sí**: Supabase (base de datos; guarda la conexión con el token cifrado AES-256-GCM), Vercel (hosting de la app) y **Google Gemini** (recibe métricas y textos de campaña ya derivados para las sugerencias de IA; nunca tokens). Es lo mismo que declara la política de privacidad. | Verificado en el código |
-| Entidad responsable y país | Razón social y RUT de Respondo (o persona natural), Chile. | **OWNER INPUT** |
-| ¿Entregaron datos personales a autoridades en los últimos 12 meses? | Probablemente "No". | **OWNER INPUT** |
-| Políticas ante solicitudes de autoridades | Marcar **solo** lo que exista de verdad. Si no hay un proceso formal, no marcar casillas que no se cumplan. | **OWNER INPUT** |
+| Entidad responsable y país | Razón social y RUT de Respondo (o persona natural), Chile. | Impresora Color Ltda., RUT 76065269-5, Chile (Respondo opera como ampliación de giro). |
+| ¿Entregaron datos personales a autoridades en los últimos 12 meses? | Probablemente "No". | **No** (confirmado por Marcelo, 06-oct-2026). |
+| Políticas ante solicitudes de autoridades | Marcar **solo** lo que exista de verdad. Si no hay un proceso formal, no marcar casillas que no se cumplan. | **No existe procedimiento formal** (confirmado por Marcelo, 06-oct-2026). No marcar ninguna casilla de política; declarar que no hay procedimiento formal. |
 
 ## 6. Política de privacidad
 - **URL:** https://respondo-portal.vercel.app/privacidad (pública, actualizada el 21-sep-2026).
