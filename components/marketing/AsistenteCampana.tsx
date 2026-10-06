@@ -92,6 +92,7 @@ export default function AsistenteCampana({
   const [creatividadIds, setCreatividadIds] = useState<string[]>(borrador?.creatividadIds ?? (creatividadInicial ? [creatividadInicial] : []));
   const [copies, setCopies] = useState<Copy[]>(borrador?.copies.length ? borrador.copies : [{ titular: "", texto: "", cta: "Enviar mensaje" }]);
   const [notas, setNotas] = useState(borrador?.notas ?? "");
+  const [destino, setDestino] = useState<"whatsapp" | "sitio_web">(borrador?.destino === "sitio_web" ? "sitio_web" : "whatsapp");
   const [superficie, setSuperficie] = useState<"feed" | "historia">("feed");
   const [ocupado, setOcupado] = useState<"" | "guardar" | "copies" | "eliminar">("");
   const [aviso, setAviso] = useState<{ tono: "ok" | "error"; texto: string } | null>(null);
@@ -128,7 +129,7 @@ export default function AsistenteCampana({
     presupuestoDiario: presupuestoDiario ? Number(presupuestoDiario) : null,
     presupuestoTotal: presupuestoTotal ? Number(presupuestoTotal) : null,
     moneda: "CLP",
-    destino: "whatsapp" as const,
+    destino,
     creatividadIds,
     copies: copies.filter((c) => c.titular.trim() || c.texto.trim()),
     notas,
@@ -286,7 +287,7 @@ export default function AsistenteCampana({
             {paso === 1 && (
               <>
                 <p className="mb-5" style={{ fontSize: "13px", color: "var(--muted)" }}>
-                  Todas las campañas llevan a WhatsApp. El objetivo cambia cómo se escribe el anuncio y qué se mide como éxito.
+                  El objetivo cambia cómo se escribe el anuncio y qué se mide como éxito. A dónde llega la persona se elige en el paso Destino.
                 </p>
                 <div className="grid gap-2 sm:grid-cols-2">
                   {OBJETIVOS.map((o) => (
@@ -544,21 +545,35 @@ export default function AsistenteCampana({
             {paso === 7 && (
               <>
                 <p className="mb-5" style={{ fontSize: "13px", color: "var(--muted)" }}>
-                  El botón del anuncio abre WhatsApp. Es lo que hace que Respondo pueda medir qué pasó después del clic.
+                  {destino === "whatsapp"
+                    ? "El botón del anuncio abre WhatsApp. Es lo que hace que Respondo pueda medir qué pasó después del clic."
+                    : "El botón del anuncio lleva al sitio web del negocio. Los UTM del anuncio permiten medir qué pasó después del clic."}
                 </p>
-                <div className="mk-hundido flex items-center gap-3.5 p-4">
-                  <span className="mk-integracion-logo whatsapp" style={{ width: 38, height: 38 }}>
-                    {Ico.whatsapp({ className: "h-[18px] w-[18px]" })}
-                  </span>
-                  <div className="min-w-0">
-                    <div className="font-semibold" style={{ fontSize: "13.5px" }}>
-                      WhatsApp de {negocio}
-                    </div>
-                    <div style={{ fontSize: "11.5px", color: "var(--muted-2)" }}>
-                      {whatsapp ? `Número conectado: ${whatsapp}` : "WhatsApp todavía no está conectado; la campaña se puede armar igual."}
+                <div className="grid gap-2 sm:grid-cols-2">
+                  <button type="button" className="mk-opcion" aria-pressed={destino === "whatsapp"} onClick={() => setDestino("whatsapp")}>
+                    <span className="font-semibold" style={{ fontSize: "13px" }}>WhatsApp</span>
+                    <span style={{ fontSize: "11.5px", color: "var(--muted-2)" }}>Conversaciones con el negocio</span>
+                  </button>
+                  <button type="button" className="mk-opcion" aria-pressed={destino === "sitio_web"} onClick={() => setDestino("sitio_web")}>
+                    <span className="font-semibold" style={{ fontSize: "13px" }}>Sitio web</span>
+                    <span style={{ fontSize: "11.5px", color: "var(--muted-2)" }}>Visitas al sitio del negocio</span>
+                  </button>
+                </div>
+                {destino === "whatsapp" && (
+                  <div className="mk-hundido mt-4 flex items-center gap-3.5 p-4">
+                    <span className="mk-integracion-logo whatsapp" style={{ width: 38, height: 38 }}>
+                      {Ico.whatsapp({ className: "h-[18px] w-[18px]" })}
+                    </span>
+                    <div className="min-w-0">
+                      <div className="font-semibold" style={{ fontSize: "13.5px" }}>
+                        WhatsApp de {negocio}
+                      </div>
+                      <div style={{ fontSize: "11.5px", color: "var(--muted-2)" }}>
+                        {whatsapp ? `Número conectado: ${whatsapp}` : "WhatsApp todavía no está conectado; la campaña se puede armar igual."}
+                      </div>
                     </div>
                   </div>
-                </div>
+                )}
                 <label className="mt-5 block">
                   <span className="mk-campo-rotulo">Notas para quien la suba a Meta</span>
                   <textarea className="campo" rows={4} value={notas} onChange={(e) => setNotas(e.target.value)} placeholder="Ej: activar solo de lunes a viernes; excluir Instagram Reels." />
@@ -613,7 +628,7 @@ export default function AsistenteCampana({
                   />
                   <Fila t="Creatividades" v={seleccionadas.length ? seleccionadas.map((c) => c.nombre).join(", ") : "—"} />
                   <Fila t="Copies" v={`${copies.filter((c) => c.titular && c.texto).length} completos`} />
-                  <Fila t="Destino" v="WhatsApp" />
+                  <Fila t="Destino" v={destino === "whatsapp" ? "WhatsApp" : "Sitio web"} />
                 </dl>
 
                 <div className="mt-6 border-t pt-5" style={{ borderColor: "var(--borde)" }}>
