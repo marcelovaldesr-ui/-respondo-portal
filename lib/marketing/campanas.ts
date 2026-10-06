@@ -29,6 +29,7 @@ function desdeFila(f: Record<string, unknown>): BorradorCampana {
       edadHasta: typeof aud.edadHasta === "number" ? aud.edadHasta : null,
       intereses: Array.isArray(aud.intereses) ? aud.intereses.map(String) : [],
       nota: String(aud.nota ?? ""),
+      urlDestino: typeof aud.urlDestino === "string" ? aud.urlDestino : "",
     },
     presupuestoDiario: f.presupuesto_diario === null ? null : Number(f.presupuesto_diario),
     presupuestoTotal: f.presupuesto_total === null ? null : Number(f.presupuesto_total),

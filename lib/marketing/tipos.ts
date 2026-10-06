@@ -219,6 +219,8 @@ export type AudienciaCampana = {
   edadHasta: number | null;
   intereses: string[];
   nota: string;
+  /** Sitio web al que lleva el anuncio (destino «sitio_web»). Vive en el JSON de audiencia: no hay columna propia. */
+  urlDestino?: string;
 };
 
 export type BorradorCampana = {

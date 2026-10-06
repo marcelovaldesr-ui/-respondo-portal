@@ -277,7 +277,8 @@ export async function publicarCampanaNativaAccion(
      */
     const { obtenerPerfilMarketing } = await import("@/lib/marketing/perfilMarketing");
     const perfil = await obtenerPerfilMarketing(usuario.clienteId).catch(() => null);
-    const sitio = perfil?.business?.sitioWeb?.trim();
+    // La URL escrita en la campaña manda; el perfil del negocio es el respaldo.
+    const sitio = borrador.audiencia.urlDestino?.trim() || perfil?.business?.sitioWeb?.trim();
     const sitioWebUrl = sitio ? (/^https?:\/\//i.test(sitio) ? sitio : `https://${sitio}`) : null;
 
     resultado = await publicarCampanaEnMeta({

@@ -92,6 +92,7 @@ export default function AsistenteCampana({
   const [creatividadIds, setCreatividadIds] = useState<string[]>(borrador?.creatividadIds ?? (creatividadInicial ? [creatividadInicial] : []));
   const [copies, setCopies] = useState<Copy[]>(borrador?.copies.length ? borrador.copies : [{ titular: "", texto: "", cta: "Enviar mensaje" }]);
   const [notas, setNotas] = useState(borrador?.notas ?? "");
+  const [urlDestino, setUrlDestino] = useState(borrador?.audiencia.urlDestino ?? "");
   const [destino, setDestino] = useState<"whatsapp" | "sitio_web">(borrador?.destino === "sitio_web" ? "sitio_web" : "whatsapp");
   const [superficie, setSuperficie] = useState<"feed" | "historia">("feed");
   const [ocupado, setOcupado] = useState<"" | "guardar" | "copies" | "eliminar">("");
@@ -125,6 +126,7 @@ export default function AsistenteCampana({
       edadHasta: edadHasta ? Number(edadHasta) : null,
       intereses: intereses.split(",").map((s) => s.trim()).filter(Boolean),
       nota: notaAudiencia,
+      urlDestino: urlDestino.trim(),
     },
     presupuestoDiario: presupuestoDiario ? Number(presupuestoDiario) : null,
     presupuestoTotal: presupuestoTotal ? Number(presupuestoTotal) : null,
@@ -559,6 +561,13 @@ export default function AsistenteCampana({
                     <span style={{ fontSize: "11.5px", color: "var(--muted-2)" }}>Visitas al sitio del negocio</span>
                   </button>
                 </div>
+                {destino === "sitio_web" && (
+                  <label className="mt-4 block">
+                    <span className="mk-campo-rotulo">Dirección del sitio web</span>
+                    <input className="campo" type="url" inputMode="url" value={urlDestino} onChange={(e) => setUrlDestino(e.target.value)} placeholder="https://respon-do.com" />
+                    <span className="mk-ayuda mt-1 block">Si la dejas vacía se usa el sitio del perfil del negocio.</span>
+                  </label>
+                )}
                 {destino === "whatsapp" && (
                   <div className="mk-hundido mt-4 flex items-center gap-3.5 p-4">
                     <span className="mk-integracion-logo whatsapp" style={{ width: 38, height: 38 }}>
