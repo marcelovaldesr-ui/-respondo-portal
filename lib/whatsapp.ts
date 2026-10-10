@@ -505,10 +505,10 @@ export async function enviarBotones(
 export async function enviarPlantilla(
   cfg: ConfigWhatsApp,
   para: string,
-  plantilla: { nombre: string; idioma: string; params: string[] },
+  plantilla: { nombre: string; idioma: string; params: string[]; botonUrl?: string },
 ): Promise<{ ok: boolean; waId?: string; error?: string }> {
   try {
-    const componentes = plantilla.params.length
+    const componentes: Record<string, unknown>[] = plantilla.params.length
       ? [
           {
             type: "body",
@@ -516,6 +516,16 @@ export async function enviarPlantilla(
           },
         ]
       : [];
+    // Plantillas de autenticación (código): Meta pide el código también en el
+    // botón «copiar código», que se manda como botón URL con ese texto.
+    if (plantilla.botonUrl) {
+      componentes.push({
+        type: "button",
+        sub_type: "url",
+        index: "0",
+        parameters: [{ type: "text", text: plantilla.botonUrl }],
+      });
+    }
     const r = await fetch(`${GRAPH}/${cfg.phoneNumberId}/messages`, {
       method: "POST",
       headers: {
