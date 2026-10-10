@@ -20,6 +20,9 @@ import { conservaElTurno } from "@/lib/turnoTino";
 import { cerrarEscalacionesPendientes } from "@/lib/escalaciones";
 import { idsEmpleadosDeCliente } from "@/lib/empleadosCache";
 import { responderSiBot } from "@/lib/responderBot";
+import { esSoloMensajeria } from "@/lib/soloMensajeria";
+import { esMensajeDeBaja, registrarBaja, CONFIRMACION_BAJA } from "@/lib/bajas";
+import { emitirEvento } from "@/lib/webhookSalida";
 import { empleadoParaEntrante } from "@/lib/seguimientos";
 import { fechaLimiteModelo } from "@/lib/presupuesto";
 import { transporteDe } from "@/lib/transporte";
@@ -110,6 +113,22 @@ export async function manejarEntranteMeta(
       ack.estado,
       ack.errorDetalle ?? null,
     );
+    // Cuentas de solo mensajería (Kambak): si el ack es de un envío pedido por su
+    // API, se le avisa a su sistema con el id que él conoce.
+    if (await esSoloMensajeria(ctx.cfg.clienteId, supa)) {
+      const { data: envio } = await supa
+        .from("ed_envios_api").select("id")
+        .eq("cliente_id", ctx.cfg.clienteId).eq("wamid", ack.waId).maybeSingle();
+      if (envio) {
+        const estado = { server_ack: "sent", entregado: "delivered", leido: "read", error: "failed" }[ack.estado];
+        await emitirEvento(ctx.cfg.clienteId, "message.status", `status:${ack.waId}:${estado}`, {
+          id: envio.id,
+          message_id: ack.waId,
+          status: estado,
+          ...(ack.estado === "error" ? { reason: (ack.errorDetalle ?? "sin_detalle").slice(0, 200) } : {}),
+        });
+      }
+    }
     if (ack.estado === "error") {
       console.error("[meta ack] envío no entregado", {
         detalle: ack.errorDetalle?.slice(0, 120) ?? "sin_detalle",
@@ -365,6 +384,40 @@ export async function manejarEntranteMeta(
       mensaje: { waId: m.waId, rol: "cliente", texto: m.texto ?? "" },
       supa,
     });
+
+    /**
+     * CUENTAS DE SOLO MENSAJERÍA (migración 322, ej. Kambak): el mensaje ya
+     * quedó guardado y el contacto registrado, así que aparece en la bandeja
+     * para que una persona conteste. Acá se corta: sin espera de debounce, sin
+     * IA, sin llamada al modelo.
+     */
+    if (await esSoloMensajeria(cfg.clienteId, supa)) {
+      let detalle: string | undefined;
+      const wamid = m.waId ?? `${chatId}:${Date.now()}`;
+      await emitirEvento(cfg.clienteId, "message.inbound", `inbound:${wamid}`, {
+        from: `+${chatId}`,
+        type: m.tipo,
+        text: (m.texto ?? "").slice(0, 1000),
+        message_id: m.waId,
+      });
+      // BAJA nativa: se marca ANTES de cualquier otra cosa, y se avisa a Kambak.
+      if (esMensajeDeBaja(m.texto)) {
+        detalle = "baja";
+        const nueva = await registrarBaja(supa, { clienteId: cfg.clienteId, chatId, nombre: m.nombre });
+        if (nueva) {
+          await emitirEvento(cfg.clienteId, "contact.optout", `optout:${wamid}`, {
+            phone: `+${chatId}`,
+            source: "whatsapp_keyword",
+          });
+          // Confirmación corta, dentro de la ventana de 24 h abierta por este mensaje.
+          const enviarConfirmacion =
+            opts?.enviar ?? ((para: string, texto: string) => enviarTexto(cfg, para, texto));
+          await enviarConfirmacion(chatId, CONFIRMACION_BAJA).catch(() => undefined);
+        }
+      }
+      resultados.push({ accion: "cliente:solo_mensajeria", detalle });
+      continue;
+    }
 
     /**
      * DEBOUNCE: si el cliente manda varios mensajes seguidos, responde solo la

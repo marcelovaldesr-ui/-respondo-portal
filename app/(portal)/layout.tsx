@@ -1,3 +1,5 @@
+import { headers } from "next/headers";
+import { redirect } from "next/navigation";
 import Sidebar from "@/components/Sidebar";
 import AvisoVersion from "@/components/AvisoVersion";
 import { exigirUsuarioPortal } from "@/lib/auth";
@@ -29,6 +31,9 @@ async function logoDelNegocio(clienteId: string): Promise<string | null> {
 
 export const dynamic = "force-dynamic";
 
+/** Pantallas que existen para una cuenta de solo mensajería. */
+const RUTAS_SOLO_MENSAJERIA = ["/conversaciones", "/clientes", "/whatsapp", "/sin-permiso"];
+
 /**
  * Layout de todo el portal. Acá se resuelve UNA vez quién es el usuario y qué
  * cliente puede ver; si no está autorizado, exigirUsuarioPortal corta el paso.
@@ -43,6 +48,20 @@ export default async function PortalLayout({
   children: React.ReactNode;
 }) {
   const usuario = await exigirUsuarioPortal();
+
+  /**
+   * CUENTAS DE «SOLO MENSAJERÍA» (migración 322, ej. Kambak): solo se ve la
+   * bandeja, los contactos y la conexión de WhatsApp. Cualquier otra pantalla
+   * (Inicio con tarjetas de empleados IA, Probar, Isabel, Información…) lleva
+   * a la bandeja. Si la cabecera de ruta no llegara, no se redirige: las
+   * acciones y rutas de API igual están bloqueadas por `tienePermiso`.
+   */
+  if (usuario.soloMensajeria) {
+    const ruta = (await headers()).get("x-ruta") ?? "";
+    const permitida = RUTAS_SOLO_MENSAJERIA.some((r) => ruta === r || ruta.startsWith(`${r}/`));
+    if (ruta && !permitida) redirect("/conversaciones");
+  }
+
   const contadores = await contadoresMenu(usuario.clienteId);
   const logoUrl = await logoDelNegocio(usuario.clienteId);
 
@@ -54,6 +73,7 @@ export default async function PortalLayout({
         logoUrl={logoUrl}
         email={usuario.email}
         rol={usuario.rol}
+        soloMensajeria={usuario.soloMensajeria}
         esperando={contadores.esperando}
         porCerrar={contadores.porCerrar}
       />

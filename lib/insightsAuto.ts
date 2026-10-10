@@ -2,6 +2,7 @@ import { db } from "@/lib/db";
 import { generarInsight, semanaDe } from "@/lib/insights";
 import { ZONA } from "@/lib/fechas";
 import { limitarDistribuido } from "@/lib/seguridad";
+import { sinSoloMensajeria } from "@/lib/soloMensajeria";
 
 /**
  * GENERACIÓN AUTOMÁTICA DEL INFORME SEMANAL.
@@ -106,7 +107,7 @@ export async function generarInformesPendientes(opts?: {
 
   // Orden determinista: sin `order`, la base devuelve los negocios en un orden
   // arbitrario pero estable, y el primero de la lista era siempre el mismo.
-  const { data: clientes, error } = await supa
+  const { data: clientesBruto, error } = await supa
     .from("ed_clientes")
     .select("id, nombre")
     .eq("activo", true)
@@ -115,6 +116,8 @@ export async function generarInformesPendientes(opts?: {
     out.errores.push({ clienteId: "", error: `no se pudo leer negocios: ${error.message}` });
     return out;
   }
+  // Cuentas de solo mensajería (migración 322): sin informes con el modelo.
+  const clientes = await sinSoloMensajeria(clientesBruto, supa);
 
   const { data: hechos, error: errHechos } = await supa
     .from("ed_insights")
@@ -204,7 +207,7 @@ export async function informesFaltantes(opts: {
 
   const { data: clientes, error } = await supa.from("ed_clientes").select("id").eq("activo", true);
   if (error) return { evaluado: false, semana: desde, faltantes: [], error: error.message };
-  const ids = (clientes ?? []).map((c) => c.id as string);
+  const ids = (await sinSoloMensajeria(clientes, supa)).map((c) => c.id as string);
   if (!ids.length) return { evaluado: true, semana: desde, faltantes: [] };
 
   const [{ data: hechos, error: e1 }, { data: emps, error: e2 }] = await Promise.all([

@@ -1,5 +1,5 @@
 # Meta App Review · Ronda 1 · Paquete completo
-App **Respondo Ads** (`1771222117337476`) · portafolio dueño: Respondo (`1267084588712153`) · 22-sep-2026
+App **Respondo Ads** (`1771222117337476`) · portafolio dueño: Respondo (`1267084588712153`) · actualizado 06-oct-2026
 **Estado: PREPARADO — NO ENVIADO.** Se envía solo con la confirmación final de Marcelo.
 
 Permisos de esta ronda: `business_management`, `ads_read`, `pages_show_list`, `pages_read_engagement`.
@@ -10,7 +10,7 @@ Fuera de esta ronda: `ads_management` (DIFERIDO, ver el final del documento).
 ## 1. Usuario revisor (mínimo privilegio)
 | Punto | Definición |
 |---|---|
-| Correo | **Gmail nuevo y exclusivo**, sugerido `respondo.metareview@gmail.com`. No el PUCV. |
+| Correo | **Gmail nuevo y exclusivo**: `revision.metarespondo@gmail.com` (creado, vinculado y probado el 06-oct). No el PUCV. |
 | Tenant | **Respondo Demo** (`88888888-8888-8888-8888-888888888888`). Vacío: sin WhatsApp, Instagram, conversaciones ni clientes. Única ficha: descripción pública de Respondo y sitio `https://respon-do.com`. |
 | Rol | `dueno`. Es el único rol del portal que abre **Marketing** (`generar_insights`) e **Integraciones** (`gestionar_integraciones`); `staff` no alcanza. El privilegio queda acotado por el **tenant vacío**: no hay conversaciones privadas ni datos de otros negocios, y el portal filtra todo por tenant. |
 | Otros tenants | Ninguno. El usuario queda amarrado a un solo `cliente_id`. |
@@ -20,7 +20,7 @@ Fuera de esta ronda: `ads_management` (DIFERIDO, ver el final del documento).
 | Login | El portal entra **solo con enlace mágico**. Meta necesita el correo **y la contraseña del Gmail** para abrir el enlace. |
 | Al terminar la revisión | Desactivar el usuario (`portal_usuarios.activo = false`) y desconectar Meta en Respondo Demo. |
 
-**Estado actual:** `revision.respondo@gmail.com` quedó **desactivado** (nadie tiene ese buzón). `marcelo.valdes.r@mail.pucv.cl` está **temporalmente** en Respondo Demo para grabar.
+**Estado actual (verificado en la base el 06-oct):** `revision.metarespondo@gmail.com` **activo**, rol dueño, solo en Respondo Demo (probado: ve solo ese negocio). `revision.respondo@gmail.com` **desactivado**. `marcelo.valdes.r@mail.pucv.cl` está **temporalmente** en Respondo Demo para grabar y se desactiva antes de enviar. Credenciales del revisor: nunca en el repositorio; van en el formulario como [GMAIL]/[PASSWORD].
 
 ## 2. Datos del tenant de revisión
 - Datos: solo 2 fichas de conocimiento con texto público de Respondo. **Cero** conversaciones, clientes, pagos o citas.
@@ -109,13 +109,11 @@ Fuera de esta ronda: `ads_management` (DIFERIDO, ver el final del documento).
 ## 6. Política de privacidad
 - **URL:** https://respondo-portal.vercel.app/privacidad (pública, actualizada el 21-sep-2026).
 - Cubre: token de Meta cifrado, datos de campañas leídos en vivo, Gemini como único tercero con datos derivados, borrado al desconectar y contacto hirespondo@gmail.com.
-- **Revisar en la consola de la app** (no lo pude confirmar hoy porque el navegador se desconectó): en Configuración → Básica, que "URL de la política de privacidad" apunte a esa dirección y que exista una **URL de instrucciones para eliminar datos** (sirve la misma página, sección 6).
+- **Consola de la app (verificado por captura el 06-oct):** política de privacidad, instrucciones de eliminación de datos y condiciones del servicio apuntan a esa dirección; categoría "Empresa y páginas"; app **publicada (En vivo)**.
 
 ## 7. ADS_MANAGEMENT — DIFERIDO (NEXT META GATE)
-- El publicador real (`lib/ads/metaPublicar.ts`) queda **intacto**: sin reimplementaciones ni workarounds.
-- Bloqueos confirmados el 22-sep:
-  - En la cuenta del cliente, la app recibe solo ANALYZE (code 200 / subcode 2490585, fbtrace `AL6Z-fMXB-7nB1gCoFPagTo`).
-  - La cuenta propia no se puede usar: Business Login deshabilita el portafolio dueño de la app ("This Meta Business Account owns the app").
-- **Volver a probar cuando** el Marketing API Access Tier salga de "Acceso limitado" y/o Meta conceda el acceso correspondiente:
-  - Prueba: Campaign → AdSet → Creative → Ad, todo en PAUSED, desde el portal, con una cuenta de cliente autorizada.
-  - Recién entonces preparar la ronda 2 (`ads_management`).
+- Decisión vigente: **no se pide en la ronda 1**. Nada se envía sin la confirmación final de Marcelo.
+- Bloqueo original (22-sep): en la cuenta de un cliente la app recibía solo ANALYZE (code 200 / subcode 2490585) y el portafolio dueño no se puede conectar por Business Login.
+- **Novedad 06-oct:** con la cuenta propia de Respondo (`act_2271650553631836`, conectada con token de usuario del sistema) y la app en modo En vivo, el portal publicó **campaña → conjunto → creatividad → anuncio, todo en PAUSADA**, con la ciudad correcta. Eso demuestra que el flujo funciona sobre activos propios con acceso estándar. Para que **otros clientes** publiquen desde el portal se necesitaría `ads_management` aprobado (ronda 2).
+- Correcciones al publicador hechas el 06-oct (commits 617e3a9, c149ab8, 8eaa843, bbf7ffa, f8b492a): `is_adset_budget_sharing_enabled`, estrategia de puja, `advantage_audience`, ciudad real en la segmentación, campo de sitio web y destino elegible.
+- Para la ronda 2: preparar guion con una cuenta de cliente autorizada, todo en PAUSED, y decidir si se añade `pages_manage_ads`.

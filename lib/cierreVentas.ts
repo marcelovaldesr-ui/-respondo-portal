@@ -1,6 +1,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { db } from "@/lib/db";
 import { generarJSON } from "@/lib/gemini";
+import { sinSoloMensajeria } from "@/lib/soloMensajeria";
 import { avisarACliente } from "@/lib/push";
 import { notificarConTope } from "@/lib/puenteSalida";
 import { conEtiqueta, etiquetasTrasCierre, etiquetasTrasPagoInformado } from "@/lib/etiquetasCiclo";
@@ -71,13 +72,15 @@ export async function detectarCierres(
   const fechaLimite = opts.fechaLimite ?? Date.now() + 5 * 60_000;
   const desde = new Date(Date.now() - DIAS_ACTIVIDAD * 86_400_000).toISOString();
 
-  const { data: todos, error: errClientes } = await supa
+  const { data: todosBruto, error: errClientes } = await supa
     .from("ed_clientes")
     .select("id, nombre, rubro")
     .eq("activo", true)
     .order("id", { ascending: true })
     .limit(50);
   if (errClientes) throw new Error(`no se pudo leer negocios: ${errClientes.message}`);
+  // Cuentas de solo mensajería (migración 322): sin modelo, sin cierres detectados.
+  const todos = await sinSoloMensajeria(todosBruto, supa);
   if (!todos?.length) return out;
   /**
    * ROTACIÓN (Fase 0). Con 4 revisiones por pasada y los negocios siempre en el

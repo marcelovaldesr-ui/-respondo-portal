@@ -5,6 +5,7 @@ import { generarParaTodos } from "@/lib/generadorSeguimientos";
 import { enviarTextoWaha } from "@/lib/waha";
 import { configPorCliente, enviarTexto, enviarPlantilla } from "@/lib/whatsapp";
 import { ventanaAbierta } from "@/lib/ventana24";
+import { esSoloMensajeria } from "@/lib/soloMensajeria";
 import { plantillaPara } from "@/lib/plantillas";
 import { limitarDistribuido, secretoValido } from "@/lib/seguridad";
 import { LATIDO_CRON_SEGUIMIENTOS, registrarLatido } from "@/lib/latidos";
@@ -22,6 +23,8 @@ import { archivarPendientes } from "@/lib/archivarMedia";
 import { generarSeguimientosCotizacion } from "@/lib/generadorCotizacion";
 import { destilarPendientes } from "@/lib/isabelDestilado";
 import { procesarEventos } from "@/lib/ads/colaEventos";
+import { drenarCola } from "@/lib/kambakEnvios";
+import { procesarEventosPendientes } from "@/lib/webhookSalida";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -80,6 +83,17 @@ export async function GET(request: NextRequest) {
   const procesos: ResultadoPaso[] = [];
 
   /**
+   * KAMBAK (solo mensajería). Van PRIMERO a propósito: son rápidos, no usan
+   * modelo y no deben quedar sin correr si un paso lento de más abajo consume
+   * el plazo de la función.
+   * · reintentos del webhook hacia Kambak (espera creciente)
+   */
+  await correrPaso("webhook_kambak", () => procesarEventosPendientes(), (x) => ({ ok: true, trabajo: x.revisados > 0, resumen: x }), procesos);
+
+  /** · envíos de Kambak que esperaron el horario (9:00 a 21:00 de Chile) */
+  await correrPaso("cola_kambak", () => drenarCola(), (x) => ({ ok: true, trabajo: x.enviados + x.fallidos + x.omitidos > 0, resumen: x }), procesos);
+
+  /**
    * GENERAR ANTES DE ENVIAR.
    *
    * El generador crea los avisos de mantención con programado_para = ahora, así
@@ -118,6 +132,10 @@ export async function GET(request: NextRequest) {
             .maybeSingle();
           const clienteId = (emp?.cliente_id as string) ?? null;
           if (!clienteId) return { ok: false, error: "empleado sin cliente" };
+          // Cuentas de solo mensajería (migración 322): el cron jamás escribe solo.
+          if (await esSoloMensajeria(clienteId, supa)) {
+            return { ok: false, error: "cuenta de solo mensajería" };
+          }
 
           const { data: cli } = await supa
             .from("ed_clientes")

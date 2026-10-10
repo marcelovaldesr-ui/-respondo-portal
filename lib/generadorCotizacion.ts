@@ -1,6 +1,7 @@
 import { db } from "@/lib/db";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { programarSeguimiento } from "@/lib/seguimientos";
+import { sinSoloMensajeria } from "@/lib/soloMensajeria";
 import {
   DIAS_MAX,
   DIAS_MIN,
@@ -81,7 +82,7 @@ export async function generarSeguimientosCotizacion(
     errores: [],
   };
 
-  const { data: clientes, error: errClientes } = await supa
+  const { data: clientesBruto, error: errClientes } = await supa
     .from("ed_clientes")
     .select("id, nombre, cotizacion_tope_diario")
     .eq("cotizacion_seguimiento", true)
@@ -92,6 +93,8 @@ export async function generarSeguimientosCotizacion(
     return out;
   }
 
+  // Cuentas de solo mensajería (migración 322): sin seguimientos de cotización.
+  const clientes = await sinSoloMensajeria(clientesBruto, supa);
   if (!clientes?.length) return out;
   out.clientes = clientes.length;
 

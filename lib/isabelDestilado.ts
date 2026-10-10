@@ -1,5 +1,6 @@
 import { db } from "@/lib/db";
 import { generarJSON } from "@/lib/gemini";
+import { esSoloMensajeria, sinSoloMensajeria } from "@/lib/soloMensajeria";
 import { ZONA } from "@/lib/fechas";
 import {
   armarConversaciones,
@@ -136,6 +137,9 @@ export async function destilarDia(
 ): Promise<{ ok: boolean; motivo?: string; omitido?: boolean; nuevos?: number; vistos?: number }> {
   const supa = db();
 
+  // Cuentas de solo mensajería (migración 322): sin modelo.
+  if (await esSoloMensajeria(clienteId, supa)) return { ok: false, omitido: true, motivo: "solo_mensajeria" };
+
   const { data: cliente } = await supa
     .from("ed_clientes")
     .select("nombre, rubro")
@@ -271,13 +275,14 @@ export async function destilarPendientes(opts?: {
   try {
     // Solo activos y en orden estable (Fase 0): antes entraban negocios dados de
     // baja y, sin orden, el recorte de 50 era arbitrario.
-    const { data: clientes, error: errClientes } = await supa
+    const { data: clientesBruto, error: errClientes } = await supa
       .from("ed_clientes")
       .select("id, nombre")
       .eq("activo", true)
       .order("id", { ascending: true })
       .limit(50);
     if (errClientes) throw new Error(`no se pudo leer negocios: ${errClientes.message}`);
+    const clientes = await sinSoloMensajeria(clientesBruto, supa);
     if (!clientes?.length) return { destilados: 0, detalle: ["sin_clientes"], errores };
 
     const { data: hechos } = await supa

@@ -1,3 +1,4 @@
+import { esSoloMensajeria, MENSAJE_SOLO_MENSAJERIA } from "@/lib/soloMensajeria";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { db } from "@/lib/db";
 import { enviarTexto } from "@/lib/whatsapp";
@@ -45,7 +46,7 @@ export type ResultadoEnvio = {
    * de solo mostrar el error (p. ej. abrir el selector de plantillas cuando la
    * ventana de 24 h está cerrada).
    */
-  codigo?: "ventana_cerrada" | "sin_acceso" | "limite" | "canal" | "proveedor" | "registro";
+  codigo?: "ventana_cerrada" | "sin_acceso" | "limite" | "canal" | "proveedor" | "registro" | "solo_mensajeria";
   /** Id del mensaje guardado (ed_mensajes.id), para que la bandeja reemplace la burbuja temporal. */
   mensajeId?: string;
   /** Texto tal como quedó guardado (los adjuntos llevan un rótulo). */
@@ -103,6 +104,13 @@ export async function fijarModo(params: {
 }): Promise<ResultadoEnvio> {
   const { clienteId, empleadoId, chatId, modo } = params;
   const supa = params.supa ?? db();
+
+  // Cuentas de solo mensajería (migración 322): no hay asistente al que devolverle
+  // el chat. Pasar a "bot" no haría hablar a nadie (la guardia de responderSiBot
+  // lo impide), pero dejaría la pantalla diciendo que el asistente atiende.
+  if (modo === "bot" && (await esSoloMensajeria(clienteId, supa))) {
+    return { ok: false, error: MENSAJE_SOLO_MENSAJERIA, codigo: "solo_mensajeria" };
+  }
 
   // Barrera de acceso: el empleado Y el chat tienen que ser de este cliente.
   // Sin esto, un id cambiado en la petición dejaría pausar el asistente de otro

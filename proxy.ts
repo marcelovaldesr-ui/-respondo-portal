@@ -17,7 +17,11 @@ const RUTAS_PROTEGIDAS = [
 
 /** Refresca la sesión y hace únicamente el control optimista de autenticación. */
 export async function proxy(request: NextRequest) {
-  const response = NextResponse.next({ request: { headers: request.headers } });
+  // La ruta viaja como cabecera de la petición para que el layout del portal
+  // pueda decidir (cuentas de «solo mensajería», migración 322) sin leer la URL.
+  const cabeceras = new Headers(request.headers);
+  cabeceras.set("x-ruta", request.nextUrl.pathname);
+  const response = NextResponse.next({ request: { headers: cabeceras } });
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const key = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
   if (!url || !key) return response;

@@ -3,7 +3,7 @@ import { obtenerUsuarioConPermiso } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { guardarMensaje } from "@/lib/mensajes";
 import { limitarDistribuido } from "@/lib/seguridad";
-import { PLANTILLAS, limpiarParam, plantillasParaRubro, render } from "@/lib/plantillas";
+import { limpiarParam, plantillasParaRubro, render } from "@/lib/plantillas";
 import { enviarPlantilla } from "@/lib/whatsapp";
 import {
   conservarPausa,
@@ -65,11 +65,6 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ ok: false, error: "Faltan datos" }, { status: 400 });
   }
 
-  const plantilla = PLANTILLAS[nombre];
-  if (!plantilla) {
-    return NextResponse.json({ ok: false, error: "Esa plantilla no existe" }, { status: 400 });
-  }
-
   /**
    * ⚠️ QUE LA PLANTILLA EXISTA EN EL CATÁLOGO NO SIGNIFICA QUE EXISTA EN SU WABA.
    *
@@ -88,7 +83,8 @@ export async function POST(request: NextRequest) {
     .eq("id", usuario.clienteId)
     .maybeSingle();
   const permitidas = plantillasParaRubro((cli?.rubro as string | null) ?? null);
-  if (!permitidas.some((p) => p.nombre === nombre)) {
+  const plantilla = permitidas.find((p) => p.nombre === nombre);
+  if (!plantilla) {
     return NextResponse.json(
       {
         ok: false,
