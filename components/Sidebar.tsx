@@ -266,6 +266,7 @@ export default function Sidebar({
   logoUrl,
   email,
   rol,
+  soloMensajeria = false,
   esperando = 0,
   porCerrar = 0,
 }: {
@@ -275,6 +276,8 @@ export default function Sidebar({
   logoUrl?: string | null;
   email: string;
   rol: "dueno" | "staff";
+  /** Cuenta de solo mensajería (migración 322): solo bandeja, contactos y WhatsApp. */
+  soloMensajeria?: boolean;
   /** Conversaciones derivadas sin atender. Va en coral: es lo único urgente. */
   esperando?: number;
   /** Oportunidades abiertas en el embudo. */
@@ -318,7 +321,9 @@ export default function Sidebar({
    * no de quien atiende el mesón.
    */
   const visible = (it: ItemMenu) =>
-    rol === "dueno" || !["/informacion", "/whatsapp", "/isabel"].includes(it.href);
+    soloMensajeria
+      ? ["/conversaciones", "/clientes", "/whatsapp"].includes(it.href)
+      : rol === "dueno" || !["/informacion", "/whatsapp", "/isabel"].includes(it.href);
   const contadores = { esperando, porCerrar } as const;
   const valorDe = (it: ItemMenu) => (it.contador ? contadores[it.contador] : undefined);
 
@@ -431,7 +436,7 @@ export default function Sidebar({
           />
         ))}
         {/* Marketing cierra la fila, después de una separación fina: es otra casa */}
-        {rol === "dueno" && (
+        {rol === "dueno" && !soloMensajeria && (
           <>
             <span className="my-1 w-px shrink-0" style={{ background: "var(--nav-borde)" }} />
             <ItemNav item={ENTRADA_PAUTA} activo={ruta.startsWith(ENTRADA_PAUTA.href)} />
@@ -479,7 +484,7 @@ export default function Sidebar({
           ⚠️ Oculta para staff porque Marketing muestra gasto y ventas, igual que
           Isabel. Sin esto el botón llevaría a /sin-permiso, que es una forma
           fea de decir que no. */}
-      {rol === "dueno" && (
+      {rol === "dueno" && !soloMensajeria && (
       <Link
         href={ENTRADA_PAUTA.href}
         title={plegada ? "Marketing · Anuncios, campañas y de dónde viene cada venta" : undefined}

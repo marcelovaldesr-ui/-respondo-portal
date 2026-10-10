@@ -2,6 +2,7 @@ import { db } from "@/lib/db";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { programarSeguimiento } from "@/lib/seguimientos";
 import { ventanaMantencion } from "@/lib/generadorCore";
+import { esSoloMensajeria } from "@/lib/soloMensajeria";
 
 /**
  * GENERADOR DE SEGUIMIENTOS DE BETO.
@@ -222,6 +223,8 @@ export async function generarParaTodos(
 
   for (const b of betos ?? []) {
     const clienteId = b.cliente_id as string;
+    // Cuentas de solo mensajería (migración 322): Beto no programa nada.
+    if (await esSoloMensajeria(clienteId, supa)) continue;
     try {
       /**
        * El intervalo lo define cada negocio: una moto no se atiende con la

@@ -72,10 +72,24 @@ const MATRIZ: Readonly<Record<RolPortal, ReadonlySet<PermisoPortal>>> = {
   ]),
 };
 
+/**
+ * Lo único que puede hacer una cuenta de «solo mensajería» (migración 322):
+ * atender conversaciones, editar sus contactos y conectar el número de
+ * WhatsApp. Todo lo demás —conocimiento, Isabel, informes, embudo, agenda,
+ * marketing, aprobar mensajes pagados— usa o activa empleados IA, y se niega
+ * aunque el rol sea dueño.
+ */
+const SOLO_MENSAJERIA: ReadonlySet<PermisoPortal> = new Set<PermisoPortal>([
+  "operar_conversaciones",
+  "editar_clientes",
+  "gestionar_integraciones",
+]);
+
 export function tienePermiso(
-  usuario: Pick<UsuarioPortal, "rol">,
+  usuario: Pick<UsuarioPortal, "rol"> & Partial<Pick<UsuarioPortal, "soloMensajeria">>,
   permiso: PermisoPortal,
 ): boolean {
+  if (usuario.soloMensajeria && !SOLO_MENSAJERIA.has(permiso)) return false;
   const permisos = esRolValido(usuario.rol) ? MATRIZ[usuario.rol] : null;
   return permisos ? permisos.has(permiso) : false;
 }

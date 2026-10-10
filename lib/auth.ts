@@ -3,6 +3,7 @@ import { correoVerificadoDeSesion } from "@/lib/authCore";
 import { db } from "@/lib/db";
 import { supabaseServidor } from "@/lib/supabaseAuth";
 import { esRolValido, tienePermiso, type PermisoPortal, type RolPortal } from "@/lib/permisos";
+import { esSoloMensajeria } from "@/lib/soloMensajeria";
 
 export type UsuarioPortal = {
   email: string;
@@ -10,6 +11,13 @@ export type UsuarioPortal = {
   clienteNombre: string;
   clienteRubro: string;
   rol: RolPortal;
+  /**
+   * Cuenta de «solo mensajería» (migración 322, ej. Kambak): sin empleados IA.
+   * `tienePermiso` bloquea todo lo que no sea operar conversaciones, clientes y
+   * la conexión de WhatsApp, así que ninguna pantalla ni acción que use el
+   * modelo puede abrirse desde esa cuenta, ni por accidente ni a propósito.
+   */
+  soloMensajeria?: boolean;
 };
 
 /**
@@ -71,6 +79,7 @@ export async function obtenerUsuarioPortal(): Promise<UsuarioPortal | null> {
     clienteNombre: cliente?.nombre ?? "Tu negocio",
     clienteRubro: cliente?.rubro ?? "",
     rol: data.rol,
+    soloMensajeria: await esSoloMensajeria(data.cliente_id as string),
   };
 }
 

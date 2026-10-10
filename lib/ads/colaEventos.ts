@@ -1,4 +1,5 @@
 import { db } from "@/lib/db";
+import { esSoloMensajeria, sinSoloMensajeria } from "@/lib/soloMensajeria";
 import {
   armarPayload,
   idDeEvento,
@@ -232,6 +233,7 @@ export async function encolar(clienteId: string): Promise<{ nuevos: number; desc
  */
 export async function enviar(clienteId: string): Promise<{ enviados: number; fallidos: number }> {
   const supa = db();
+  if (await esSoloMensajeria(clienteId, supa)) return { enviados: 0, fallidos: 0 };
 
   const { data: cliente } = await supa
     .from("ed_clientes")
@@ -360,11 +362,12 @@ export async function procesarEventos(opts?: {
   let enviados = 0;
 
   try {
-    const { data: clientes } = await db()
+    const { data: clientesBruto } = await db()
       .from("ed_clientes")
       .select("id, nombre, ads_dataset_id")
       .not("ads_dataset_id", "is", null)
       .limit(opts?.maxClientes ?? 5);
+    const clientes = await sinSoloMensajeria(clientesBruto);
 
     if (!clientes?.length) return { encolados: 0, enviados: 0, detalle: ["sin_configurar"] };
 

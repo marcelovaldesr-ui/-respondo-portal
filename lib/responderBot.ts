@@ -7,6 +7,7 @@ import { alAgregar } from "@/lib/etiquetasCiclo";
 import { guardarMensaje } from "@/lib/mensajes";
 import { avisarACliente, resumirParaAviso } from "@/lib/push";
 import { modoDe, setModo } from "@/lib/estadoChat";
+import { esSoloMensajeria } from "@/lib/soloMensajeria";
 import { notificarHQ } from "@/lib/hqBridge";
 import { esAudioDelCliente } from "@/lib/marcadorAudio";
 import type { SupabaseClient } from "@supabase/supabase-js";
@@ -308,6 +309,15 @@ export async function responderSiBot(params: {
 }): Promise<{ accion: string; detalle?: string }> {
   const { clienteId, empleadoId, chatId, cfg } = params;
   const canal = params.canal ?? "whatsapp";
+
+  /**
+   * CUENTAS DE SOLO MENSAJERÍA (migración 322, ej. Kambak). Va PRIMERO: antes
+   * de leer el historial, el modo del chat o cualquier otra cosa. Ningún
+   * empleado IA responde en estas cuentas y no se llama al modelo. Las tres
+   * entradas (WhatsApp Cloud, WAHA, Instagram) pasan por esta función, así que
+   * esta única guardia las cubre a todas.
+   */
+  if (await esSoloMensajeria(clienteId)) return { accion: "solo_mensajeria" };
 
   const modo = await modoDe(empleadoId, chatId);
   if (modo !== "bot") return { accion: "silencio", detalle: `modo ${modo}` };

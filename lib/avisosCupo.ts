@@ -1,6 +1,7 @@
 import { db } from "@/lib/db";
 import { configPorCliente, enviarTexto } from "@/lib/whatsapp";
 import { enviarTextoWaha } from "@/lib/waha";
+import { sinSoloMensajeria } from "@/lib/soloMensajeria";
 import {
   cicloActual,
   estadoDeCupo,
@@ -56,11 +57,13 @@ export async function revisarCuposYAvisar(ahora: Date = new Date()): Promise<Res
 
   // Solo clientes activos CON plan. Si la migración 278 no está aplicada, esta
   // consulta falla por columna inexistente y salimos sin hacer nada.
-  const { data: clientes, error } = await supa
+  const { data: clientesBruto, error } = await supa
     .from("ed_clientes")
     .select("id, nombre, plan, transporte, telefono_escalacion, canal_escalacion")
     .eq("activo", true)
     .not("plan", "is", null);
+  // Cuentas de solo mensajería (migración 322): sin avisos automáticos de Respondo.
+  const clientes = await sinSoloMensajeria(clientesBruto, supa);
   if (error || !clientes?.length) return { ...vacio, detalle: [error ? "migracion_pendiente" : "sin_clientes_con_plan"] };
 
   // Quién ya recibió el aviso de 100% en este ciclo no necesita revisarse otra

@@ -1,6 +1,7 @@
 import { db } from "@/lib/db";
 import { armarPrompt, type MensajePrueba } from "@/lib/promptEmpleado";
 import { generarJSON } from "@/lib/gemini";
+import { sinSoloMensajeria } from "@/lib/soloMensajeria";
 import { guardarMensaje } from "@/lib/mensajes";
 import { avisarACliente, resumirParaAviso } from "@/lib/push";
 import { configPorCliente, enviarTexto } from "@/lib/whatsapp";
@@ -71,12 +72,14 @@ export async function revisarAbandonadas(
    * tocar nada más. Mientras nadie lo active, este bloque cuesta una consulta
    * por latido y nada más.
    */
-  const { data: clientes } = await supa
+  const { data: clientesBruto } = await supa
     .from("ed_clientes")
     .select("id, transporte, reingreso_minutos, reingreso_precios")
     .eq("reingreso_activo", true)
     .limit(50);
 
+  // Cuentas de solo mensajería (migración 322): sin reingreso automático.
+  const clientes = await sinSoloMensajeria(clientesBruto, supa);
   if (!clientes?.length) return out;
 
   const ahora = Date.now();

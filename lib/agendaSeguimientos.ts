@@ -5,6 +5,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { formatearSlot, fechaChileDe, ZONA_AGENDA } from "@/lib/agendaCore";
 import type { Cita } from "@/lib/agenda";
 import { origenCanonico } from "@/lib/origenes";
+import { esSoloMensajeria } from "@/lib/soloMensajeria";
 
 /**
  * SEGUIMIENTOS DE CITA (F3) — confirmación, recordatorio y encuesta postventa.
@@ -145,6 +146,8 @@ export async function programarSeguimientosCita(params: {
 }): Promise<number> {
   const supa = params.supa ?? db();
   const { cita } = params;
+  // Cuentas de solo mensajería (migración 322): sin recordatorios automáticos.
+  if (await esSoloMensajeria(params.clienteId, supa)) return 0;
   if (!cita.chat_id) return 0; // reserva web sin WhatsApp: no hay a quién escribirle
 
   const ahora = Date.now();

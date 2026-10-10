@@ -5,6 +5,7 @@ import { generarParaTodos } from "@/lib/generadorSeguimientos";
 import { enviarTextoWaha } from "@/lib/waha";
 import { configPorCliente, enviarTexto, enviarPlantilla } from "@/lib/whatsapp";
 import { ventanaAbierta } from "@/lib/ventana24";
+import { esSoloMensajeria } from "@/lib/soloMensajeria";
 import { plantillaPara } from "@/lib/plantillas";
 import { limitarDistribuido, secretoValido } from "@/lib/seguridad";
 import { LATIDO_CRON_SEGUIMIENTOS, registrarLatido } from "@/lib/latidos";
@@ -118,6 +119,10 @@ export async function GET(request: NextRequest) {
             .maybeSingle();
           const clienteId = (emp?.cliente_id as string) ?? null;
           if (!clienteId) return { ok: false, error: "empleado sin cliente" };
+          // Cuentas de solo mensajería (migración 322): el cron jamás escribe solo.
+          if (await esSoloMensajeria(clienteId, supa)) {
+            return { ok: false, error: "cuenta de solo mensajería" };
+          }
 
           const { data: cli } = await supa
             .from("ed_clientes")

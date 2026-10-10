@@ -20,6 +20,7 @@ import { conservaElTurno } from "@/lib/turnoTino";
 import { cerrarEscalacionesPendientes } from "@/lib/escalaciones";
 import { idsEmpleadosDeCliente } from "@/lib/empleadosCache";
 import { responderSiBot } from "@/lib/responderBot";
+import { esSoloMensajeria } from "@/lib/soloMensajeria";
 import { empleadoParaEntrante } from "@/lib/seguimientos";
 import { fechaLimiteModelo } from "@/lib/presupuesto";
 import { transporteDe } from "@/lib/transporte";
@@ -365,6 +366,17 @@ export async function manejarEntranteMeta(
       mensaje: { waId: m.waId, rol: "cliente", texto: m.texto ?? "" },
       supa,
     });
+
+    /**
+     * CUENTAS DE SOLO MENSAJERÍA (migración 322, ej. Kambak): el mensaje ya
+     * quedó guardado y el contacto registrado, así que aparece en la bandeja
+     * para que una persona conteste. Acá se corta: sin espera de debounce, sin
+     * IA, sin llamada al modelo.
+     */
+    if (await esSoloMensajeria(cfg.clienteId, supa)) {
+      resultados.push({ accion: "cliente:solo_mensajeria" });
+      continue;
+    }
 
     /**
      * DEBOUNCE: si el cliente manda varios mensajes seguidos, responde solo la
