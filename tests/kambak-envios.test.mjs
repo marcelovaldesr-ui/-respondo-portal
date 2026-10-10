@@ -199,6 +199,18 @@ test("fuera de horario queda en cola; a las 9:00 sale una sola vez", async () =>
   assert.equal(envios.length, 1, "no se repite");
 });
 
+test("dos pendientes del mismo número con tope 2: salen las dos, la tercera no", async () => {
+  process.env.RESPONDO_TOPE_MENSUAL_MARKETING = "2";
+  const to = "+56911110020";
+  assert.equal((await procesarEnvio(KAMBAK, promo(to), MADRUGADA)).cuerpo.status, "queued");
+  assert.equal((await procesarEnvio(KAMBAK, promo(to), MADRUGADA)).cuerpo.status, "queued");
+  assert.equal((await procesarEnvio(KAMBAK, promo(to), MADRUGADA)).cuerpo.reason, "monthly_cap");
+  const out = await drenarCola(proximaVentana(MADRUGADA));
+  assert.equal(out.enviados, 2, "las dos pendientes no se bloquean entre sí");
+  assert.equal(out.omitidos, 0);
+  assert.equal(envios.length, 2);
+});
+
 test("si entre el pedido y la mañana el número dijo BAJA, la cola no lo envía", async () => {
   const to = "+56911110010";
   await procesarEnvio(KAMBAK, promo(to), MADRUGADA);

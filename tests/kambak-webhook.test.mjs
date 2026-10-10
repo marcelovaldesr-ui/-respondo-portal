@@ -20,7 +20,7 @@ let modeloLlamado = 0;
 mock.module(url("../lib/db.ts"), { namedExports: { db: () => base } });
 mock.module(url("../lib/gemini.ts"), { namedExports: { generarJSON: async () => { modeloLlamado++; return {}; } } });
 
-const { emitirEvento, procesarEventosPendientes, reencolarFallidos, firmarCuerpo, ESPERAS_MIN } =
+const { emitirEvento, reiniciarPausaWebhook, procesarEventosPendientes, reencolarFallidos, firmarCuerpo, ESPERAS_MIN } =
   await import("../lib/webhookSalida.ts");
 const { esMensajeDeBaja, registrarBaja } = await import("../lib/bajas.ts");
 const { manejarEntranteMeta } = await import("../lib/inboundMeta.ts");
@@ -38,6 +38,7 @@ beforeEach(() => {
   ];
   base.tablas.ed_empleados = [{ id: TINO_K, cliente_id: KAMBAK, rol: "tino", activo: true }];
   reiniciarCacheSoloMensajeria();
+  reiniciarPausaWebhook();
   llamadas = [];
   respuestas = [];
   modeloLlamado = 0;
@@ -197,4 +198,18 @@ test("estado de un envío pedido por API llega a Kambak con su id; uno ajeno no"
   assert.equal(eventos[0].data.status, "delivered");
   assert.equal(eventos[1].data.status, "failed");
   assert.match(eventos[1].data.reason, /131026/);
+});
+
+test("si Kambak está caído, los eventos siguientes solo se encolan (no esperan uno por uno)", async () => {
+  respuestas = [500];
+  await emitirEvento(KAMBAK, "message.status", "status:a1:sent", { status: "sent" });
+  assert.equal(llamadas.length, 1);
+  await emitirEvento(KAMBAK, "message.status", "status:a2:sent", { status: "sent" });
+  await emitirEvento(KAMBAK, "message.status", "status:a3:sent", { status: "sent" });
+  assert.equal(llamadas.length, 1, "durante la pausa no se vuelve a llamar");
+  assert.equal(base.tablas.ed_eventos_salida.length, 3);
+  assert.equal(base.tablas.ed_eventos_salida.filter((f) => f.estado === "pendiente").length, 3);
+  // El cron los recoge cuando les toca.
+  const out = await procesarEventosPendientes(new Date(Date.now() + 2 * 60_000));
+  assert.equal(out.entregados, 3);
 });

@@ -158,12 +158,23 @@ async function enBaja(clienteId: string, telefono: string): Promise<boolean> {
   return ((data?.etiquetas as string[] | null) ?? []).includes("no_contactar");
 }
 
-async function enviosDelMes(clienteId: string, hash: string, mes: string): Promise<number> {
+/**
+ * Cuántos avisos de marketing lleva ese número en el mes.
+ *  · Al recibir el pedido cuenta lo enviado, lo que va saliendo y lo que espera
+ *    en cola (cada uno ya «gastó» un cupo).
+ *  · Al despachar la cola (`excluirId` = la fila que se está despachando) solo
+ *    cuenta lo ya enviado o saliendo, sin contarse a sí misma ni a las demás
+ *    que esperan: así dos pendientes del mismo número no se bloquean entre sí.
+ */
+async function enviosDelMes(
+  clienteId: string, hash: string, mes: string, excluirId?: string,
+): Promise<number> {
+  const estados = excluirId ? ["enviado", "enviando"] : ["enviado", "enviando", "en_cola"];
   const { data } = await db()
     .from("ed_envios_api").select("id")
     .eq("cliente_id", clienteId).eq("telefono_hash", hash).eq("mes", mes)
-    .eq("categoria", "marketing").in("estado", ["enviado", "en_cola"]);
-  return (data ?? []).length;
+    .eq("categoria", "marketing").in("estado", estados);
+  return (data ?? []).filter((f) => (f as { id: string }).id !== excluirId).length;
 }
 
 /** POST /api/externo/mensajes (ya autenticado). */
@@ -293,7 +304,9 @@ export async function drenarCola(ahora: Date = new Date(), max = 50): Promise<{ 
     .select("id, cliente_id, plantilla, categoria, telefono, variables, telefono_hash, mes")
     .eq("estado", "en_cola").lte("programado_para", ahora.toISOString()).limit(max);
 
+  const inicio = Date.now();
   for (const f of data ?? []) {
+    if (Date.now() - inicio > 25_000) break; // el resto sale en la próxima pasada del cron
     const p = plantillaKambak(f.plantilla as string);
     const clienteId = f.cliente_id as string;
     const telefono = f.telefono as string | null;
@@ -312,7 +325,7 @@ export async function drenarCola(ahora: Date = new Date(), max = 50): Promise<{ 
       if (!(await esSoloMensajeria(clienteId))) { await cerrar({ estado: "omitido", motivo: "cuenta_no_habilitada" }); out.omitidos++; continue; }
       if (await enBaja(clienteId, telefono)) { await cerrar({ estado: "omitido", motivo: "opted_out" }); out.omitidos++; continue; }
       // El tope se revisa de nuevo: entre el pedido y la mañana pudo cambiar el mes.
-      if (p.categoria === "marketing" && (await enviosDelMes(clienteId, f.telefono_hash as string, mesChile(ahora))) > topeMensual()) {
+      if (p.categoria === "marketing" && (await enviosDelMes(clienteId, f.telefono_hash as string, mesChile(ahora), f.id as string)) >= topeMensual()) {
         await cerrar({ estado: "omitido", motivo: "monthly_cap" }); out.omitidos++; continue;
       }
     }

@@ -83,6 +83,17 @@ export async function GET(request: NextRequest) {
   const procesos: ResultadoPaso[] = [];
 
   /**
+   * KAMBAK (solo mensajería). Van PRIMERO a propósito: son rápidos, no usan
+   * modelo y no deben quedar sin correr si un paso lento de más abajo consume
+   * el plazo de la función.
+   * · reintentos del webhook hacia Kambak (espera creciente)
+   */
+  await correrPaso("webhook_kambak", () => procesarEventosPendientes(), (x) => ({ ok: true, trabajo: x.revisados > 0, resumen: x }), procesos);
+
+  /** · envíos de Kambak que esperaron el horario (9:00 a 21:00 de Chile) */
+  await correrPaso("cola_kambak", () => drenarCola(), (x) => ({ ok: true, trabajo: x.enviados + x.fallidos + x.omitidos > 0, resumen: x }), procesos);
+
+  /**
    * GENERAR ANTES DE ENVIAR.
    *
    * El generador crea los avisos de mantención con programado_para = ahora, así
@@ -397,12 +408,6 @@ export async function GET(request: NextRequest) {
     if (cc.pagados || cc.aprobados || cc.cotizados) console.log("[cron] cierres:", cc.detalle.join(" | "));
     return cierres;
   }, (x) => ({ ok: true, resumen: x }), procesos);
-
-  /** Eventos pendientes hacia Kambak (reintentos con espera creciente). */
-  await correrPaso("webhook_kambak", () => procesarEventosPendientes(), (x) => ({ ok: true, trabajo: x.revisados > 0, resumen: x }), procesos);
-
-  /** Envíos de Kambak que quedaron esperando el horario (9:00 a 21:00 de Chile). */
-  await correrPaso("cola_kambak", () => drenarCola(), (x) => ({ ok: true, trabajo: x.enviados + x.fallidos + x.omitidos > 0, resumen: x }), procesos);
 
   /**
    * ARCHIVAR ADJUNTOS ANTES DE QUE META LOS BORRE (26-ago-2026).

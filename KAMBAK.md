@@ -12,7 +12,7 @@ Los datos de Kambak y de Respondo no se mezclan: Kambak es su propio cliente (te
 | `ed_clientes.solo_mensajeria` (migración 322) | Apaga toda la IA de la cuenta: el mensaje entrante se guarda, pero no se llama a ningún modelo. Los controles de IA salen bloqueados ("Esta cuenta es de solo mensajería."). |
 | `POST /api/externo/mensajes` (migración 323) | Kambak pide "mándale esta plantilla a este número". El portal vuelve a revisar todo (segunda barrera). |
 | Webhook de salida (migración 324) | El portal le avisa a Kambak: estado de cada mensaje, mensajes entrantes y bajas. |
-| Bandeja (`/conversaciones`) | Marcelo, Jorge o quien se agregue responde a mano dentro de las 24 h, o manda una plantilla de aviso. |
+| Bandeja (`/conversaciones`) | Quien del equipo se agregue como usuario responde a mano dentro de las 24 h, o manda una plantilla de aviso. |
 
 ## 1. API de envío (Kambak → portal)
 
@@ -181,8 +181,14 @@ nombres, categorías y orden de variables no cambien sin avisar. **El repo de Ka
 ## 6. Pendientes que SOLO puede hacer una persona (en este orden)
 
 1. **Aplicar migraciones** en Supabase (SQL editor), en orden: `322_solo_mensajeria.sql`, `323_envios_api.sql`, `324_eventos_salida.sql`.
-2. **Crear la cuenta Kambak**: completar los `<<…>>` de `sql/consultas/kambak_alta.sql` y ejecutarlo. Agregar a Marcelo/Jorge
-   como usuarios de la bandeja: `portal_usuarios` no tiene pantalla, se insertan por SQL (email, cliente_id de Kambak, rol `dueno` o `staff`).
+2. **Crear la cuenta Kambak** (SQL editor de Supabase, `sql/consultas/kambak_alta.sql`):
+   a. Reemplazar `<<EMAIL_DUENO>>`, `<<TELEFONO_ESCALACION_569XXXXXXXX>>` y `<<EMAIL_STAFF_1>>`.
+   b. Generar el secreto de firma en tu computador (`openssl rand -hex 32 | pbcopy`), pegarlo en lugar de `<<SECRETO_DE_FIRMA>>`
+      y **quitar los `-- ` del insert de `ed_integraciones`** (paso 3 del archivo). Sin esa fila el portal responde 401 a Kambak.
+      Ese mismo valor va después en Kambak como `RESPONDO_SIGNING_SECRET` (no lo pegues en chats ni en el repo).
+   c. Ejecutar el archivo completo. Al final, las dos consultas de verificación deben mostrar la cuenta con `solo_mensajeria = true`
+      y los usuarios. Copiar el `id` de la cuenta: es el `RESPONDO_CLIENT_ID` de Kambak.
+   d. Otras personas para la bandeja: `portal_usuarios` no tiene pantalla, se insertan por SQL (email, cliente_id de Kambak, rol `dueno` o `staff`).
 3. **Conectar el número de WhatsApp de Kambak** al portal (Embedded Signup de Meta, igual que otros clientes) y verificar que la cuenta
    quede con `transporte = 'cloud'`. Marcelo decide qué número es.
 4. **Dar de alta las 6 plantillas** en Meta (sección 4) y esperar su aprobación. Revisar la categoría final que asigne Meta.

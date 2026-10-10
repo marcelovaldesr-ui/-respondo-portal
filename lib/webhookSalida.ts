@@ -36,6 +36,18 @@ export const ESPERAS_MIN = [1, 5, 15, 60, 360, 1440];
 const MAX_INTENTOS = ESPERAS_MIN.length + 1;
 const TIMEOUT_MS = 4000;
 
+/**
+ * Freno de entrega inmediata. Si Kambak está caído, cada aviso de Meta
+ * (a veces decenas en un mismo paquete) esperaría hasta TIMEOUT_MS y el
+ * webhook de Meta podría pasarse de plazo. Tras un fallo, durante un minuto
+ * los eventos solo se encolan y los entrega el cron con sus reintentos.
+ */
+const PAUSA_MS = 60_000;
+let pausaHasta = 0;
+export function reiniciarPausaWebhook(): void {
+  pausaHasta = 0;
+}
+
 export function configWebhook(): { url: string; secreto: string } | null {
   const url = (process.env.KAMBAK_WEBHOOK_URL ?? "").trim();
   const secreto = process.env.KAMBAK_WEBHOOK_SECRET ?? "";
@@ -94,7 +106,9 @@ export async function emitirEvento(
       if (error.code !== "23505") console.error("[webhook-salida] no se pudo encolar:", error.message);
       return; // 23505 = ya estaba (Meta repitió el aviso)
     }
-    await entregar(fila as FilaEvento);
+    if (Date.now() < pausaHasta) return; // queda pendiente para el cron
+    const ok = await entregar(fila as FilaEvento);
+    if (!ok) pausaHasta = Date.now() + PAUSA_MS;
   } catch (e) {
     console.error("[webhook-salida]", (e as Error).message);
   }
@@ -160,8 +174,18 @@ export async function procesarEventosPendientes(
     .eq("estado", "pendiente").lte("proximo_intento", ahora.toISOString())
     .order("proximo_intento", { ascending: true }).limit(max);
   let entregados = 0;
-  for (const f of data ?? []) if (await entregar(f as FilaEvento, ahora)) entregados++;
-  return { revisados: (data ?? []).length, entregados };
+  let seguidosFallidos = 0;
+  let revisados = 0;
+  for (const f of data ?? []) {
+    revisados++;
+    if (await entregar(f as FilaEvento, ahora)) {
+      entregados++;
+      seguidosFallidos = 0;
+    } else if (++seguidosFallidos >= 2) {
+      break; // Kambak no responde: no se gasta el plazo del cron esperando evento por evento
+    }
+  }
+  return { revisados, entregados };
 }
 
 /** Bandeja de fallidos: devuelve los eventos a la cola para un nuevo ciclo. */
