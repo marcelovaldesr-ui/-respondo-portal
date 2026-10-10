@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { PLANTILLAS, plantillasParaRubro, render } from "@/lib/plantillas";
+import { plantillasParaRubro, render } from "@/lib/plantillas";
 
 /**
  * MANDAR UNA PLANTILLA CUANDO LA CONVERSACIÓN ESTÁ FUERA DE PLAZO.
@@ -50,13 +50,13 @@ export function SelectorPlantilla({
 }) {
   const opciones = useMemo(() => plantillasParaRubro(rubro), [rubro]);
   const [elegida, setElegida] = useState<string>("");
-  const plantilla = elegida ? PLANTILLAS[elegida] : null;
+  const plantilla = elegida ? (opciones.find((o) => o.nombre === elegida) ?? null) : null;
 
   const [valores, setValores] = useState<string[]>([]);
 
   const elegir = (nombre: string) => {
     setElegida(nombre);
-    const p = PLANTILLAS[nombre];
+    const p = opciones.find((o) => o.nombre === nombre);
     // El primer dato de todas es el nombre de la persona: se precarga.
     setValores(p ? p.variables.map((_, i) => (i === 0 ? contacto : "")) : []);
   };

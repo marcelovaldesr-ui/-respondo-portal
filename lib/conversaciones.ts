@@ -1,3 +1,4 @@
+import { esSoloMensajeria } from "@/lib/soloMensajeria";
 import { db } from "@/lib/db";
 import { ultimosMensajes, type MensajeInbox } from "@/lib/inboxConsulta";
 import { empleadosDeCliente } from "@/lib/empleadosCache";
@@ -111,6 +112,8 @@ export type DetalleConversacion = {
   /** Nombres visibles de Tino y Beto en este negocio. */
   nombreTino: string;
   nombreBeto: string;
+  /** Cuenta de solo mensajería: sin asistentes. La bandeja no ofrece devolverle el chat a ninguno. */
+  soloMensajeria?: boolean;
 };
 
 export type ResumenConversaciones = {
@@ -352,6 +355,7 @@ export async function obtenerConversacion(
   opciones: { puedeAprobarPagados?: boolean } = {},
 ): Promise<DetalleConversacion | null> {
   const supa = db();
+  const solo = await esSoloMensajeria(clienteId, supa);
 
   // Validación de acceso: el empleado tiene que ser de ESTE cliente.
   const empleados = await empleadosDe(clienteId);
@@ -540,7 +544,7 @@ export async function obtenerConversacion(
       empleados: empleados.map((e) => ({ id: e.id, rol: e.rol as string })),
     }).get(chatId);
     if (hechos) {
-      const modo = (estado.data?.modo as string) ?? "bot";
+      const modo = solo ? "humano" : ((estado.data?.modo as string) ?? "bot");
       estadoComercial = derivarEstadoComercial(
         { ...hechos, modo: (modo === "humano" || modo === "pausado" ? modo : "bot") as ModoChat },
         {
@@ -562,7 +566,8 @@ export async function obtenerConversacion(
     etiqueta: (contacto.data?.etiqueta as string) ?? null,
     empleadoNombre: (emp.nombre_publico as string) ?? "",
     empleadoRol: emp.rol as string,
-    modo: (estado.data?.modo as string) ?? "bot",
+    // En una cuenta de solo mensajería siempre atiende una persona.
+    modo: solo ? "humano" : ((estado.data?.modo as string) ?? "bot"),
     mensajes,
     hayMasHistorial: tramo.hayMas,
     escalacion: escalacion
@@ -579,6 +584,7 @@ export async function obtenerConversacion(
     tienePagoLink,
     nombreTino,
     nombreBeto,
+    soloMensajeria: solo,
     etiquetas: ((contacto.data?.etiquetas as string[] | null) ?? []),
     rubro: (cliente.data?.rubro as string | null) ?? null,
     pagos,

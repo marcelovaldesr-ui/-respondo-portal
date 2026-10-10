@@ -1,4 +1,11 @@
-import { limpiarParam } from "@/lib/plantillas";
+import type { Plantilla } from "@/lib/plantillas";
+
+function limpiarParam(v: unknown): string {
+  return String(v ?? "").replace(/[\r\n\t]+/g, " ").replace(/\s{2,}/g, " ").trim();
+}
+
+/** Rubro con el que se da de alta la cuenta de Kambak (ver sql/consultas/kambak_alta.sql). */
+export const RUBRO_KAMBAK = "fidelizacion";
 
 /**
  * PLANTILLAS DE KAMBAK (cuenta de solo mensajería).
@@ -170,4 +177,23 @@ export function textoDe(p: PlantillaKambak, params: string[]): string {
   let out = p.cuerpo;
   params.forEach((v, i) => { out = out.replaceAll(`{{${i + 1}}}`, v); });
   return out;
+}
+
+/**
+ * Lo que ve una PERSONA en el selector de plantillas de la bandeja de Kambak:
+ * las de aviso (utility y marketing). El código de verificación queda fuera: lo
+ * pide la persona desde la tarjeta digital, no se manda a mano.
+ */
+export function plantillasKambakParaBandeja(): Plantilla[] {
+  return Object.values(PLANTILLAS_KAMBAK)
+    .filter((p) => p.categoria !== "authentication")
+    .map((p) => ({
+      nombre: p.nombre,
+      idioma: p.idioma,
+      categoria: p.categoria as "utility" | "marketing",
+      cuerpo: p.cuerpo,
+      variables: p.variables,
+      ejemplos: p.ejemplos,
+      rubros: [RUBRO_KAMBAK],
+    }));
 }

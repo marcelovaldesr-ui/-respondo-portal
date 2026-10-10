@@ -40,6 +40,8 @@
  * que acá se declara la que de verdad aplica y no la más barata.
  */
 
+import { RUBRO_KAMBAK, plantillasKambakParaBandeja } from "@/lib/plantillasKambak";
+
 export type CategoriaPlantilla = "utility" | "marketing";
 
 export type Plantilla = {
@@ -258,6 +260,8 @@ export const PLANTILLA_POR_TIPO: Record<string, string> = {
  */
 export function plantillasParaRubro(rubro: string | null | undefined): Plantilla[] {
   const r = (rubro ?? "").trim().toLowerCase();
+  // Kambak (solo mensajería) tiene su propio catálogo y no usa ninguno de los demás.
+  if (r === RUBRO_KAMBAK) return plantillasKambakParaBandeja();
   return Object.values(PLANTILLAS).filter(
     (p) => !p.rubros || (r !== "" && p.rubros.includes(r)),
   );

@@ -116,7 +116,16 @@ function AccionPrincipal({
       );
       break;
     case "devolver_a_tino":
-      boton = (
+      // Cuenta de solo mensajería: no hay asistente al que devolverle el chat.
+      boton = d.soloMensajeria ? (
+        <button
+          type="button"
+          className={principal}
+          onClick={() => window.dispatchEvent(new Event("respondo:enfocar-compositor"))}
+        >
+          Escribirle ahora
+        </button>
+      ) : (
         <button
           type="button"
           className={principal}
@@ -229,7 +238,7 @@ function AccionPrincipal({
   const hayDerivacion = estado.atencion.items.some((i) =>
     ["cliente_molesto", "pidio_persona", "tema_delicado", "problema_tecnico", "asistente_no_pudo"].includes(i.motivo),
   );
-  const puedeDevolver = d.modo !== "bot" && accion.tipo !== "devolver_a_tino";
+  const puedeDevolver = d.modo !== "bot" && accion.tipo !== "devolver_a_tino" && !d.soloMensajeria;
 
   return (
     <div className="space-y-2">
