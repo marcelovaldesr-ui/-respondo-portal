@@ -24,6 +24,7 @@ import { generarSeguimientosCotizacion } from "@/lib/generadorCotizacion";
 import { destilarPendientes } from "@/lib/isabelDestilado";
 import { procesarEventos } from "@/lib/ads/colaEventos";
 import { drenarCola } from "@/lib/kambakEnvios";
+import { procesarEventosPendientes } from "@/lib/webhookSalida";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -396,6 +397,9 @@ export async function GET(request: NextRequest) {
     if (cc.pagados || cc.aprobados || cc.cotizados) console.log("[cron] cierres:", cc.detalle.join(" | "));
     return cierres;
   }, (x) => ({ ok: true, resumen: x }), procesos);
+
+  /** Eventos pendientes hacia Kambak (reintentos con espera creciente). */
+  await correrPaso("webhook_kambak", () => procesarEventosPendientes(), (x) => ({ ok: true, trabajo: x.revisados > 0, resumen: x }), procesos);
 
   /** Envíos de Kambak que quedaron esperando el horario (9:00 a 21:00 de Chile). */
   await correrPaso("cola_kambak", () => drenarCola(), (x) => ({ ok: true, trabajo: x.enviados + x.fallidos + x.omitidos > 0, resumen: x }), procesos);
