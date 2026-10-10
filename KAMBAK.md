@@ -180,6 +180,10 @@ nombres, categorías y orden de variables no cambien sin avisar. **El repo de Ka
 
 ## 6. Pendientes que SOLO puede hacer una persona (en este orden)
 
+0. **Código**: subir la rama `feat/kambak-bandeja` de este repo y abrir PR (sin mergear hasta revisar). En el repo de Kambak,
+   `claude/respondo-whatsapp` ya está en `main`; falta la rama `claude/respondo-ajustes` (2 arreglos de la auditoría: prefijo `sha256=`
+   de la firma y llave de idempotencia estable). **Kambak no puede hablar con el portal hasta que `claude/respondo-ajustes` esté en main.**
+
 1. **Aplicar migraciones** en Supabase (SQL editor), en orden: `322_solo_mensajeria.sql`, `323_envios_api.sql`, `324_eventos_salida.sql`.
 2. **Crear la cuenta Kambak** (SQL editor de Supabase, `sql/consultas/kambak_alta.sql`):
    a. Reemplazar `<<EMAIL_DUENO>>`, `<<TELEFONO_ESCALACION_569XXXXXXXX>>` y `<<EMAIL_STAFF_1>>`.
@@ -201,6 +205,10 @@ nombres, categorías y orden de variables no cambien sin avisar. **El repo de Ka
    confirmar que llega `contact.optout`.
 
 ## Riesgos conocidos
+
+- Límite de pedidos: el portal acepta 120 pedidos por minuto por cuenta (regla común de `/api/externo/*`). Un lote más grande recibe 429; Kambak lo deja como fallido y lo reintenta en el siguiente lote de la campaña.
+- Si el aviso `sent` de Meta llega antes de que el portal guarde el id del mensaje, ese único estado se pierde (Kambak ya recibió `sent` en la respuesta; `delivered` y `read` sí llegan).
+- Meta puede rechazar una plantilla por exceso de variables respecto del largo del texto (`sello_premio_cerca` tiene 4); si pasa, hay que ajustar el texto y volver a subirla.
 
 - Un secreto de firma vive legible en `ed_integraciones.secreto` (así funciona hoy todo `/api/externo/*`). Rotarlo = actualizar la fila y Kambak.
 - Meta puede reclasificar `sello_premio_cerca` a marketing (más caro) o rechazar alguna plantilla; hay que revisar la aprobación.
