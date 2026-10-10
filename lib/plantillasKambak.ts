@@ -54,11 +54,11 @@ export const PLANTILLAS_KAMBAK: Record<string, PlantillaKambak> = {
     idioma: "es",
     categoria: "utility",
     cuerpo:
-      "Hola {{1}}, ¡ya casi! Te faltan {{2}} sello(s) para tu {{3}} en {{4}}.\n\n" +
+      "Hola {{1}}, ¡ya casi! Para tu {{3}} en {{4}} solo necesitas {{2}} más.\n\n" +
       "Te esperamos para completar tu tarjeta.",
-    variables: ["nombre", "sellos que faltan (solo el número)", "premio", "local"],
-    ejemplos: ["Camila", "2", "café gratis", "Café Aroma"],
-    maxPorVariable: [40, 3, 60, 60],
+    variables: ["nombre", "sellos que faltan, con la palabra (1 sello / 3 sellos)", "premio", "local"],
+    ejemplos: ["Camila", "2 sellos", "café gratis", "Café Aroma"],
+    maxPorVariable: [40, 12, 60, 60],
   },
   sello_promo: {
     nombre: "sello_promo",
@@ -107,7 +107,7 @@ export const PLANTILLAS_KAMBAK: Record<string, PlantillaKambak> = {
     idioma: "es",
     categoria: "authentication",
     // Texto fijado por Meta para plantillas de autenticación.
-    cuerpo: "{{1}} es tu código de verificación.",
+    cuerpo: "{{1}} es tu código de verificación. Por tu seguridad, no lo compartas. Este código caduca en 5 minutos.",
     variables: ["código"],
     ejemplos: ["123456"],
     maxPorVariable: [15],

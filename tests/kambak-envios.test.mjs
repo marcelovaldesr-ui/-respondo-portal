@@ -133,7 +133,7 @@ test("número dado de baja: se omite; el código de verificación sí sale", asy
   assert.equal(r.cuerpo.reason, "opted_out");
   const u = await procesarEnvio(KAMBAK, {
     to: "+56911110005", template: "sello_premio_cerca", idempotencyKey: clave(),
-    variables: ["Camila", "2", "café gratis", "Café Aroma"],
+    variables: ["Camila", "2 sellos", "café gratis", "Café Aroma"],
   }, MEDIODIA);
   assert.equal(u.cuerpo.reason, "opted_out", "utility también respeta la baja");
   assert.equal(envios.length, 0);
@@ -160,7 +160,7 @@ test("tope mensual por número: marketing se corta, utility no", async () => {
 
   const util = await procesarEnvio(KAMBAK, {
     to, template: "sello_premio_cerca", idempotencyKey: clave(),
-    variables: ["Camila", "1", "café gratis", "Café Aroma"],
+    variables: ["Camila", "1 sello", "café gratis", "Café Aroma"],
   }, MEDIODIA);
   assert.equal(util.cuerpo.status, "sent");
 

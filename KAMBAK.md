@@ -60,7 +60,7 @@ const firma = crypto.createHmac('sha256', process.env.RESPONDO_SIGNING_SECRET)
 - Solo las 6 plantillas de abajo, con todas sus variables, en ese orden.
 - Baja: utility y marketing no salen a un número en baja. El código de verificación sí (lo pidió la persona).
 - Horario 9:00–21:00 hora de Chile para utility y marketing; el código sale siempre.
-- Tope mensual por número **solo para marketing** (`RESPONDO_TOPE_MENSUAL_MARKETING`, por defecto 4).
+- Tope mensual por número **solo para marketing** (`RESPONDO_TOPE_MENSUAL_MARKETING`, por defecto 4). Ojo: el portal cuenta por teléfono entre TODOS los locales de Kambak; Kambak cuenta por cliente dentro de cada local. Una persona con tarjeta en dos locales puede llegar antes al tope del portal.
 - Freno por número: códigos 5 cada 10 min; avisos 20 por minuto.
 - Registro (`ed_envios_api`): plantilla, estado y huella del número. El teléfono y las variables solo
   existen mientras el envío espera en cola. El texto enviado vive en la conversación (lo ve la bandeja);
@@ -87,25 +87,38 @@ en la bandeja de fallidos (`GET /api/kambak/eventos`; `POST /api/kambak/eventos 
 
 ## 3. Variables de entorno (solo NOMBRES — los valores los carga una persona en Vercel)
 
-| Nombre | Para qué | Dónde |
-|---|---|---|
-| `KAMBAK_WEBHOOK_URL` | Dirección https del webhook de Kambak (`…/api/hooks/respondo`) | Vercel del portal |
-| `KAMBAK_WEBHOOK_SECRET` | Firma portal → Kambak | Vercel del portal **y** Kambak |
-| `RESPONDO_SIGNING_SECRET` (nombre sugerido en Kambak) | Firma Kambak → portal; es el `secreto` de `ed_integraciones` | Kambak (el valor también en la base del portal) |
-| `RESPONDO_TOPE_MENSUAL_MARKETING` | Tope mensual por número (opcional, por defecto 4) | Vercel del portal |
-| `RESPONDO_ENVIOS_SIMULADOS` | `1` = no llama a Meta (pruebas) | Solo en preview/desarrollo |
+**En el portal (Vercel de respondo-portal):**
+
+| Nombre | Para qué |
+|---|---|
+| `KAMBAK_WEBHOOK_URL` | Dirección https del webhook de Kambak (`https://www.kambak.cl/api/hooks/respondo`) |
+| `KAMBAK_WEBHOOK_SECRET` | Firma portal → Kambak (el mismo valor va en Kambak como `RESPONDO_WEBHOOK_SECRET`) |
+| `RESPONDO_TOPE_MENSUAL_MARKETING` | Tope mensual por número (opcional, por defecto 4) |
+| `RESPONDO_ENVIOS_SIMULADOS` | `1` = no llama a Meta (solo preview/desarrollo) |
+
+**En Kambak (Vercel de sello-fidelizacion):**
+
+| Nombre | Para qué |
+|---|---|
+| `MESSAGING_PROVIDER` | `respondo` para enviar por el portal (sin esto sigue directo con Meta o simulado) |
+| `RESPONDO_API_URL` | Dirección https del portal, sin barra final |
+| `RESPONDO_CLIENT_ID` | Id de la cuenta Kambak en el portal (`ed_clientes.id`) |
+| `RESPONDO_SIGNING_SECRET` | Firma Kambak → portal; es el mismo valor que `ed_integraciones.secreto` de la cuenta |
+| `RESPONDO_WEBHOOK_SECRET` | Verifica los avisos del portal (igual a `KAMBAK_WEBHOOK_SECRET` del portal) |
+
+Kambak mantiene su interruptor (`MESSAGING_ENABLED`, `MESSAGING_DRY_RUN`) y su pausa global: el marketing solo llega al portal cuando están en verdad encendidos.
 
 ## 4. Plantillas para subir a Meta (las sube una persona; el código nunca las crea)
 
 Idioma `es`. Nombre exacto en minúsculas. Las de marketing terminan con la línea de baja.
 
-**`sello_premio_cerca`** — utility — variables: nombre, faltan (solo el número), premio, local
+**`sello_premio_cerca`** — utility — variables: nombre, faltan (con la palabra: "1 sello" / "3 sellos"; Kambak la arma), premio, local
 ```
-Hola {{1}}, ¡ya casi! Te faltan {{2}} sello(s) para tu {{3}} en {{4}}.
+Hola {{1}}, ¡ya casi! Para tu {{3}} en {{4}} solo necesitas {{2}} más.
 
 Te esperamos para completar tu tarjeta.
 ```
-Ejemplos: Camila · 2 · café gratis · Café Aroma. *Meta puede reclasificarla a marketing; si lo hace, se acepta o se ajusta el texto.*
+Ejemplos: Camila · 2 sellos · café gratis · Café Aroma. *Meta puede reclasificarla a marketing; si lo hace, se acepta o se ajusta el texto.*
 
 **`sello_promo`** — marketing — nombre, local, titulo, detalle, hasta
 ```
@@ -149,8 +162,9 @@ Responde BAJA para no recibir más avisos.
 ```
 Ejemplos: Camila · Café Aroma · 8 · 10
 
-**`sello_codigo`** — **authentication** — variable: código. Se crea con el tipo "Autenticación" de Meta (el texto
-"{{1}} es tu código de verificación." lo fija Meta) y botón "Copiar código". Se envía con el código en el cuerpo y en el botón.
+**`sello_codigo`** — **authentication** — variable: código. Se crea con el tipo "Autenticación" de Meta, activando "agregar recomendación de seguridad"
+y "vencimiento del código: 5 minutos" (coincide con el vencimiento de Kambak), y el botón "Copiar código". Meta fija el texto
+("{{1}} es tu código de verificación. Por tu seguridad, no lo compartas. Este código caduca en 5 minutos."). Se envía con el código en el cuerpo y en el botón.
 
 Los textos exactos viven en `lib/plantillasKambak.ts`; un test (`tests/kambak-envios.test.mjs`) cuida que los
 nombres, categorías y orden de variables no cambien sin avisar. **El repo de Kambak (`lib/messaging.js`) usa los mismos nombres y orden.**
@@ -173,8 +187,8 @@ nombres, categorías y orden de variables no cambien sin avisar. **El repo de Ka
    quede con `transporte = 'cloud'`. Marcelo decide qué número es.
 4. **Dar de alta las 6 plantillas** en Meta (sección 4) y esperar su aprobación. Revisar la categoría final que asigne Meta.
 5. **Cargar variables en Vercel** (nunca por chat ni en el repo): generar cada secreto con `openssl rand -hex 32 | pbcopy` y pegarlo en
-   Vercel: `KAMBAK_WEBHOOK_URL`, `KAMBAK_WEBHOOK_SECRET` (portal). El mismo `KAMBAK_WEBHOOK_SECRET` y el secreto de firma
-   (`RESPONDO_SIGNING_SECRET`, que además va en `ed_integraciones.secreto`) en el Vercel de Kambak.
+   Vercel: `KAMBAK_WEBHOOK_URL`, `KAMBAK_WEBHOOK_SECRET` (portal). En el Vercel de Kambak: `MESSAGING_PROVIDER=respondo`, `RESPONDO_API_URL`,
+   `RESPONDO_CLIENT_ID`, `RESPONDO_SIGNING_SECRET` (el mismo valor que `ed_integraciones.secreto`) y `RESPONDO_WEBHOOK_SECRET` (igual a `KAMBAK_WEBHOOK_SECRET`).
 6. **Redeploy** del portal y de Kambak para que tomen las variables, y confirmar que el cron externo sigue llamando a
    `/api/cron/seguimientos` (despacha la cola nocturna y los reintentos del webhook).
 7. **Prueba final con un número propio** (el de Marcelo): un aviso real, mirar el estado en la base de Kambak, responder BAJA y
