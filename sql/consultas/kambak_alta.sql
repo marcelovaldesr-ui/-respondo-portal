@@ -22,7 +22,17 @@ select public.ed_aprovisionar_cliente(jsonb_build_object(
 -- 2) Activar "Solo mensajería" (el guardia SQL impide activar IA a esta cuenta)
 update ed_clientes set solo_mensajeria = true where slug = 'kambak';
 
--- 3) Verificar
+-- 3) Llave con la que Kambak FIRMA sus pedidos al portal (portal <- Kambak).
+--    Genera el valor en tu computador (ej. `openssl rand -hex 32`), pégalo acá en
+--    lugar de <<SECRETO_DE_FIRMA>> y cópialo también a la configuración de Kambak.
+--    eventos = '{}' a propósito: el puente genérico no manda nada a esta URL; los
+--    avisos de Kambak salen por su propio webhook (ver KAMBAK.md).
+-- insert into ed_integraciones (cliente_id, tipo, nombre, url, secreto, eventos, activo)
+-- select id, 'webhook', 'Kambak (envíos por API)', 'https://www.kambak.cl/api/hooks/respondo',
+--        '<<SECRETO_DE_FIRMA>>', '{}', true
+--   from ed_clientes where slug = 'kambak';
+
+-- 4) Verificar
 select id, nombre, slug, plan, solo_mensajeria from ed_clientes where slug = 'kambak';
 select email, rol from portal_usuarios
  where cliente_id = (select id from ed_clientes where slug = 'kambak');
