@@ -31,14 +31,14 @@ Los datos de Kambak y de Respondo no se mezclan: Kambak es su propio cliente (te
 
 **Firma** (la misma de todas las rutas `/api/externo/*`): headers `x-respondo-ts` (segundos Unix),
 `x-respondo-nonce` (aleatorio único, 8–128 caracteres) y `x-respondo-firma` =
-`HMAC-SHA256(secreto, "<ts>.<nonce>.<cuerpo exacto>")` en hexadecimal. El secreto es el de la fila de
+`"sha256=" + HMAC-SHA256(secreto, "<ts>.<nonce>.<cuerpo exacto>")` en hexadecimal (**con el prefijo `sha256=`**; sin él el portal responde 401). El secreto es el de la fila de
 `ed_integraciones` de la cuenta. Reloj a menos de 5 minutos.
 
 ```js
 const crypto = require('crypto');
 const ts = String(Math.floor(Date.now() / 1000));
 const nonce = crypto.randomBytes(12).toString('hex');
-const firma = crypto.createHmac('sha256', process.env.RESPONDO_SIGNING_SECRET)
+const firma = 'sha256=' + crypto.createHmac('sha256', process.env.RESPONDO_SIGNING_SECRET)
   .update(`${ts}.${nonce}.${cuerpo}`).digest('hex');
 // headers: x-respondo-ts, x-respondo-nonce, x-respondo-firma
 ```
