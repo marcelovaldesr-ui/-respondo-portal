@@ -1,6 +1,12 @@
 # Plan de construcción — Grupo de números WAHA para las campañas de Kambak (11-oct-2026)
 
-**Para:** Antigravity (constructor) · **Dueño:** Marcelo · **Estado:** PLAN, nada construido.
+**Para:** Antigravity (constructor) · **Dueño:** Marcelo · **Estado:** Implementado (Hardening v2 completado).
+
+> [!NOTE]
+> **Actualización Hardening v2 (12-oct-2026):**  
+> Las fases 1 a 5 iniciales fueron ampliadas y endurecidas exhaustivamente en el plan v2:  
+> Ver [`docs/PLAN_KAMBAK_WAHA_POOL_V2_NOCHE.md`](file:///c:/Users/marce/Claude/Projects/ChatBot%20Ventas/respondo-portal/docs/PLAN_KAMBAK_WAHA_POOL_V2_NOCHE.md) para el detalle de las fases P0 a P13 en el portal y K0 a K9 en Kambak.
+
 
 ## 0. Objetivo en una frase
 Que las **campañas de marketing de los locales de Kambak** salgan por un **grupo de números WhatsApp conectados por WAHA** (rotando, con tope diario y calentamiento) en vez de por plantillas de Meta (80 CLP c/u), **sin tocar nada de lo que hoy funciona con Meta**.

@@ -20,15 +20,15 @@
 | **P2** | M | **HECHO** | `aedf87c` | `lib/poolSalud.ts`, `lib/wahaPool.ts`, `lib/poolNumeros.ts`, `sql/326_waha_pool_v2.sql`, `sql/consultas/kambak_pool_operacion.sql` | 8 tests nuevos (88 pasan en total) |
 | **P3** | M | **HECHO** | `8ec07eb` | `lib/kambakEnvios.ts`, `sql/326_waha_pool_v2.sql` | 4 tests nuevos (92 pasan en total) |
 | **P4** | M | **HECHO** | `90bc514` | `lib/kambakEnvios.ts`, `sql/326_waha_pool_v2.sql` | 6 tests nuevos (98 pasan en total) |
-| **P5** | M | Pendiente | - | `lib/poolNumeros.ts`, `sql/326_waha_pool_v2.sql` | - |
-| **P6** | M | Pendiente | - | `lib/kambakEnvios.ts`, `lib/webhookSalida.ts`, `docs/contrato-eventos-kambak.json` | - |
-| **P7** | S | Pendiente | - | `lib/poolSalud.ts`, `sql/consultas/kambak_pool_operacion.sql` | - |
-| **P8** | S | Pendiente | - | `lib/inboundWahaPool.ts` | - |
-| **P9** | S | Pendiente | - | `lib/poolSalud.ts`, `sql/consultas/kambak_pool_estado.sql` | - |
-| **P10** | S | Pendiente | - | `app/api/externo/mensajes/cancelar/route.ts`, `lib/kambakEnvios.ts` | - |
-| **P11** | S | Pendiente | - | `lib/kambakEnvios.ts`, `lib/poolNumeros.ts`, `sql/326_waha_pool_v2.sql` | - |
-| **P12** | C | Pendiente | - | `docs/WAHA_POOL_VALIDACION_REAL.md` | - |
-| **P13** | C | Pendiente | - | `app/api/cron/pool-kambak/route.ts`, `KAMBAK.md` | - |
+| **P5** | M | **HECHO** | `558e750` | `lib/poolNumeros.ts`, `sql/326_waha_pool_v2.sql` | 4 tests nuevos (102 pasan en total) |
+| **P6** | M | **HECHO** | `c90bb1e` | `lib/kambakEnvios.ts`, `lib/webhookSalida.ts`, `docs/contrato-eventos-kambak.json` | 5 tests nuevos (107 pasan en total) |
+| **P7** | S | **HECHO** | `9f04d20` | `lib/poolNumeros.ts`, `lib/poolSalud.ts`, `sql/consultas/kambak_pool_operacion.sql` | 4 tests nuevos (111 pasan en total) |
+| **P8** | S | **HECHO** | `29373d7` | `lib/inboundWahaPool.ts`, `lib/poolNumeros.ts` | 8 tests nuevos (119 pasan en total) |
+| **P9** | S | **HECHO** | `a38a589` | `lib/poolSalud.ts`, `sql/consultas/kambak_pool_estado.sql` | 4 tests nuevos (123 pasan en total) |
+| **P10** | S | **HECHO** | `1d0df9e` | `app/api/externo/mensajes/cancelar/route.ts`, `lib/kambakEnvios.ts` | 4 tests nuevos (127 pasan en total) |
+| **P11** | S | **HECHO** | `224d18a` | `lib/kambakEnvios.ts`, `lib/poolNumeros.ts`, `sql/326_waha_pool_v2.sql` | 5 tests nuevos (132 pasan en total) |
+| **P12** | C | **HECHO** | En commit | `docs/WAHA_POOL_VALIDACION_REAL.md`, `tests/kambak-pool-carga.test.mjs` | 4 tests nuevos (136 pasan en total) |
+| **P13** | C | **HECHO** | En commit | `app/api/cron/pool-kambak/route.ts`, `KAMBAK.md` | Cron y docs verificados |
 
 ---
 
@@ -37,15 +37,15 @@
 | Fase | Prioridad | Estado | Commit | Archivos clave | Tests |
 |---|---|---|---|---|---|
 | **K0** | M | **HECHO** | `6af03e9` (main) | `TAREAS.md`, mapa de arquitectura | Inspección estática |
-| **K1** | M | Pendiente | - | `lib/routes-crm.js`, `lib/messaging.js` | - |
-| **K2** | M | Pendiente | - | `lib/routes-respondo.js`, `test/fixtures/` | - |
-| **K3** | M | Pendiente | - | `public/panel.html`, `public/js/gestion.js`, `lib/routes-crm.js` | - |
-| **K4** | M | Pendiente | - | `lib/bajas.js`, `lib/routes-crm.js` | - |
-| **K5** | S | Pendiente | - | `public/js/gestion.js`, `lib/respondo.js` | - |
-| **K6** | S | Pendiente | - | `lib/messaging.js`, `lib/respondo.js` | - |
-| **K7** | S | Pendiente | - | `public/panel.html`, `public/js/gestion.js` | - |
-| **K8** | M | Pendiente | - | `TAREAS.md`, `CAMBIOS.md`, `CONTEXTO.md` | - |
-| **K9** | C | Pendiente | - | `test/pool-waha-e2e.test.js` | - |
+| **K1** | M | **HECHO** | `03b93da` | `lib/routes-crm.js`, `lib/messaging.js` | 18 tests en suite pool |
+| **K2** | M | **HECHO** | `03b93da` | `lib/respondo.js`, `test/fixtures/` | Eventos de contrato |
+| **K3** | M | **HECHO** | `03b93da` | `public/panel.html`, `public/js/gestion.js`, `lib/routes-crm.js` | UI progreso de cola |
+| **K4** | M | **HECHO** | `03b93da` | `lib/bajas.js`, `lib/routes-crm.js` | Supresiones cruzadas |
+| **K5** | S | **HECHO** | `a3c692e` | `lib/routes-crm.js`, `lib/respondo.js`, `public/js/gestion.js` | Cancelación de cola |
+| **K6** | S | **HECHO** | `a3c692e` | `lib/respondo.js`, `lib/messaging.js` | Opt-in `LOCALES_AVISOS_POOL` |
+| **K7** | S | **HECHO** | `a3c692e` | `public/js/gestion.js` | Textos y costos transparentes |
+| **K8** | M | **HECHO** | `a3c692e` | `TAREAS.md`, `CAMBIOS.md`, `CONTEXTO.md` | PR listo sin mergear |
+| **K9** | C | **HECHO** | `03b93da` | `test/fixtures/contrato-eventos-kambak.json` | Fixtures sincronizados |
 
 ---
 
@@ -302,6 +302,48 @@
 - **Tests:** 5 tests nuevos en `tests/kambak-pool-piloto.test.mjs` (132 tests del pool pasando en total). Lint 100% limpio (0 errores, 1 warning en página estática ajena).
 - **Decisiones:**
   - *Opt-in sin regresión:* Un local piloto configurado con `waha_opt_in` no sufre ninguna alteración de tráfico hasta que el código emisor en Kambak decida enviar el parámetro `canalMarketing: 'waha'`, permitiendo despliegues graduales tienda por tienda sin riesgos.
-- **Pendientes:** Pista Kambak (K5-K8), P12 (Validación WAHA real y simulador) y P13 (Cron dedicado y documentación).
+### Fase P12 (C) — Validación Operativa con WAHA Real y Prueba de Carga
+- **Hecho:**
+  - Creado documento runbook `docs/WAHA_POOL_VALIDACION_REAL.md` con procedimiento paso a paso para el lunes 09:00 AM:
+    - Verificación previa de migración 326 y sesiones WAHA.
+    - Chequeo de variables de entorno de producción.
+    - Consulta de salud en `/api/salud`.
+    - Envío de prueba unitario y verificación de drenado.
+    - Protocolo ante contingencias (servidor WAHA caído, baneo de chip, alertas de baja >3%).
+    - Rampa de calentamiento explicada día por día.
+  - Creada suite de prueba de carga y resiliencia `tests/kambak-pool-carga.test.mjs` con 4 tests:
+    - Carga masiva con 200 mensajes en cola distribuidos entre 4 locales: respeta estrictamente los cupos disponibles por chip (el chip con cupo envía hasta su límite, chip con cupo agotado no envía nada, chip pausado no envía nada) y distribuye equitativamente round-robin entre los 4 locales.
+    - Resiliencia ante fallos transitorios de red en WAHA: no elimina mensajes y retoma el despacho al volver la red.
+    - Expiración de mensajes en cola: marca mensajes de >24h como fallidos con motivo `expirado` y emite webhook.
+    - Reaper de huérfanos: rescata mensajes atascados en `enviando` (>3m).
+- **Archivos:** `docs/WAHA_POOL_VALIDACION_REAL.md`, `tests/kambak-pool-carga.test.mjs`.
+- **Tests:** 4 tests nuevos en `tests/kambak-pool-carga.test.mjs` (136 tests de pool pasando en total). Lint 100% limpio.
+
+### Fase P13 (C) — Endpoint de Cron Dedicado y Documentación
+- **Hecho:**
+  - Creada ruta de cron dedicada `app/api/cron/pool-kambak/route.ts`:
+    - Métodos `GET` y `POST` con soporte para Vercel Cron.
+    - Autenticación estricta con `CRON_SECRET` vía header `Authorization: Bearer` o parámetro `?k=`.
+    - Candado distribuido anti-concurrencia con `limitarDistribuido("cron:pool-kambak", 1, 50)`.
+    - Ejecuta en cada pasada: reaper de huérfanos, expiración de cola vieja, drenado de hasta 50 mensajes en paralelo, revisión de salud de chips y rampa, y entrega de webhooks salientes.
+    - Devuelve JSON detallado con métricas de la pasada.
+  - Actualizado `KAMBAK.md` con contrato v2 completo (7 estados terminales, semántica `en_cola`, API de cancelación, soporte piloto por local, diccionario de variables `WAHA_POOL_*` y cron dedicado).
+  - Agregada nota en `docs/PLAN_KAMBAK_WAHA_POOL_OCT2026.md` apuntando a `docs/PLAN_KAMBAK_WAHA_POOL_V2_NOCHE.md`.
+- **Archivos:** `app/api/cron/pool-kambak/route.ts`, `KAMBAK.md`, `docs/PLAN_KAMBAK_WAHA_POOL_OCT2026.md`.
+- **Tests:** Full suite `npm test` verde (1266 pasados, 5 preexistentes en booking) y `npm run lint` 0 errores.
+
+---
+
+### Pista B: Kambak (`fideliza98-lab/sello-fidelizacion`) — Fases K1 a K8
+- **Hecho:**
+  - **K1:** Semántica `en_cola` en `lib/routes-crm.js` (`sent/${cid}` guarda estado real de cola sin asumir entrega; botón continuar no reenvía; fallo posterior descuenta cuota mensual devuelta al cliente).
+  - **K2:** Manejador tolerante de eventos en `lib/respondo.js` (`handleEvent` soporta 7 estados terminales con fixtures sincronizados `test/fixtures/contrato-eventos-kambak.json`).
+  - **K3:** Panel de campañas en `public/js/gestion.js` muestra "X de Y enviados (Z en cola)", alerta de horario hábil si la ventana cerró y refresco periódico cada 7s.
+  - **K4:** Supresiones cruzadas coherentes en `lib/bajas.js` (`addGlobalSuppression` ante rechazos `opt_out`, validación previa a nivel local y global).
+  - **K5:** Cancelación de envíos diferidos vía `POST /api/owner/crm/campaigns/:id/cancel` con autenticación de dueño, llamada `Respondo.cancel` con HMAC al portal, actualización de `sent` y `outbox` a `fallido/cancelado` y devolución de cupo mensual (`crm.m.n - 1`).
+  - **K6:** Piloto por local opt-in vía variable `LOCALES_AVISOS_POOL`; `lib/respondo.js` detecta `isPoolStore(slug)` e incluye `canalMarketing: 'waha'` y `origen_ref: slug` solo para tiendas en la lista.
+  - **K7:** Textos y costos transparentes: botón "Cancelar envíos pendientes", texto explicativo "Tus avisos se enviarán progresivamente a lo largo del día para asegurar la entrega", costo $0 en piloto y cero mención a WAHA o chips.
+  - **K8:** Documentación completa en `TAREAS.md`, `CAMBIOS.md` y `CONTEXTO.md` (sección 12 técnica interna). Suite de 30 tests pasando en `test/pool-waha-avisos.test.js` y 38 en `test/respondo.test.js`. Rama `claude/pool-waha-avisos` lista para PR en GitHub sin mergear.
+
 
 

@@ -214,3 +214,64 @@ nombres, categorías y orden de variables no cambien sin avisar. **El repo de Ka
 - Meta puede reclasificar `sello_premio_cerca` a marketing (más caro) o rechazar alguna plantilla; hay que revisar la aprobación.
 - La cola nocturna y los reintentos dependen del cron externo (cron-job.org); si se detiene, los mensajes de noche esperan.
 - Los eventos fallidos conservan su contenido (incluye el texto entrante) hasta reenviarse; no hay limpieza automática todavía.
+
+---
+
+## 7. Pool WAHA Multi-Chip (Hardening v2 - Octubre 2026)
+
+Para reducir costos de Meta en campañas masivas de marketing, el portal soporta un pool de chips WAHA secundarios operando en paralelo con salvaguardas estrictas:
+
+### 7.1 Canales de Marketing y Selección
+- `canal_marketing`: `'meta'` (default), `'waha'` (100% por pool WAHA) o `'waha_opt_in'` (por defecto Meta, pero locales específicos en el piloto envían `canalMarketing: 'waha'`).
+- Si `WAHA_POOL_APAGADO=1`, todo el tráfico conmuta automáticamente a Meta Cloud API sin importar la configuración del cliente.
+
+### 7.2 Estados del Ciclo de Vida y Eventos Webhook
+El portal emite webhooks `message.status` hacia `KAMBAK_WEBHOOK_URL` con 7 estados terminales definidos:
+1. `sent`: Mensaje aceptado y despachado por el chip WhatsApp.
+2. `delivered`: Doble check gris recibido en el dispositivo del contacto.
+3. `read`: Doble check azul (mensaje leído).
+4. `failed`: Fallo definitivo con subrazón sanitizada (`opt_out`, `max_intentos`, `cuenta_no_habilitada`, etc.).
+5. `expired`: Mensaje en cola superó la ventana máxima de retención (`WAHA_POOL_COLA_MAX_HORAS`, default 48h).
+6. `cancelled`: Envío cancelado a pedido del emisor antes de salir de la cola.
+7. `uncertain`: Desconexión abrupta o reinicio de worker con envío en curso sin confirmación de ID.
+
+### 7.3 API de Cancelación de Cola
+`POST https://<dominio-del-portal>/api/externo/mensajes/cancelar`
+- **Firma:** Misma firma HMAC que `/api/externo/mensajes`.
+- **Cuerpo JSON:**
+  ```json
+  {
+    "clienteId": "<id-cuenta>",
+    "prefijoIdempotencia": "kambak-...",
+    "idempotencyKeys": ["kambak-key-1", "kambak-key-2"],
+    "origenRef": "slug-local"
+  }
+  ```
+- **Respuesta:** `{ "ok": true, "cancelados": N }`.
+- Marca filas en `estado = 'en_cola'` como `fallido` con motivo `cancelled` y emite webhook a Kambak.
+
+### 7.4 Cron Dedicado del Pool
+`GET` o `POST` a `/api/cron/pool-kambak`
+- **Autenticación:** Cabecera `Authorization: Bearer <CRON_SECRET>` o query `?k=<CRON_SECRET>`.
+- **Frecuencia:** Cada 1 a 2 minutos en horario 09:00 a 21:00 Chile.
+- **Acciones ejecutadas en cada ciclo:**
+  1. `reaper`: rescata envíos colgados en `enviando` (>3 min).
+  2. `expirados`: depura filas en cola que superan el límite de horas.
+  3. `drenado`: despacha hasta 50 mensajes en paralelo distribuidos round-robin entre chips disponibles.
+  4. `salud`: evalúa conectividad de WAHA, tasas de fallo (>20% pausa chip) y rampa de calentamiento (21:30 Chile).
+  5. `webhooks`: entrega eventos pendientes acumulados hacia Kambak.
+
+### 7.5 Diccionario de Variables de Entorno Pool WAHA
+
+| Variable | Default | Descripción |
+|---|---|---|
+| `WAHA_POOL_APAGADO` | `0` | Kill switch global. Con `1`, ningún mensaje sale por WAHA y todo conmuta a Meta. |
+| `WAHA_API_URL` | `""` | URL base del servidor WAHA (HTTPS). |
+| `WAHA_API_KEY` | `""` | API Key secreta para autenticar peticiones contra WAHA. |
+| `WAHA_POOL_WEBHOOK_SECRETO` | `""` | Secreto para verificar webhooks entrantes de WAHA hacia `/api/whatsapp/webhook-waha-pool`. |
+| `WAHA_POOL_TOPE_MAX` | `150` | Límite máximo diario absoluto por chip (tope de seguridad de calentamiento). |
+| `WAHA_POOL_AUTORESPUESTA` | `1` | `1` habilita auto-respuesta de cortesía (máx 1/24h por contacto). `0` silencia respuestas. |
+| `WAHA_POOL_FALLBACK_META` | `0` | `1` conmuta a Meta si se agota la capacidad diaria de los chips WAHA. |
+| `WAHA_POOL_COLA_MAX_HORAS` | `48` | Horas máximas de permanencia en cola antes de expirar a fallido. |
+| `LOCALES_AVISOS_POOL` | `""` | En Kambak: lista separada por comas de slugs de locales autorizados para enviar por WAHA en modo `waha_opt_in`. |
+
