@@ -1,0 +1,134 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "version": "2.0.0",
+  "description": "Contrato formal de eventos Webhook entre Respondo Portal y Kambak (Pista A -> Pista B)",
+  "events": {
+    "message_status_sent": {
+      "id": "evt_01HXYZSENT0000000000001",
+      "type": "message.status",
+      "created_at": "2026-10-12T10:00:00.000Z",
+      "data": {
+        "id": "env_01HXYZ00000000000000001",
+        "message_id": "3EB0ABC123DEF456",
+        "status": "sent"
+      }
+    },
+    "message_status_delivered": {
+      "id": "evt_01HXYZDELV0000000000002",
+      "type": "message.status",
+      "created_at": "2026-10-12T10:00:03.000Z",
+      "data": {
+        "id": "env_01HXYZ00000000000000001",
+        "message_id": "3EB0ABC123DEF456",
+        "status": "delivered"
+      }
+    },
+    "message_status_read": {
+      "id": "evt_01HXYZREAD0000000000003",
+      "type": "message.status",
+      "created_at": "2026-10-12T10:00:15.000Z",
+      "data": {
+        "id": "env_01HXYZ00000000000000001",
+        "message_id": "3EB0ABC123DEF456",
+        "status": "read"
+      }
+    },
+    "message_status_failed_opt_out": {
+      "id": "evt_01HXYZOPTO0000000000004",
+      "type": "message.status",
+      "created_at": "2026-10-12T10:00:00.000Z",
+      "data": {
+        "id": "env_01HXYZ00000000000000002",
+        "status": "failed",
+        "reason": "opt_out",
+        "error_code": "opt_out"
+      }
+    },
+    "message_status_failed_monthly_cap": {
+      "id": "evt_01HXYZMCAP0000000000005",
+      "type": "message.status",
+      "created_at": "2026-10-12T10:00:00.000Z",
+      "data": {
+        "id": "env_01HXYZ00000000000000003",
+        "status": "failed",
+        "reason": "monthly_cap",
+        "error_code": "monthly_cap"
+      }
+    },
+    "message_status_failed_not_on_whatsapp": {
+      "id": "evt_01HXYZNOWA0000000000006",
+      "type": "message.status",
+      "created_at": "2026-10-12T10:00:00.000Z",
+      "data": {
+        "id": "env_01HXYZ00000000000000004",
+        "status": "failed",
+        "reason": "not_on_whatsapp",
+        "error_code": "not_on_whatsapp"
+      }
+    },
+    "message_status_failed_max_intentos": {
+      "id": "evt_01HXYZMAXA0000000000007",
+      "type": "message.status",
+      "created_at": "2026-10-12T10:15:00.000Z",
+      "data": {
+        "id": "env_01HXYZ00000000000000005",
+        "status": "failed",
+        "reason": "max_intentos",
+        "error_code": "max_intentos"
+      }
+    },
+    "message_status_failed_expired": {
+      "id": "evt_01HXYZEXPD0000000000008",
+      "type": "message.status",
+      "created_at": "2026-10-14T10:00:00.000Z",
+      "data": {
+        "id": "env_01HXYZ00000000000000006",
+        "status": "failed",
+        "reason": "expired",
+        "error_code": "expired"
+      }
+    },
+    "message_status_failed_cancelled": {
+      "id": "evt_01HXYZCANC0000000000009",
+      "type": "message.status",
+      "created_at": "2026-10-12T10:05:00.000Z",
+      "data": {
+        "id": "env_01HXYZ00000000000000007",
+        "status": "failed",
+        "reason": "cancelled",
+        "error_code": "cancelled"
+      }
+    },
+    "message_status_failed_uncertain": {
+      "id": "evt_01HXYZUNCT0000000000010",
+      "type": "message.status",
+      "created_at": "2026-10-12T10:05:00.000Z",
+      "data": {
+        "id": "env_01HXYZ00000000000000008",
+        "status": "failed",
+        "reason": "uncertain",
+        "error_code": "uncertain"
+      }
+    },
+    "message_inbound": {
+      "id": "evt_01HXYZINBD0000000000011",
+      "type": "message.inbound",
+      "created_at": "2026-10-12T10:02:00.000Z",
+      "data": {
+        "from": "+56912345678",
+        "type": "text",
+        "text": "Hola, gracias por la info",
+        "message_id": "3EB0ABC789GHI012"
+      }
+    },
+    "contact_optout": {
+      "id": "evt_01HXYZOPTC0000000000012",
+      "type": "contact.optout",
+      "created_at": "2026-10-12T10:03:00.000Z",
+      "data": {
+        "phone": "+56912345678",
+        "source": "whatsapp_keyword"
+      }
+    }
+  }
+}

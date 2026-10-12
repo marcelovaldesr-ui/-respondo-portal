@@ -188,8 +188,27 @@
 - **Tests:** 6 nuevos en `tests/kambak-pool-cupos-v2.test.mjs` (104 tests pasando en total). Lint 100% limpio (0 errores, 0 warnings).
 - **Decisiones:**
   - *Doble vía RPC + fallback:* Para garantizar que el código funcione tanto en producción Postgres (con la función SQL atómica de migración 326) como en entornos con PostgREST mock o emuladores en memoria, se implementó fallback condicional estricto.
-  - *Carrera concurrente resuelta en base:* No hay lecturas previas sueltas; la condición de tope se evalúa dentro del update SQL.
 - **Pendientes:** Pasar a Fase P6 (Eventos hacia Kambak en todos los resultados).
+
+### Fase P6 (M) — Eventos hacia Kambak en Todos los Resultados [H11]
+- **Hecho:**
+  - Creado archivo de contrato versionado `docs/contrato-eventos-kambak.json` (v2.0.0) que documenta y ejemplifica todos los eventos webhook (`message.status`: `sent`, `delivered`, `read`, `failed` con subcódigos `opt_out`, `monthly_cap`, `not_on_whatsapp`, `max_intentos`, `expired`, `cancelled`, `uncertain`; `message.inbound`; `contact.optout`).
+  - Actualizado `lib/kambakEnvios.ts` para emitir `message.status` con payload idempotente y sin fugas de datos internos (cero mención a chip, número, sesión o canal) en:
+    - Envíos exitosos por pool (`status: "sent"` con `message_id`).
+    - Descarte por baja (`status: "failed"` con `reason: "opt_out"`, `error_code: "opt_out"`).
+    - Descarte por tope mensual (`status: "failed"` con `reason: "monthly_cap"`, `error_code: "monthly_cap"`).
+    - Descarte por número sin WhatsApp (`status: "failed"` con `reason: "not_on_whatsapp"`, `error_code: "not_on_whatsapp"`).
+    - Descarte definitivo por agotar reintentos (`status: "failed"` con `reason: "max_intentos"`, `error_code: "max_intentos"`).
+    - Expiración de cola > 48h (`status: "failed"` con `reason: "expired"`, `error_code: "expired"`).
+    - Recuperación o timeout de Reaper (`status: "sent"` si obtuvo wamid; `status: "failed"` con `reason: "uncertain"`, `error_code: "uncertain"` si expiró sin confirmación).
+  - Creada suite de pruebas unitarias `tests/kambak-pool-eventos-v2.test.mjs` con 6 tests exhaustivos cubriendo emisión de cada estado terminal, verificación de contrato fixture, payload sin fugas del pool e idempotencia estricta.
+- **Archivos:** `docs/contrato-eventos-kambak.json`, `lib/kambakEnvios.ts`, `tests/kambak-pool-eventos-v2.test.mjs`.
+- **Tests:** 6 nuevos en `tests/kambak-pool-eventos-v2.test.mjs` (110 tests pasando en total). Lint 100% limpio (0 errores, 0 warnings).
+- **Decisiones:**
+  - *Filtrado estricto del payload:* Se garantiza que ningún local reciba en los eventos el identificador de chip ni el nombre de sesión WAHA, preservando total abstracción hacia Kambak.
+  - *Emisión en todas las ramas terminales:* Ningún mensaje queda en silencio o en estado eterno "en cola" si el proceso toma una decisión terminal.
+- **Pendientes:** Pasar a Fase P7 (Calentamiento y promoción verificado).
+
 
 
 

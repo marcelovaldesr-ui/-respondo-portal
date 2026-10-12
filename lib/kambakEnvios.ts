@@ -283,10 +283,26 @@ export async function procesarEnvio(
   if (!exenta) {
     if (await enBaja(clienteId, telefono)) {
       const f = await registrar({ estado: "omitido", motivo: "opted_out" });
+      if (f?.id) {
+        await emitirEvento(clienteId, "message.status", `status:${f.id}:opt_out`, {
+          id: f.id,
+          status: "failed",
+          reason: "opt_out",
+          error_code: "opt_out",
+        }).catch(() => undefined);
+      }
       return res(200, f ? aVista(f) : { ok: true, status: "skipped", reason: "opted_out" });
     }
     if (p.categoria === "marketing" && (await enviosDelMes(clienteId, hash, mes)) >= topeMensual()) {
       const f = await registrar({ estado: "omitido", motivo: "monthly_cap" });
+      if (f?.id) {
+        await emitirEvento(clienteId, "message.status", `status:${f.id}:monthly_cap`, {
+          id: f.id,
+          status: "failed",
+          reason: "monthly_cap",
+          error_code: "monthly_cap",
+        }).catch(() => undefined);
+      }
       return res(200, f ? aVista(f) : { ok: true, status: "skipped", reason: "monthly_cap" });
     }
     // Desvío WAHA: marketing por WAHA siempre queda en cola (el pool lo despacha rotando números con pausas)
@@ -448,6 +464,13 @@ export async function reaperEnviosWaha(
           .from("ed_envios_api")
           .update({ estado: "enviado", telefono: null, variables: null })
           .eq("id", f.id);
+
+        await emitirEvento(f.cliente_id as string, "message.status", `status:${f.id}:sent`, {
+          id: f.id,
+          message_id: f.wamid,
+          status: "sent",
+        }).catch(() => undefined);
+
         recuperados++;
       } else {
         await supa
@@ -465,6 +488,7 @@ export async function reaperEnviosWaha(
           id: f.id,
           status: "failed",
           reason: "uncertain",
+          error_code: "uncertain",
         }).catch(() => undefined);
 
         inciertos++;
@@ -510,6 +534,7 @@ export async function expirarColaWaha(
         id: f.id,
         status: "failed",
         reason: "expired",
+        error_code: "expired",
       }).catch(() => undefined);
 
       totalExpirados++;
@@ -627,24 +652,48 @@ export async function drenarColaWaha(
 
     if (!p || !telefono || !params) {
       await cerrar({ estado: "fallido", motivo: "datos_incompletos" });
+      await emitirEvento(clienteId, "message.status", `status:${f.id}:datos_incompletos`, {
+        id: f.id,
+        status: "failed",
+        reason: "datos_incompletos",
+        error_code: "datos_incompletos",
+      }).catch(() => undefined);
       out.fallidos++;
       return;
     }
 
     if (!(await esSoloMensajeria(clienteId))) {
       await cerrar({ estado: "omitido", motivo: "cuenta_no_habilitada" });
+      await emitirEvento(clienteId, "message.status", `status:${f.id}:cuenta_no_habilitada`, {
+        id: f.id,
+        status: "failed",
+        reason: "cuenta_no_habilitada",
+        error_code: "cuenta_no_habilitada",
+      }).catch(() => undefined);
       out.omitidos++;
       return;
     }
 
     if (await enBaja(clienteId, telefono)) {
       await cerrar({ estado: "omitido", motivo: "opted_out" });
+      await emitirEvento(clienteId, "message.status", `status:${f.id}:opt_out`, {
+        id: f.id,
+        status: "failed",
+        reason: "opt_out",
+        error_code: "opt_out",
+      }).catch(() => undefined);
       out.omitidos++;
       return;
     }
 
     if ((await enviosDelMes(clienteId, f.telefono_hash as string, mesChile(ahora), f.id as string)) >= topeMensual()) {
       await cerrar({ estado: "omitido", motivo: "monthly_cap" });
+      await emitirEvento(clienteId, "message.status", `status:${f.id}:monthly_cap`, {
+        id: f.id,
+        status: "failed",
+        reason: "monthly_cap",
+        error_code: "monthly_cap",
+      }).catch(() => undefined);
       out.omitidos++;
       return;
     }
@@ -664,6 +713,12 @@ export async function drenarColaWaha(
     const check = await existeEnWhatsApp(numero.sesion, telefono);
     if (check.ok && !check.existe) {
       await cerrar({ estado: "omitido", motivo: "sin_whatsapp" });
+      await emitirEvento(clienteId, "message.status", `status:${f.id}:not_on_whatsapp`, {
+        id: f.id,
+        status: "failed",
+        reason: "not_on_whatsapp",
+        error_code: "not_on_whatsapp",
+      }).catch(() => undefined);
       out.omitidos++;
       return;
     }
@@ -712,6 +767,12 @@ export async function drenarColaWaha(
           ultimo_error: err,
           intentos: intentosActuales,
         });
+        await emitirEvento(clienteId, "message.status", `status:${f.id}:max_intentos`, {
+          id: f.id,
+          status: "failed",
+          reason: "max_intentos",
+          error_code: "max_intentos",
+        }).catch(() => undefined);
         out.fallidos++;
       } else {
         const minutosBackoff = Math.pow(2, intentosActuales) * 2;
@@ -739,6 +800,12 @@ export async function drenarColaWaha(
       telefono: null,
       variables: null,
     }).eq("id", f.id);
+
+    await emitirEvento(clienteId, "message.status", `status:${f.id}:sent`, {
+      id: f.id,
+      message_id: rEnvio.waId ?? null,
+      status: "sent",
+    }).catch(() => undefined);
 
     try {
       const tino = await tinoDe(clienteId);
