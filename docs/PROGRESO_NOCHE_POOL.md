@@ -266,3 +266,21 @@
 - **Decisiones:**
   - *Pausas preventivas automáticas:* La tasa de fallo > 20% aplica una pausa preventiva de 1 hora con enfriamiento en lugar de un bloqueo permanente, permitiendo que la rotación pruebe otros chips sanos mientras el chip afectado descansa.
 - **Pendientes:** Pasar a Fase P10 (Cancelar envíos pendientes por campaña).
+
+### Fase P10 (S) — Cancelar Envíos Pendientes (por Campaña)
+- **Hecho:**
+  - Creado endpoint nuevo y aditivo `POST /api/externo/mensajes/cancelar` (`app/api/externo/mensajes/cancelar/route.ts`):
+    - Autenticación estricta HMAC-SHA256 con timestamp y nonce vía `autenticarExterno`.
+    - Acepta cancelación por `prefijoIdempotencia`, `idempotencyKeys` (array de strings) o `origenRef`.
+    - Regla de oro de seguridad: cancela estricta y exclusivamente filas con `canal = 'waha'` y `estado = 'en_cola'` pertenecientes al `clienteId` autenticado. Nunca toca filas en `enviando`, `sent` ni `fallido`, ni filas de otros clientes.
+    - Actualiza el estado a `fallido` con motivo `cancelled` y timestamp `actualizado_en`.
+    - Emite evento webhook `message.status` con `reason: "cancelled"` y `error_code: "cancelled"` hacia Kambak para cada fila cancelada, permitiendo sincronización inmediata del outbox y devolución de cupos.
+    - Idempotente: si las filas ya fueron canceladas o despachadas, responde `{ ok: true, cancelados: 0 }`.
+  - Actualizado `tests/_baseMemoria.mjs` con soporte para operadores `like` e `ilike`.
+  - Creada suite de pruebas unitarias `tests/kambak-pool-cancelar.test.mjs` con 4 tests cubriendo: rechazo de peticiones no autenticadas (401), cancelación por prefijo restringida a filas `en_cola` del tenant, idempotencia (0 cancelados en segunda llamada) y cancelación por lista explícita de `idempotencyKeys`.
+- **Archivos:** `app/api/externo/mensajes/cancelar/route.ts`, `tests/_baseMemoria.mjs`, `tests/kambak-pool-cancelar.test.mjs`.
+- **Tests:** 4 tests nuevos en `tests/kambak-pool-cancelar.test.mjs` (127 tests del pool pasando en total). Lint 100% limpio (0 errores, 1 warning en página estática ajena).
+- **Decisiones:**
+  - *No mutación del endpoint base:* Se mantuvo intacto `/api/externo/mensajes` para preservar contratos existentes y se creó una sub-ruta aditiva `/cancelar` bajo la misma autenticación HMAC.
+- **Pendientes:** Pasar a Fase P11 (Piloto por local / opt-in) y pista Kambak (K5-K8).
+

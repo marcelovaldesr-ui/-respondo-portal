@@ -47,6 +47,13 @@ function cumple(fila, [op, col, a, b]) {
     case "contains":
       if (Array.isArray(a)) return Array.isArray(v) && a.every((x) => v.includes(x));
       return v && Object.entries(a).every(([k, x]) => v[k] === x);
+    case "like":
+    case "ilike": {
+      if (typeof v !== "string") return false;
+      const escaped = String(a).replace(/[-[\]{}()+?.,\\^$|#\s]/g, "\\$&").replace(/%/g, ".*").replace(/_/g, ".");
+      const regex = new RegExp(`^${escaped}$`, op === "ilike" ? "i" : "");
+      return regex.test(v);
+    }
     case "overlaps":
       return Array.isArray(v) && a.some((x) => v.includes(x));
     case "or":
@@ -152,7 +159,7 @@ export function crearBaseMemoria(tablas = {}, esquema = {}) {
         return Promise.resolve().then(() => ejecutar(q)).then(res, rej);
       },
     };
-    for (const f of ["eq", "neq", "in", "is", "gte", "lte", "lt", "gt", "not", "contains", "overlaps"]) {
+    for (const f of ["eq", "neq", "in", "is", "gte", "lte", "lt", "gt", "not", "contains", "overlaps", "like", "ilike"]) {
       b[f] = (...args) => { q.filtros.push([f, ...args]); return b; };
     }
     b.or = (expr) => { q.filtros.push(["or", expr]); return b; };
