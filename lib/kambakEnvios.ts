@@ -25,6 +25,7 @@ import {
   iniciarTipeo,
   pararTipeo,
 } from "@/lib/wahaPool";
+import { textoWaha } from "@/lib/plantillasKambakPool";
 
 /**
  * ENVÍOS POR API PARA CUENTAS DE SOLO MENSAJERÍA (Kambak).
@@ -460,7 +461,7 @@ export async function drenarColaWaha(
     await iniciarTipeo(numero.sesion, telefono);
     await pararTipeo(numero.sesion, telefono);
 
-    const texto = textoDe(p, params);
+    const texto = textoWaha(p, params, telefono);
     const rEnvio = await enviarTextoPool(numero.sesion, telefono, texto);
 
     if (!rEnvio.ok) {
