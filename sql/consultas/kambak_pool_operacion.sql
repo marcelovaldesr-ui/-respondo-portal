@@ -71,3 +71,27 @@ where sesion = 'kambak_chip_1';
 update ed_waha_numeros
 set tope_diario = 200
 where sesion = 'kambak_chip_1';
+
+-- 8) Dar de alta un nuevo chip en fase de calentamiento
+insert into ed_waha_numeros (
+  cliente_id,
+  sesion,
+  etiqueta,
+  estado,
+  rol,
+  calentamiento_desde,
+  tope_diario,
+  enviados_hoy,
+  fallos_seguidos
+) values (
+  (select id from ed_clientes where slug = 'kambak'),
+  'kambak_chip_nuevo',
+  'Chip nuevo +569XXXXXXXX',
+  'calentando',
+  'envio',
+  current_date,
+  20,
+  0,
+  0
+);
+

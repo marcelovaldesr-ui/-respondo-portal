@@ -209,7 +209,19 @@
   - *Emisión en todas las ramas terminales:* Ningún mensaje queda en silencio o en estado eterno "en cola" si el proceso toma una decisión terminal.
 - **Pendientes:** Pasar a Fase P7 (Calentamiento y promoción verificado).
 
-
-
-
-
+### Fase P7 (S) — Calentamiento y Promoción con Verificación [H12]
+- **Hecho:**
+  - Actualizado `lib/poolNumeros.ts`:
+    - Rampa de calentamiento basada en días reales de calendario en huso horario de Chile (`RAMPA_CALENTAMIENTO = [20, 40, 60, 90, 120]`).
+    - Soporte para tope máximo global configurable vía variable de entorno `WAHA_POOL_TOPE_MAX` (por defecto 150).
+  - Actualizado `lib/poolSalud.ts`:
+    - `promoverCalentando`: verificación estricta de días en calentamiento (>= 5 días), estado de sesión en WAHA (`WORKING`), cero fallos seguidos (`fallos_seguidos = 0`), exclusión de promoción automática si nunca tuvo un envío exitoso (`ultimo_ok_en === null`), y comprobación de envíos de prueba previos con alerta informativa a HQ con advertencia si hubo < 3 envíos.
+  - Actualizado `sql/consultas/kambak_pool_operacion.sql`:
+    - Añadida consulta de alta para nuevos chips en estado de calentamiento con rampa inicial de 20 mensajes.
+  - Creada suite de pruebas unitarias `tests/kambak-pool-warmup.test.mjs` con 4 tests cubriendo rampa por días reales, tope configurable por env, y promoción condicional estricta.
+- **Archivos:** `lib/poolNumeros.ts`, `lib/poolSalud.ts`, `sql/consultas/kambak_pool_operacion.sql`, `tests/kambak-pool-warmup.test.mjs`.
+- **Tests:** 4 tests nuevos en `tests/kambak-pool-warmup.test.mjs` (114 tests del pool pasando en total). Lint 100% limpio (0 errores, 1 warning en página estática ajena).
+- **Decisiones:**
+  - *Días reales vs contador:* La rampa se calcula determinísticamente a partir de `calentamiento_desde` usando medianoche en huso horario de Chile, evitando derivas por días en los que no hubo envíos.
+  - *No promoción a ciegas:* Se protege al pool de activar un chip que nunca ha demostrado ser capaz de emitir mensajes (`ultimo_ok_en === null`).
+- **Pendientes:** Pasar a Fase P8 (Respuestas de clientes al número del pool).

@@ -1,6 +1,6 @@
 import { db } from "@/lib/db";
 import { estadoSesion, wahaPoolApagado, wahaPoolConfigurado, poolSimulado } from "@/lib/wahaPool";
-import { topeDelDia, enviadosEfectivosHoy } from "@/lib/poolNumeros";
+import { topeDelDia, enviadosEfectivosHoy, fechaChile } from "@/lib/poolNumeros";
 import type { WahaNumero } from "@/lib/poolNumeros";
 import { avisarACliente } from "@/lib/push";
 import { notificarHQ } from "@/lib/hqBridge";
@@ -122,35 +122,88 @@ export async function alertarNumeroAfectado(
 /**
  * Promueve un número del pool en estado 'calentando' a 'activo' para reemplazar
  * a uno que cayó o se bloqueó.
+ *
+ * Condiciones estrictas (v2 / H12):
+ * - calentamiento_desde >= 5 días reales en huso Chile
+ * - sesión en estado 'WORKING' en WAHA
+ * - fallos_seguidos == 0
+ * - no automática si el número nunca tuvo `ultimo_ok_en`
+ * - actividad previa en calentamiento (advertencia a HQ si < 3 envíos)
  */
 export async function promoverCalentando(
   clienteId: string,
   supa = db(),
+  ahora: Date = new Date(),
 ): Promise<WahaNumero | null> {
-  const { data } = await supa
+  const { data: candidatos } = await supa
     .from("ed_waha_numeros")
     .select("*")
     .eq("cliente_id", clienteId)
     .eq("estado", "calentando")
     .eq("rol", "envio")
-    .order("calentamiento_desde", { ascending: true })
-    .limit(1)
-    .maybeSingle();
+    .order("calentamiento_desde", { ascending: true });
 
-  if (!data?.id) return null;
+  if (!candidatos || candidatos.length === 0) return null;
 
-  const { data: promovido, error } = await supa
-    .from("ed_waha_numeros")
-    .update({ estado: "activo" })
-    .eq("id", data.id)
-    .select("*")
-    .maybeSingle();
+  const strHoy = fechaChile(ahora);
+  const tHoy = Date.parse(`${strHoy}T00:00:00Z`);
 
-  if (error || !promovido) return null;
+  for (const cand of candidatos) {
+    if (!cand.calentamiento_desde) continue;
+    const tDesde = Date.parse(`${cand.calentamiento_desde}T00:00:00Z`);
+    if (Number.isNaN(tDesde)) continue;
 
-  const numPromovido = promovido as WahaNumero;
-  await alertarNumeroAfectado(numPromovido, "promovido", "Reemplazo de capacidad", supa);
-  return numPromovido;
+    // 1. Al menos 5 días en calentamiento
+    const diffDias = Math.floor((tHoy - tDesde) / (24 * 3600 * 1000));
+    if (diffDias < 5) continue;
+
+    // 2. Sin fallos acumulados
+    if ((cand.fallos_seguidos ?? 0) > 0) continue;
+
+    // 3. No se promueve automáticamente si nunca ha tenido un envío exitoso (ultimo_ok_en === null)
+    if (cand.ultimo_ok_en === null) continue;
+
+    // 4. Sesión en WAHA debe estar WORKING
+    const resSesion = await estadoSesion(cand.sesion);
+    const statusSesion = typeof resSesion === "string" ? resSesion : resSesion?.status;
+    if (statusSesion !== "WORKING") continue;
+
+    // 5. Verificar actividad previa de envíos de prueba
+    let advertencia = "";
+    try {
+      const { count } = await supa
+        .from("ed_envios_api")
+        .select("*", { count: "exact", head: true })
+        .eq("cliente_id", clienteId)
+        .eq("sesion_waha", cand.sesion)
+        .eq("estado", "sent");
+      if ((count ?? 0) < 3) {
+        advertencia = ` (ADVERTENCIA: baja actividad previa en calentamiento: ${count ?? 0} envíos)`;
+      }
+    } catch {
+      // tolerante si falla conteo
+    }
+
+    const { data: promovido, error } = await supa
+      .from("ed_waha_numeros")
+      .update({ estado: "activo" })
+      .eq("id", cand.id)
+      .select("*")
+      .maybeSingle();
+
+    if (error || !promovido) continue;
+
+    const numPromovido = promovido as WahaNumero;
+    await alertarNumeroAfectado(
+      numPromovido,
+      "promovido",
+      `Reemplazo de capacidad${advertencia}`,
+      supa,
+    );
+    return numPromovido;
+  }
+
+  return null;
 }
 
 /**

@@ -43,7 +43,20 @@ export function fechaChile(fecha: Date = new Date()): string {
   }).format(fecha);
 }
 
-const RAMPA_CALENTAMIENTO = [20, 40, 60, 90, 120];
+export const RAMPA_CALENTAMIENTO = [20, 40, 60, 90, 120];
+
+/**
+ * Obtiene el tope máximo diario configurado globalmente para un número en el pool.
+ * Por defecto 150.
+ */
+export function topeMaximoConfigurado(): number {
+  const envVal = process.env.WAHA_POOL_TOPE_MAX;
+  if (envVal) {
+    const parsed = parseInt(envVal, 10);
+    if (!Number.isNaN(parsed) && parsed > 0) return parsed;
+  }
+  return 150;
+}
 
 /**
  * Calcula el tope de envíos permitido para un número en una fecha dada.
@@ -53,7 +66,7 @@ const RAMPA_CALENTAMIENTO = [20, 40, 60, 90, 120];
  *   día 3: 60
  *   día 4: 90
  *   día 5: 120
- *   día 6+: tope_diario (default 150)
+ *   día 6+: tope_diario (default 150, acotado por WAHA_POOL_TOPE_MAX)
  */
 export function topeDelDia(
   numero: {
@@ -63,7 +76,8 @@ export function topeDelDia(
   },
   hoy: Date = new Date(),
 ): number {
-  const topeBase = numero.tope_diario && numero.tope_diario > 0 ? numero.tope_diario : 150;
+  const topeMax = topeMaximoConfigurado();
+  const topeBase = numero.tope_diario && numero.tope_diario > 0 ? Math.min(numero.tope_diario, topeMax) : topeMax;
   if (!numero.calentamiento_desde) {
     return topeBase;
   }
