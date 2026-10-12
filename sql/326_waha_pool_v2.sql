@@ -108,9 +108,17 @@ begin
 end;
 $$;
 
--- (Poblado en las fases siguientes)
+-- 7) Ampliar check de canal_marketing a ('meta', 'waha', 'waha_opt_in') (P11)
+alter table ed_clientes
+  drop constraint if exists ed_clientes_canal_marketing_check;
+
+alter table ed_clientes
+  add constraint ed_clientes_canal_marketing_check
+  check (canal_marketing in ('meta', 'waha', 'waha_opt_in'));
 
 -- Rollback:
+-- alter table ed_clientes drop constraint if exists ed_clientes_canal_marketing_check;
+-- alter table ed_clientes add constraint ed_clientes_canal_marketing_check check (canal_marketing in ('meta', 'waha'));
 -- drop function if exists waha_devolver_cupo(uuid, date);
 -- drop function if exists waha_reservar_cupo(uuid, date, int, timestamptz);
 -- drop index if exists ed_envios_api_cola_waha_idx;
@@ -124,3 +132,4 @@ $$;
 -- alter table ed_waha_numeros drop column if exists ciclos_pausa;
 -- drop table if exists ed_waha_pool_estado;
 -- drop table if exists ed_waha_lids;
+

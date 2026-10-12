@@ -238,7 +238,24 @@ export async function procesarEnvio(
   }
 
   const canalMkt = await canalMarketingDe(clienteId, supa);
-  const esWahaMarketing = p.categoria === "marketing" && canalMkt === "waha" && !wahaPoolApagado();
+
+  // Soporte piloto por local / opt-in (P11)
+  // Campo opcional en la petición: canalMarketing ('waha' o 'meta')
+  const peticionCanalRaw = (cuerpo.canalMarketing ?? cuerpo.canal_marketing ?? "") as string;
+  const peticionCanal = peticionCanalRaw === "waha" || peticionCanalRaw === "meta" ? peticionCanalRaw : null;
+
+  let canalDestino: "meta" | "waha" = "meta";
+  if (p.categoria === "marketing" && !wahaPoolApagado()) {
+    if (canalMkt === "waha") {
+      canalDestino = peticionCanal === "meta" ? "meta" : "waha";
+    } else if (canalMkt === "waha_opt_in") {
+      canalDestino = peticionCanal === "waha" ? "waha" : "meta";
+    } else {
+      canalDestino = "meta";
+    }
+  }
+
+  const esWahaMarketing = canalDestino === "waha";
 
   if (!esWahaMarketing && !simulado() && !(await configPorCliente(clienteId))) {
     return res(503, { ok: false, error: "WhatsApp de la cuenta sin configurar" });
@@ -374,7 +391,7 @@ export async function drenarCola(ahora: Date = new Date(), max = 50): Promise<{ 
     const canalRow = (f.canal as string | null) ?? "meta";
     if (canalRow === "waha" && !wahaPoolApagado()) {
       const canalActual = await canalMarketingDe(f.cliente_id as string, supa);
-      if (canalActual === "waha") continue;
+      if (canalActual === "waha" || canalActual === "waha_opt_in") continue;
     }
 
     const p = plantillaKambak(f.plantilla as string);
@@ -641,7 +658,7 @@ export async function drenarColaWaha(
 
     const clienteId = f.cliente_id as string;
     const canalActual = await canalMarketingDe(clienteId, supa);
-    if (canalActual !== "waha") return;
+    if (canalActual !== "waha" && canalActual !== "waha_opt_in") return;
     if (f.categoria !== "marketing") return;
 
     const p = plantillaKambak(f.plantilla as string);

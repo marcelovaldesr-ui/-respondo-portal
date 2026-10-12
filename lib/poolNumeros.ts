@@ -119,13 +119,13 @@ export function enviadosEfectivosHoy(numero: { dia?: string | null; enviados_hoy
 }
 
 /**
- * Consulta el canal configurado para marketing del cliente ('meta' o 'waha').
+ * Consulta el canal configurado para marketing del cliente ('meta', 'waha' o 'waha_opt_in').
  * Si WAHA_POOL_APAGADO=1, siempre devuelve 'meta'.
  */
 export async function canalMarketingDe(
   clienteId: string,
   supa = db(),
-): Promise<"meta" | "waha"> {
+): Promise<"meta" | "waha" | "waha_opt_in"> {
   if (process.env.WAHA_POOL_APAGADO === "1") return "meta";
   const { data } = await supa
     .from("ed_clientes")
@@ -133,7 +133,9 @@ export async function canalMarketingDe(
     .eq("id", clienteId)
     .maybeSingle();
   const c = (data?.canal_marketing as string | null) ?? "meta";
-  return c === "waha" ? "waha" : "meta";
+  if (c === "waha") return "waha";
+  if (c === "waha_opt_in") return "waha_opt_in";
+  return "meta";
 }
 
 /**

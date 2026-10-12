@@ -284,3 +284,24 @@
   - *No mutación del endpoint base:* Se mantuvo intacto `/api/externo/mensajes` para preservar contratos existentes y se creó una sub-ruta aditiva `/cancelar` bajo la misma autenticación HMAC.
 - **Pendientes:** Pasar a Fase P11 (Piloto por local / opt-in) y pista Kambak (K5-K8).
 
+### Fase P11 (S) — Piloto por Local (Opt-In) sin Tocar el Contrato Existente
+- **Hecho:**
+  - Actualizado `sql/326_waha_pool_v2.sql`:
+    - Ampliado el constraint check de `canal_marketing` en `ed_clientes` a `('meta', 'waha', 'waha_opt_in')` con su correspondiente rollback.
+  - Actualizado `lib/poolNumeros.ts`:
+    - `canalMarketingDe`: ampliado para retornar `"meta" | "waha" | "waha_opt_in"`.
+  - Actualizado `lib/kambakEnvios.ts`:
+    - `procesarEnvio`: implementada la matriz completa de decisión de canal:
+      - Tenant en `meta`: siempre rutea por Meta (incluso si la petición pide waha, prevalece la seguridad de que el tenant no ha optado por el pool).
+      - Tenant en `waha`: rutea por WAHA siempre, salvo que la petición pida explícitamente `meta`.
+      - Tenant en `waha_opt_in`: rutea por WAHA *únicamente si* la petición trae explícitamente `canalMarketing: 'waha'`. Si no viene el campo (peticiones legacy) o trae cualquier otro valor, sale por Meta garantizando retrocompatibilidad 100%.
+      - Kill switch `WAHA_POOL_APAGADO=1`: fuerza Meta universalmente.
+    - `drenarColaWaha` y `drenarColaMeta`: adaptados para reconocer `waha_opt_in` en el drenaje de mensajes ya encolados.
+  - Creada suite de pruebas unitarias `tests/kambak-pool-piloto.test.mjs` con 5 tests exhaustivos cubriendo la matriz completa 3x3 (tenant x petición) más el kill switch.
+- **Archivos:** `sql/326_waha_pool_v2.sql`, `lib/poolNumeros.ts`, `lib/kambakEnvios.ts`, `tests/kambak-pool-piloto.test.mjs`.
+- **Tests:** 5 tests nuevos en `tests/kambak-pool-piloto.test.mjs` (132 tests del pool pasando en total). Lint 100% limpio (0 errores, 1 warning en página estática ajena).
+- **Decisiones:**
+  - *Opt-in sin regresión:* Un local piloto configurado con `waha_opt_in` no sufre ninguna alteración de tráfico hasta que el código emisor en Kambak decida enviar el parámetro `canalMarketing: 'waha'`, permitiendo despliegues graduales tienda por tienda sin riesgos.
+- **Pendientes:** Pista Kambak (K5-K8), P12 (Validación WAHA real y simulador) y P13 (Cron dedicado y documentación).
+
+
