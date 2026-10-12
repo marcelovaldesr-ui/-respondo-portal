@@ -19,7 +19,7 @@
 | **P1** | M | **HECHO** | `679c90d` | `lib/wahaPoolIdentidad.ts`, `lib/inboundWahaPool.ts`, `sql/326_waha_pool_v2.sql` | 7 tests nuevos (80 pasan en total) |
 | **P2** | M | **HECHO** | `aedf87c` | `lib/poolSalud.ts`, `lib/wahaPool.ts`, `lib/poolNumeros.ts`, `sql/326_waha_pool_v2.sql`, `sql/consultas/kambak_pool_operacion.sql` | 8 tests nuevos (88 pasan en total) |
 | **P3** | M | **HECHO** | `8ec07eb` | `lib/kambakEnvios.ts`, `sql/326_waha_pool_v2.sql` | 4 tests nuevos (92 pasan en total) |
-| **P4** | M | **HECHO** | `(este commit)` | `lib/kambakEnvios.ts`, `sql/326_waha_pool_v2.sql` | 6 tests nuevos (98 pasan en total) |
+| **P4** | M | **HECHO** | `90bc514` | `lib/kambakEnvios.ts`, `sql/326_waha_pool_v2.sql` | 6 tests nuevos (98 pasan en total) |
 | **P5** | M | Pendiente | - | `lib/poolNumeros.ts`, `sql/326_waha_pool_v2.sql` | - |
 | **P6** | M | Pendiente | - | `lib/kambakEnvios.ts`, `lib/webhookSalida.ts`, `docs/contrato-eventos-kambak.json` | - |
 | **P7** | S | Pendiente | - | `lib/poolSalud.ts`, `sql/consultas/kambak_pool_operacion.sql` | - |
@@ -172,6 +172,25 @@
   - *Filosofía del Reaper:* Ante un timeout > 3 min sin confirmación de ID de WhatsApp (`wamid`), se asume estado incierto y se descarta reintentar para garantizar cero mensajes duplicados al cliente final.
   - *Intercalación round-robin:* Se particionan los mensajes en memoria por `origen_ref` para alternar la asignación a los chips disponibles.
 - **Pendientes:** Pasar a Fase P5 (Contadores y cupos atómicos).
+
+### Fase P5 (M) — Contadores y Cupos Atómicos
+- **Hecho:**
+  - Actualizado `sql/326_waha_pool_v2.sql`:
+    - Creada función SQL `waha_reservar_cupo(p_numero uuid, p_hoy date, p_tope int, p_proximo timestamptz)` que actualiza atómicamente `enviados_hoy` (reseteando a 1 si el día cambió o sumando 1 si coincide), fija `proximo_envio_en` con la pausa calculada, y valida en la cláusula WHERE que no se supere el tope diario ni esté pausado/congelado.
+    - Creada función SQL `waha_devolver_cupo(p_numero uuid, p_hoy date)` que devuelve el cupo ante fallos/cancelaciones decrementando `enviados_hoy` y limpiando `proximo_envio_en`.
+    - Agregados los rollbacks `drop function if exists` correspondientes.
+  - Actualizado `lib/poolNumeros.ts`:
+    - `reservarCupoNumero`: ejecuta `waha_reservar_cupo` vía RPC con fallback condicional optimista si la RPC no existe en el entorno. Calcula la pausa aleatoria (60-180 s).
+    - `devolverCupoNumero`: ejecuta `waha_devolver_cupo` vía RPC con fallback para rollback de cupo.
+    - `elegirNumeroYReservar`: selecciona el mejor chip del pool e intenta reservar atómicamente; si la reserva falla (por concurrencia o tope alcanzado), rota automáticamente al siguiente chip disponible.
+  - Creada suite de pruebas unitarias `tests/kambak-pool-cupos-v2.test.mjs` con 6 tests exhaustivos cubriendo reservas vía RPC, carrera concurrente con 1 cupo restante (solo 1 triunfa), rollback ante fallo, cambio de día, fallback y rotación de candidatos.
+- **Archivos:** `lib/poolNumeros.ts`, `sql/326_waha_pool_v2.sql`, `tests/kambak-pool-cupos-v2.test.mjs`.
+- **Tests:** 6 nuevos en `tests/kambak-pool-cupos-v2.test.mjs` (104 tests pasando en total). Lint 100% limpio (0 errores, 0 warnings).
+- **Decisiones:**
+  - *Doble vía RPC + fallback:* Para garantizar que el código funcione tanto en producción Postgres (con la función SQL atómica de migración 326) como en entornos con PostgREST mock o emuladores en memoria, se implementó fallback condicional estricto.
+  - *Carrera concurrente resuelta en base:* No hay lecturas previas sueltas; la condición de tope se evalúa dentro del update SQL.
+- **Pendientes:** Pasar a Fase P6 (Eventos hacia Kambak en todos los resultados).
+
 
 
 

@@ -59,9 +59,59 @@ create index if not exists ed_envios_api_cola_waha_idx
   on ed_envios_api (programado_para, cliente_id, origen_ref)
   where canal = 'waha' and estado = 'en_cola';
 
+-- 6) Funciones atómicas de reserva y devolución de cupos (P5)
+create or replace function waha_reservar_cupo(
+  p_numero uuid,
+  p_hoy date,
+  p_tope int,
+  p_proximo timestamptz
+)
+returns setof ed_waha_numeros
+language plpgsql
+security definer
+as $$
+begin
+  return query
+  update ed_waha_numeros
+  set
+    enviados_hoy = case when dia = p_hoy then enviados_hoy + 1 else 1 end,
+    dia = p_hoy,
+    proximo_envio_en = p_proximo,
+    ultimo_envio_en = now()
+  where id = p_numero
+    and estado = 'activo'
+    and (dia is distinct from p_hoy or enviados_hoy < p_tope)
+    and (proximo_envio_en is null or proximo_envio_en <= now())
+    and (pausado_hasta is null or pausado_hasta <= now())
+  returning *;
+end;
+$$;
+
+create or replace function waha_devolver_cupo(
+  p_numero uuid,
+  p_hoy date
+)
+returns setof ed_waha_numeros
+language plpgsql
+security definer
+as $$
+begin
+  return query
+  update ed_waha_numeros
+  set
+    enviados_hoy = greatest(0, enviados_hoy - 1),
+    proximo_envio_en = null
+  where id = p_numero
+    and dia = p_hoy
+  returning *;
+end;
+$$;
+
 -- (Poblado en las fases siguientes)
 
 -- Rollback:
+-- drop function if exists waha_devolver_cupo(uuid, date);
+-- drop function if exists waha_reservar_cupo(uuid, date, int, timestamptz);
 -- drop index if exists ed_envios_api_cola_waha_idx;
 -- alter table ed_envios_api drop column if exists actualizado_en;
 -- alter table ed_envios_api drop column if exists origen_ref;

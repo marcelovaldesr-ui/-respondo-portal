@@ -283,3 +283,158 @@ export async function registrarExito(
     })
     .eq("id", numeroId);
 }
+
+/**
+ * Reserva atómicamente un cupo de envío en un número del pool.
+ * Usa la función SQL `waha_reservar_cupo` vía RPC con fallback
+ * condicional optimista si RPC no está emulada en el entorno.
+ */
+export async function reservarCupoNumero(
+  numeroId: string,
+  ahora: Date = new Date(),
+  opts?: { pausaSegundos?: number; tope?: number },
+  supa = db(),
+): Promise<WahaNumero | null> {
+  const hoyStr = fechaChile(ahora);
+  const pausa = opts?.pausaSegundos ?? (Math.floor(Math.random() * (180 - 60 + 1)) + 60);
+  const proximo = new Date(ahora.getTime() + pausa * 1000).toISOString();
+
+  // Obtener fila actual para saber su tope si no viene en opts
+  const { data: actual } = await supa
+    .from("ed_waha_numeros")
+    .select("*")
+    .eq("id", numeroId)
+    .maybeSingle();
+
+  if (!actual) return null;
+  const numActual = actual as WahaNumero;
+  const tope = opts?.tope ?? topeDelDia(numActual, ahora);
+
+  // 1) Intentar mediante RPC atómica
+  try {
+    const { data: rpcData, error: rpcErr } = await supa.rpc("waha_reservar_cupo", {
+      p_numero: numeroId,
+      p_hoy: hoyStr,
+      p_tope: tope,
+      p_proximo: proximo,
+    });
+
+    if (!rpcErr && rpcData) {
+      const lista = Array.isArray(rpcData) ? rpcData : [rpcData];
+      if (lista.length > 0 && lista[0]?.id) {
+        return lista[0] as WahaNumero;
+      }
+      return null;
+    }
+  } catch {
+    // Continuar al fallback
+  }
+
+  // 2) Fallback condicional optimista si RPC no está implementada
+  if (numActual.estado !== "activo") return null;
+  if (numActual.proximo_envio_en && Date.parse(numActual.proximo_envio_en) > ahora.getTime()) return null;
+  if (numActual.pausado_hasta && Date.parse(numActual.pausado_hasta) > ahora.getTime()) return null;
+
+  const envHoy = numActual.dia === hoyStr ? (numActual.enviados_hoy ?? 0) : 0;
+  if (envHoy >= tope) return null;
+
+  const { data: updated, error } = await supa
+    .from("ed_waha_numeros")
+    .update({
+      enviados_hoy: envHoy + 1,
+      dia: hoyStr,
+      proximo_envio_en: proximo,
+      ultimo_envio_en: ahora.toISOString(),
+      fallos_seguidos: 0,
+      ultimo_error: null,
+    })
+    .eq("id", numeroId)
+    .select("*")
+    .maybeSingle();
+
+  if (error || !updated) return null;
+  return updated as WahaNumero;
+}
+
+/**
+ * Devuelve un cupo reservado si el envío falló o fue cancelado.
+ * Usa la función SQL `waha_devolver_cupo` vía RPC con fallback.
+ */
+export async function devolverCupoNumero(
+  numeroId: string,
+  ahora: Date = new Date(),
+  supa = db(),
+): Promise<WahaNumero | null> {
+  const hoyStr = fechaChile(ahora);
+
+  // 1) Intentar mediante RPC
+  try {
+    const { data: rpcData, error: rpcErr } = await supa.rpc("waha_devolver_cupo", {
+      p_numero: numeroId,
+      p_hoy: hoyStr,
+    });
+
+    if (!rpcErr && rpcData) {
+      const lista = Array.isArray(rpcData) ? rpcData : [rpcData];
+      if (lista.length > 0 && lista[0]?.id) {
+        return lista[0] as WahaNumero;
+      }
+    }
+  } catch {
+    // Continuar al fallback
+  }
+
+  // 2) Fallback
+  const { data: actual } = await supa
+    .from("ed_waha_numeros")
+    .select("*")
+    .eq("id", numeroId)
+    .maybeSingle();
+
+  if (!actual) return null;
+  const numActual = actual as WahaNumero;
+
+  if (numActual.dia === hoyStr) {
+    const nuevosEnviados = Math.max(0, (numActual.enviados_hoy ?? 1) - 1);
+    const { data: updated } = await supa
+      .from("ed_waha_numeros")
+      .update({
+        enviados_hoy: nuevosEnviados,
+        proximo_envio_en: null,
+      })
+      .eq("id", numeroId)
+      .select("*")
+      .maybeSingle();
+
+    return (updated as WahaNumero) ?? null;
+  }
+
+  return numActual;
+}
+
+/**
+ * Elige el mejor candidato del pool e intenta reservar su cupo atómicamente.
+ * Si la reserva falla por concurrencia o límite, prueba con el siguiente número.
+ */
+export async function elegirNumeroYReservar(
+  clienteId: string,
+  ahora: Date = new Date(),
+  supa = db(),
+  opts?: { excluirIds?: Set<string> | string[] },
+): Promise<{ numero: WahaNumero; reservaOk: boolean } | null> {
+  const excluidos = new Set<string>(
+    opts?.excluirIds ? (opts.excluirIds instanceof Set ? opts.excluirIds : opts.excluirIds) : [],
+  );
+
+  while (true) {
+    const cand = await elegirNumero(clienteId, ahora, supa, { excluirIds: excluidos });
+    if (!cand) return null;
+
+    const reservado = await reservarCupoNumero(cand.id, ahora, undefined, supa);
+    if (reservado) {
+      return { numero: reservado, reservaOk: true };
+    }
+
+    excluidos.add(cand.id);
+  }
+}
