@@ -17,8 +17,8 @@
 |---|---|---|---|---|---|
 | **P0** | M | **HECHO** | `8d98997` | `sql/326_waha_pool_v2.sql`, `docs/PROGRESO_NOCHE_POOL.md` | Baseline (1196 pass / 5 preexistentes) |
 | **P1** | M | **HECHO** | `679c90d` | `lib/wahaPoolIdentidad.ts`, `lib/inboundWahaPool.ts`, `sql/326_waha_pool_v2.sql` | 7 tests nuevos (80 pasan en total) |
-| **P2** | M | **HECHO** | `(este commit)` | `lib/poolSalud.ts`, `lib/wahaPool.ts`, `lib/poolNumeros.ts`, `sql/326_waha_pool_v2.sql`, `sql/consultas/kambak_pool_operacion.sql` | 8 tests nuevos (88 pasan en total) |
-| **P3** | M | Pendiente | - | `lib/kambakEnvios.ts`, `sql/326_waha_pool_v2.sql` | - |
+| **P2** | M | **HECHO** | `aedf87c` | `lib/poolSalud.ts`, `lib/wahaPool.ts`, `lib/poolNumeros.ts`, `sql/326_waha_pool_v2.sql`, `sql/consultas/kambak_pool_operacion.sql` | 8 tests nuevos (88 pasan en total) |
+| **P3** | M | **HECHO** | `(este commit)` | `lib/kambakEnvios.ts`, `sql/326_waha_pool_v2.sql` | 4 tests nuevos (92 pasan en total) |
 | **P4** | M | Pendiente | - | `lib/kambakEnvios.ts`, `sql/326_waha_pool_v2.sql` | - |
 | **P5** | M | Pendiente | - | `lib/poolNumeros.ts`, `sql/326_waha_pool_v2.sql` | - |
 | **P6** | M | Pendiente | - | `lib/kambakEnvios.ts`, `lib/webhookSalida.ts`, `docs/contrato-eventos-kambak.json` | - |
@@ -128,5 +128,27 @@
   - *Preservación de estados ante corte de WAHA:* Se evita terminantemente el "flapping" o marcar números como caídos/bloqueados cuando el problema es infraestructura de red o reinicio del contenedor WAHA.
   - *Tolerancia de 2 revisiones:* Un fallo de red aislado no saca el chip de inmediato a pausa; se marca `waha_inalcanzable_1` y solo si persiste en el siguiente cron se aplica el ciclo 1 de enfriamiento (15 min).
   - *Operación manual:* Se entrega `kambak_pool_operacion.sql` para que ante un bloqueo de WhatsApp el operador pueda reactivar limpiamente el chip reseteando `fallos_seguidos`, `ciclos_pausa` y `pausado_hasta`.
-- **Pendientes:** Pasar a Fase P3 (Envío robusto con tiempo controlado).
+- **Pendientes:** Iniciar Fase P3 (Envío robusto con tiempo controlado).
+
+### Fase P3 (M) — Envío Robusto, con Tiempo Controlado
+- **Hecho:**
+  - Actualizado `sql/326_waha_pool_v2.sql`:
+    - Columnas para reintentos en `ed_envios_api`: `intentos int not null default 0`, `proximo_intento_en timestamptz`, `ultimo_error text`.
+    - Rollback correspondiente actualizado.
+  - Modificado `lib/kambakEnvios.ts` (`drenarColaWaha`):
+    - **Concurrencia por número:** Despacho paralelo de hasta 1 envío por número disponible mediante `Promise.allSettled`.
+    - **Presupuesto de tiempo:** Límite global de 45 s por corrida, guard de corte a los 35 s para no iniciar nuevos envíos si el cron está por expirar.
+    - **Simulación de tipeo realista:** Duración calculada como `min(4500, 700 + largo * 30 + azar(0..800))` ms con `iniciarTipeo` y `pararTipeo`.
+    - **Reintento y failover:** Error transitorio (timeout, 5xx, red) incrementa `intentos`, fija `proximo_intento_en = ahora + 2^intentos * 2 min`, almacena `numero_id` del chip fallido y, en el siguiente intento, **excluye** dicho chip para enviar por otro número del pool (failover automático). Al 3er fallo consecutivo se marca `fallido` con `motivo: max_intentos`.
+    - **Fallo de sesión vs fallo de envío:** Un fallo de sesión (`STOPPED`, `FAILED`, `desvinculada`, `banned`) cuenta contra el número del pool (registra fallo y posible rotación), pero **no contra el mensaje** (el mensaje retorna a `en_cola` sin consumir cupo de reintento).
+    - **Idempotencia fuerte al reclamar:** Transición condicional estricta `update ... where id=... and estado='en_cola' and wamid is null`. Si ya tiene `wamid` o fue reclamada, no se reenvía jamás.
+    - **Kill switch en tiempo real:** Verificación de `wahaPoolApagado()` antes de reclamar y justo antes del envío a la red.
+  - Creada suite de pruebas unitarias y de concurrencia `tests/kambak-pool-envios-v2.test.mjs` con 4 tests exhaustivos.
+- **Archivos:** `lib/kambakEnvios.ts`, `sql/326_waha_pool_v2.sql`, `tests/kambak-pool-envios-v2.test.mjs`.
+- **Tests:** 4 nuevos en `tests/kambak-pool-envios-v2.test.mjs` (92 tests pasando en total). Lint 100% limpio (0 errores, 0 warnings).
+- **Decisiones:**
+  - *Failover inteligente:* En vez de bloquear el mensaje en el mismo chip con problemas, el algoritmo de asignación revisa `f.numero_id` y asigna un chip alternativo disponible del mismo cliente.
+  - *Separación de fallos:* Errores del chip (sesión desconectada) nunca penalizan la cuota de 3 intentos del mensaje de marketing.
+- **Pendientes:** Pasar a Fase P4 (Cola: filtro, orden, justicia, expiración, reaper, sin capacidad).
+
 

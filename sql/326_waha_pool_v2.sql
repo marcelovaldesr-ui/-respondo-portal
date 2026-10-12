@@ -44,9 +44,18 @@ alter table ed_waha_numeros
   add column if not exists ultimo_ok_en timestamptz,
   add column if not exists ciclos_pausa int not null default 0;
 
+-- 4) Columnas para reintentos y failover en ed_envios_api (P3)
+alter table ed_envios_api
+  add column if not exists intentos int not null default 0,
+  add column if not exists proximo_intento_en timestamptz,
+  add column if not exists ultimo_error text;
+
 -- (Poblado en las fases siguientes)
 
 -- Rollback:
+-- alter table ed_envios_api drop column if exists intentos;
+-- alter table ed_envios_api drop column if exists proximo_intento_en;
+-- alter table ed_envios_api drop column if exists ultimo_error;
 -- alter table ed_waha_numeros drop column if exists pausado_hasta;
 -- alter table ed_waha_numeros drop column if exists ultimo_ok_en;
 -- alter table ed_waha_numeros drop column if exists ciclos_pausa;

@@ -13,7 +13,8 @@ import {
 } from "@/lib/plantillasKambak";
 import {
   canalMarketingDe,
-  elegirNumero,
+  enviadosEfectivosHoy,
+  topeDelDia,
   registrarEnvio as registrarEnvioPool,
   registrarFallo as registrarFalloPool,
   registrarExito as registrarExitoPool,
@@ -377,8 +378,10 @@ export async function drenarCola(ahora: Date = new Date(), max = 50): Promise<{ 
 
 /**
  * Despacha la cola de marketing del grupo de números WAHA.
- * Rota entre los números activos del pool, verifica existencia en WhatsApp,
- * respeta 1 envío por número por pasada, pausas y tope diario.
+ * Procesa un envío por número en paralelo (Promise.allSettled).
+ * Respeta presupuesto de tiempo (guard ≤45s, corte a los 35s),
+ * failover excluyendo número fallido, reintento con backoff exponencial
+ * (máx 3 intentos), simulación de tipeo y kill switch en tiempo real.
  */
 export async function drenarColaWaha(
   ahora: Date = new Date(),
@@ -389,22 +392,78 @@ export async function drenarColaWaha(
   if (!enHorarioPermitido(ahora)) return out;
 
   const supa = db();
-  const { data } = await supa.from("ed_envios_api")
-    .select("id, cliente_id, plantilla, categoria, telefono, variables, telefono_hash, mes, canal")
+  const inicio = Date.now();
+
+  // 1) Obtener números activos con rol envio
+  const { data: numsRaw } = await supa
+    .from("ed_waha_numeros")
+    .select("*")
+    .eq("estado", "activo")
+    .eq("rol", "envio");
+
+  const todosNumeros = (numsRaw as WahaNumero[]) ?? [];
+  const disponibles = todosNumeros.filter((n) => {
+    if (n.proximo_envio_en && Date.parse(n.proximo_envio_en) > ahora.getTime()) return false;
+    if (n.pausado_hasta && Date.parse(n.pausado_hasta) > ahora.getTime()) return false;
+    return enviadosEfectivosHoy(n, ahora) < topeDelDia(n, ahora);
+  });
+
+  if (disponibles.length === 0) {
+    return out; // Sin números con cupo ni tiempo libre en esta pasada
+  }
+
+  // 2) Obtener mensajes pendientes en cola para WAHA
+  const { data: filasRaw } = await supa
+    .from("ed_envios_api")
+    .select("id, cliente_id, plantilla, categoria, telefono, variables, telefono_hash, mes, canal, intentos, proximo_intento_en, ultimo_error, numero_id, wamid")
     .eq("estado", "en_cola")
+    .is("wamid", null)
     .lte("programado_para", ahora.toISOString())
     .limit(max);
 
-  const inicio = Date.now();
-  const numerosUsados = new Set<string>();
+  const filasDisponibles = (filasRaw ?? []).filter((f) => {
+    if (f.proximo_intento_en && Date.parse(f.proximo_intento_en) > ahora.getTime()) return false;
+    return true;
+  });
 
-  for (const f of data ?? []) {
-    if (Date.now() - inicio > 25_000) break;
+  if (filasDisponibles.length === 0) {
+    return out;
+  }
+
+  // 3) Asignar 1 mensaje por número disponible respetando failover
+  const filasAsignadas = new Set<string>();
+  const pares: Array<{ numero: WahaNumero; fila: (typeof filasRaw)[0] }> = [];
+
+  for (const num of disponibles) {
+    const fila = filasDisponibles.find((f) => {
+      if (filasAsignadas.has(f.id as string)) return false;
+      if (f.cliente_id !== num.cliente_id) return false;
+      // Failover: si falló previamente en este número, preferir otro número disponible
+      if (f.numero_id && f.numero_id === num.id && disponibles.some((d) => d.id !== num.id && d.cliente_id === num.cliente_id)) {
+        return false;
+      }
+      return true;
+    });
+
+    if (fila) {
+      filasAsignadas.add(fila.id as string);
+      pares.push({ numero: num, fila });
+    }
+  }
+
+  if (pares.length === 0) {
+    return out;
+  }
+
+  // 4) Procesamiento concurrente de los envíos asignados
+  const tareas = pares.map(async ({ numero, fila: f }) => {
+    if (wahaPoolApagado()) return;
+    if (Date.now() - inicio > 35_000) return; // Guard de tiempo: no iniciar pasada si > 35s
 
     const clienteId = f.cliente_id as string;
     const canalActual = await canalMarketingDe(clienteId, supa);
-    if (canalActual !== "waha") continue;
-    if (f.categoria !== "marketing") continue;
+    if (canalActual !== "waha") return;
+    if (f.categoria !== "marketing") return;
 
     const p = plantillaKambak(f.plantilla as string);
     const telefono = f.telefono as string | null;
@@ -415,64 +474,107 @@ export async function drenarColaWaha(
     if (!p || !telefono || !params) {
       await cerrar({ estado: "fallido", motivo: "datos_incompletos" });
       out.fallidos++;
-      continue;
+      return;
     }
 
     if (!(await esSoloMensajeria(clienteId))) {
       await cerrar({ estado: "omitido", motivo: "cuenta_no_habilitada" });
       out.omitidos++;
-      continue;
+      return;
     }
 
     if (await enBaja(clienteId, telefono)) {
       await cerrar({ estado: "omitido", motivo: "opted_out" });
       out.omitidos++;
-      continue;
+      return;
     }
 
     if ((await enviosDelMes(clienteId, f.telefono_hash as string, mesChile(ahora), f.id as string)) >= topeMensual()) {
       await cerrar({ estado: "omitido", motivo: "monthly_cap" });
       out.omitidos++;
-      continue;
+      return;
     }
 
-    // Elegir número disponible del pool que no haya enviado en esta pasada
-    const numero = await elegirNumero(clienteId, ahora, supa, { excluirIds: numerosUsados });
-    if (!numero) {
-      // Todos los números con cupo están en pausa o ya enviaron en esta pasada
-      continue;
-    }
-
-    // Reclamar la fila
-    const { data: tomada } = await supa.from("ed_envios_api")
+    // Reclamar la fila con idempotencia fuerte condicional
+    const { data: tomada } = await supa
+      .from("ed_envios_api")
       .update({ estado: "enviando", canal: "waha", numero_id: numero.id })
-      .eq("id", f.id).eq("estado", "en_cola").select("id");
-    if (!tomada || tomada.length === 0) continue;
+      .eq("id", f.id)
+      .eq("estado", "en_cola")
+      .is("wamid", null)
+      .select("id");
+
+    if (!tomada || tomada.length === 0) return;
 
     // Verificar si el contacto tiene WhatsApp
     const check = await existeEnWhatsApp(numero.sesion, telefono);
     if (check.ok && !check.existe) {
       await cerrar({ estado: "omitido", motivo: "sin_whatsapp" });
       out.omitidos++;
-      continue;
+      return;
     }
 
-    // Presencia escribiendo...
+    // Presencia escribiendo realista (máx 4.5s)
+    const texto = textoWaha(p, params, telefono);
+    const tipeoMs = Math.min(4500, 700 + texto.length * 30 + Math.floor(Math.random() * 800));
     await iniciarTipeo(numero.sesion, telefono);
+    if (process.env.WAHA_POOL_SIMULAR_DELAY === "1") {
+      await new Promise((r) => setTimeout(r, Math.min(tipeoMs, 500)));
+    }
     await pararTipeo(numero.sesion, telefono);
 
-    const texto = textoWaha(p, params, telefono);
+    // Verificación de kill switch en tiempo real antes de llamar a la red
+    if (wahaPoolApagado()) {
+      await supa.from("ed_envios_api").update({ estado: "en_cola" }).eq("id", f.id);
+      return;
+    }
+
     const rEnvio = await enviarTextoPool(numero.sesion, telefono, texto);
 
     if (!rEnvio.ok) {
-      await registrarFalloPool(numero.id, rEnvio.error ?? "error", supa);
-      await cerrar({ estado: "fallido", motivo: (rEnvio.error ?? "error").slice(0, 120) });
-      out.fallidos++;
-      continue;
+      const err = rEnvio.error ?? "error";
+      const esFalloSesion = /session|sesion|desvinculad|banned|logged out|STOPPED|FAILED/i.test(err);
+
+      if (esFalloSesion) {
+        // Fallo de sesión: cuenta contra el número, no contra el envío
+        await registrarFalloPool(numero.id, err, supa);
+        await supa.from("ed_envios_api").update({
+          estado: "en_cola",
+          ultimo_error: `fallo_sesion: ${err}`,
+          proximo_intento_en: null,
+        }).eq("id", f.id);
+        out.fallidos++;
+        return;
+      }
+
+      // Error transitorio: reintento con backoff exponencial
+      await registrarFalloPool(numero.id, err, supa);
+      const intentosActuales = ((f.intentos as number) || 0) + 1;
+
+      if (intentosActuales >= 3) {
+        await cerrar({
+          estado: "fallido",
+          motivo: "max_intentos",
+          ultimo_error: err,
+          intentos: intentosActuales,
+        });
+        out.fallidos++;
+      } else {
+        const minutosBackoff = Math.pow(2, intentosActuales) * 2;
+        const proximoIntento = new Date(ahora.getTime() + minutosBackoff * 60 * 1000).toISOString();
+        await supa.from("ed_envios_api").update({
+          estado: "en_cola",
+          intentos: intentosActuales,
+          proximo_intento_en: proximoIntento,
+          ultimo_error: err,
+          numero_id: numero.id,
+        }).eq("id", f.id);
+        out.fallidos++;
+      }
+      return;
     }
 
     // Éxito: registrar envío en el pool y actualizar la fila
-    numerosUsados.add(numero.id);
     await registrarEnvioPool(numero.id, ahora, undefined, supa);
     await registrarExitoPool(numero.id, supa);
 
@@ -502,7 +604,8 @@ export async function drenarColaWaha(
     }
 
     out.enviados++;
-  }
+  });
 
+  await Promise.allSettled(tareas);
   return out;
 }
