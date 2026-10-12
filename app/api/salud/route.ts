@@ -9,6 +9,7 @@ import { LATIDO_CRON_SEGUIMIENTOS, estadoDelCron, leerLatido } from "@/lib/latid
 import { tokenDeFila } from "@/lib/whatsapp";
 import { leerProcesos } from "@/lib/procesos";
 import { informesFaltantes } from "@/lib/insightsAuto";
+import { chequearWahaPool } from "@/lib/poolSalud";
 
 /**
  * Extrae el parámetro ?k= de la URL de webhook que WAHA tiene configurada.
@@ -599,6 +600,9 @@ export async function GET(request: NextRequest) {
     cron_seguimientos: await medir(chequearCron),
     notificaciones: await medir(chequearPush),
   };
+  if (process.env.WAHA_POOL_URL) {
+    chequeos.waha_pool = await medir(chequearWahaPool);
+  }
   // Los tokens de los clientes reales se vigilan con el secreto pero SIN exigir
   // `full=1`: es la falla que deja mudo a un cliente entero, así que tiene que
   // entrar en el chequeo que corre cada 30 min, no en el manual. No se expone

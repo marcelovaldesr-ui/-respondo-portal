@@ -24,6 +24,7 @@ import { generarSeguimientosCotizacion } from "@/lib/generadorCotizacion";
 import { destilarPendientes } from "@/lib/isabelDestilado";
 import { procesarEventos } from "@/lib/ads/colaEventos";
 import { drenarCola, drenarColaWaha } from "@/lib/kambakEnvios";
+import { revisarSaludPool } from "@/lib/poolSalud";
 import { procesarEventosPendientes } from "@/lib/webhookSalida";
 
 export const dynamic = "force-dynamic";
@@ -95,6 +96,9 @@ export async function GET(request: NextRequest) {
 
   /** · envíos de marketing de Kambak por el pool WAHA */
   await correrPaso("cola_waha_kambak", () => drenarColaWaha(), (x) => ({ ok: true, trabajo: x.enviados + x.fallidos + x.omitidos > 0, resumen: x }), procesos);
+
+  /** · salud y rotación del grupo de números WAHA de Kambak */
+  await correrPaso("salud_pool", () => revisarSaludPool(), (x) => ({ ok: true, trabajo: x.revisados > 0, resumen: x }), procesos);
 
   /**
    * GENERAR ANTES DE ENVIAR.

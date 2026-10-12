@@ -195,6 +195,13 @@ export async function manejarEntranteWahaPool(
 
   // 3) Estado de la sesión (session.status)
   if (evento === "session.status") {
+    const p = body?.payload ?? {};
+    const status = (p.status ?? "").toUpperCase();
+    if (sesion && status) {
+      const { actualizarEstadoSesion } = await import("@/lib/poolSalud");
+      const r = await actualizarEstadoSesion(sesion, status, supa);
+      return { accion: "session_status", detalle: `${sesion}:${status}:${r.accion}` };
+    }
     return { accion: "session_status", detalle: sesion };
   }
 
