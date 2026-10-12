@@ -15,8 +15,8 @@
 
 | Fase | Prioridad | Estado | Commit | Archivos clave | Tests |
 |---|---|---|---|---|---|
-| **P0** | M | **HECHO** | `pending` | `sql/326_waha_pool_v2.sql`, `docs/PROGRESO_NOCHE_POOL.md` | Baseline (1196 pass / 5 preexistentes) |
-| **P1** | M | Pendiente | - | `lib/inboundWahaPool.ts`, `sql/326_waha_pool_v2.sql` | - |
+| **P0** | M | **HECHO** | `8d98997` | `sql/326_waha_pool_v2.sql`, `docs/PROGRESO_NOCHE_POOL.md` | Baseline (1196 pass / 5 preexistentes) |
+| **P1** | M | **HECHO** | `(este commit)` | `lib/wahaPoolIdentidad.ts`, `lib/inboundWahaPool.ts`, `sql/326_waha_pool_v2.sql` | 7 tests nuevos (80 pasan en total) |
 | **P2** | M | Pendiente | - | `lib/poolSalud.ts`, `lib/wahaPool.ts`, `sql/326_waha_pool_v2.sql` | - |
 | **P3** | M | Pendiente | - | `lib/kambakEnvios.ts`, `sql/326_waha_pool_v2.sql` | - |
 | **P4** | M | Pendiente | - | `lib/kambakEnvios.ts`, `sql/326_waha_pool_v2.sql` | - |
@@ -36,7 +36,7 @@
 
 | Fase | Prioridad | Estado | Commit | Archivos clave | Tests |
 |---|---|---|---|---|---|
-| **K0** | M | En proceso | - | `TAREAS.md`, mapa de arquitectura | - |
+| **K0** | M | **HECHO** | `6af03e9` (main) | `TAREAS.md`, mapa de arquitectura | Inspección estática |
 | **K1** | M | Pendiente | - | `lib/routes-crm.js`, `lib/messaging.js` | - |
 | **K2** | M | Pendiente | - | `lib/routes-respondo.js`, `test/fixtures/` | - |
 | **K3** | M | Pendiente | - | `public/panel.html`, `public/js/gestion.js`, `lib/routes-crm.js` | - |
@@ -56,6 +56,9 @@
    - `npm run lint` con 0 errores y 1 warning preexistente en `app/privacidad/page.tsx`.
    - Archivos protegidos de la Sección 1.2 permanecen 100% intactos.
    - Creación de migración `sql/326_waha_pool_v2.sql` (no aplicada) para contener exclusivamente los cambios de esquema de la noche.
+2. **K0 (Mapa Kambak):**
+   - Reserva de tarea en `TAREAS.md` realizada mediante commit `6af03e9` a `main`.
+   - Rama de trabajo `claude/pool-waha-avisos` creada desde `main`.
 
 ---
 
@@ -67,3 +70,36 @@
 - **Tests:** Baseline ejecutado y validado.
 - **Decisiones:** Se preserva intacta la migración 325; todo nuevo esquema se acumulará en la migración 326.
 - **Pendientes:** Iniciar P1 (Resolución de LID y BAJA segura).
+
+### Fase K0 (M) — Lectura y Mapa de Arquitectura Kambak
+- **Hecho:** Lectura profunda de `lib/messaging.js`, `lib/respondo.js`, `lib/routes-respondo.js`, `lib/routes-crm.js`, `lib/bajas.js`, `lib/routes-whatsapp.js`, `public/panel.html`, `public/js/gestion.js`, `vercel.json` y `test/`. Reserva registrada en `TAREAS.md` y rama `claude/pool-waha-avisos` creada.
+- **Mapa de arquitectura:**
+  1. *idempotencyKey:* En `lib/messaging.js`, `respondoKey({ slug, cid, phone, template, values, now })` genera:
+     `kambak-` + SHA1(`slug|cid|phone|template|json(values)|YYYY-MM-DD`).digest('hex').slice(0, 32). Estable por día, local, cliente y plantilla.
+  2. *Campos enviados al portal:* `{ clienteId: clientId, to: '+56' + phone, template: tpl.meta, language: 'es', variables: values, idempotencyKey: key }` con cabeceras `x-respondo-ts`, `x-respondo-nonce` y `x-respondo-firma: sha256=...`.
+  3. *Mapeo queued → en_cola:* `Respondo.send` mapea HTTP 200 con `{ status: 'queued' }` a `{ status: 'enviado', stored: 'en_cola', respondoId: j.id }`. En `messaging.send`, el documento en `outbox` se guarda con `status: out.stored || out.status` (`en_cola`). Sin embargo, en `routes-crm.js` (`runCampaign`), la subcolección `sent/${c.id}` guardaba `st` como `r.status` ('enviado') en vez de 'en_cola', y sumaba cupo antes de tiempo.
+  4. *Recepción de eventos y actualización outbox:* Llegan a `POST /api/hooks/respondo` con firma `X-Respondo-Signature`. `lib/respondo.js` valida con `RESPONDO_WEBHOOK_SECRET` y ejecuta `handleEvent`. Para `message.status`, actualiza `outbox` (raíz y local) respetando `RANK` (`simulado: 0, en_cola: 1, enviado: 2, entregado: 3, leido: 4`) sin retroceder. Para `contact.optout` o `message.inbound` con `BAJA_RE`, llama a `applyBaja(p)` que aplica supresión en todos los locales donde el teléfono es cliente.
+  5. *Conteo de cupos mensuales:* `lib/routes-crm.js` valida `capUsed(c, now) < CAP_MONTH` (4 al mes) revisando `c.crm.m.n`. Se incrementaba en `sendMarketing` al retornar 'enviado' o 'simulado'. Si un mensaje en cola falla posteriormente, el cupo no era liberado.
+  6. *Visualización al dueño del local:* En `public/js/gestion.js` (`pAvisos()`), la lista de campañas muestra `c.stats.enviado` de `c.total`. La función `sendLoop` itera en bloques de 10 hasta `r.status === 'completa'`. Al encolarse mensajes, el panel reportaba "enviados" en vez de mostrar el progreso real de salida diferida por horario/cupo del pool.
+- **Archivos:** `TAREAS.md`.
+- **Decisiones:** La reserva en `TAREAS.md` se realizó directamente en `main` siguiendo la regla de CLAUDE.md.
+
+### Fase P1 (M) — Identidad Correcta de Remitente (LID) y BAJA Segura
+- **Hecho:**
+  - Creado módulo `lib/wahaPoolIdentidad.ts`:
+    - `resolverTelefonoEntrante(payload, sesion, supa)` con resolución jerárquica: formato directo `@c.us`/`@s.whatsapp.net`, campos alternos de payload GOWS (`remoteJidAlt`, `SenderAlt`, etc.), caché Supabase `ed_waha_lids`, consulta API WAHA (`/api/{session}/lids/{lid}` con timeout 5s), y correlación temporal de 72 horas exigiendo **un único candidato inequívoco**.
+    - `analizarIntencionBaja(texto)` con limpieza de puntuación Unicode (incluyendo `¡` y `¿`), detección de comandos unívocos de baja ("baja", "stop", "no mas", etc.) frente a frases ambiguas marcadas como `posibleBaja`.
+    - `alertarHqLidNoResuelto` con rate-limit en memoria de 1 hora.
+  - Actualizado `sql/326_waha_pool_v2.sql` con tabla `ed_waha_lids` (índice único `(sesion, lid)`, RLS deny-all) y su rollback correspondiente.
+  - Modificado `lib/inboundWahaPool.ts`:
+    - **Regla de seguridad estricta:** Si el LID no se resuelve, **nunca** se registra BAJA y **nunca** se responde automáticamente; el mensaje se guarda con prefijo `[sin_telefono: LID ...]` y se alerta a HQ para revisión manual.
+    - Teléfono verificado con BAJA unívoca: guarda en bandeja, emite `message.inbound` y `contact.optout` a Kambak, registra etiqueta `no_contactar` en contacto, y envía confirmación al remitente (usando su `@lid` original si provino de un LID).
+    - Frase con palabra de baja ambigua: guarda con etiqueta `[posible_baja]`, emite `message.inbound`, y notifica informativamente a HQ.
+  - Creada suite de pruebas unitarias y de integración `tests/kambak-pool-identidad.test.mjs` con 7 tests exhaustivos cubriendo todos los casos de seguridad y formatos.
+- **Archivos:** `lib/wahaPoolIdentidad.ts`, `lib/inboundWahaPool.ts`, `sql/326_waha_pool_v2.sql`, `tests/kambak-pool-identidad.test.mjs`.
+- **Tests:** 7 nuevos en `tests/kambak-pool-identidad.test.mjs` (80 tests totales pasando en suite pool de portal). Lint limpio (0 errores en archivos modificados).
+- **Decisiones:**
+  - *Mocking de wahaPool:* `tests/kambak-pool-webhook.test.mjs` preexistente mockea `@/lib/wahaPool` de forma aislada. Para evitar acoplamiento, `wahaPoolIdentidad.ts` inspecciona variables de entorno directamente (`WAHA_POOL_URL`, `RESPONDO_POOL_SIMULADO`).
+  - *Orden de eventos en BAJA:* Al recibir una BAJA verificada, se emite `message.inbound` y luego `contact.optout`, preservando compatibilidad exacta con el webhook de Kambak.
+  - *Destino de confirmación:* Si el mensaje provino de un `@lid`, la confirmación se envía a `idRes.chatIdOriginal` para mantener el hilo del cliente en WhatsApp; si vino de teléfono normal, se envía a los dígitos normalizados del teléfono (`chatId`).
+- **Pendientes:** Pasar a Fase P2 (Salud del pool: distinguir WAHA caído de número caído).

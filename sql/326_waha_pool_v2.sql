@@ -8,7 +8,22 @@
 --  - Funciones atómicas de reserva y devolución de cupos (P5)
 --  - Soporte de waha_opt_in en canal_marketing (P11)
 
+-- 1) Caché de resolución de LIDs (Linked IDs) de WhatsApp a teléfonos reales (P1)
+create table if not exists ed_waha_lids (
+  id           uuid primary key default gen_random_uuid(),
+  sesion       text not null,
+  lid          text not null,
+  telefono     text not null,
+  creado_en    timestamptz not null default now(),
+  constraint ed_waha_lids_sesion_lid_key unique (sesion, lid)
+);
+
+create index if not exists ed_waha_lids_lookup_idx
+  on ed_waha_lids (sesion, lid);
+
+alter table ed_waha_lids enable row level security; -- deny-all
+
 -- (Poblado en las fases siguientes)
 
 -- Rollback:
--- (Documentado al pie en cada fase)
+-- drop table if exists ed_waha_lids;

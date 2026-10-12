@@ -1,10 +1,16 @@
 import { db } from "@/lib/db";
 import { normalizeWaId, enviarTextoPool } from "@/lib/wahaPool";
-import { esMensajeDeBaja, registrarBaja, CONFIRMACION_BAJA } from "@/lib/bajas";
+import { registrarBaja, CONFIRMACION_BAJA } from "@/lib/bajas";
 import { emitirEvento } from "@/lib/webhookSalida";
 import { asegurarContacto } from "@/lib/contactoEntrante";
 import { guardarMensaje } from "@/lib/mensajes";
 import { tinoDe } from "@/lib/whatsapp";
+import {
+  resolverTelefonoEntrante,
+  analizarIntencionBaja,
+  alertarHqLidNoResuelto,
+} from "@/lib/wahaPoolIdentidad";
+import { notificarHQ } from "@/lib/hqBridge";
 
 /**
  * PROCESAMIENTO DE WEBHOOKS ENTRANTES DEL POOL WAHA.
@@ -142,14 +148,118 @@ export async function manejarEntranteWahaPool(
     }
     const clienteId = numFila.cliente_id as string;
 
-    const digits = from.replace(/\D/g, "");
-    const chatId = digits;
-    const telefono = `+${digits}`;
-    const nombre = p.notifyName ?? p._data?.notifyName ?? p._data?.pushName ?? null;
+    const idRes = await resolverTelefonoEntrante(p, sesion, supa);
     const texto = (p.body ?? p._data?.caption ?? "").trim();
     const waId = normalizeWaId(p.id);
+    const wamid = waId ?? `waha:${Date.now()}:${Math.random().toString(36).slice(2, 8)}`;
+    const nombre = p.notifyName ?? p._data?.notifyName ?? p._data?.pushName ?? null;
+    const bajaCheck = analizarIntencionBaja(texto);
 
-    // Registrar contacto y guardar mensaje en ed_mensajes para la bandeja humana
+    // 1) Caso de seguridad estricta: teléfono NO resuelto
+    if (!idRes.ok) {
+      try {
+        const tino = await tinoDe(clienteId);
+        if (tino) {
+          await guardarMensaje(supa, {
+            empleadoId: tino,
+            chatId: idRes.chatIdOriginal || idRes.lid,
+            rol: "cliente",
+            texto: `[sin_telefono: LID ${idRes.lid}] ${texto}`,
+            waId: waId ?? null,
+          });
+        }
+      } catch (e) {
+        console.warn("[inboundWahaPool] error al guardar mensaje de LID no resuelto:", (e as Error).message);
+      }
+
+      alertarHqLidNoResuelto(sesion, idRes.lid, bajaCheck.esBaja || bajaCheck.posibleBaja, clienteId);
+      return {
+        accion: "lid_no_resuelto",
+        detalle: `${idRes.lid}:${bajaCheck.esBaja ? "baja_pendiente_revision" : "mensaje_guardado"}`,
+      };
+    }
+
+    // 2) Teléfono verificado
+    const chatId = idRes.telefono;
+    const telefono = `+${idRes.telefono}`;
+
+    // A) BAJA unívoca y confirmada
+    if (bajaCheck.esBaja) {
+      try {
+        const tino = await tinoDe(clienteId);
+        if (tino) {
+          await asegurarContacto(supa, { clienteId, chatId, nombre, telefono });
+          await guardarMensaje(supa, {
+            empleadoId: tino,
+            chatId,
+            rol: "cliente",
+            texto,
+            waId: waId ?? null,
+          });
+        }
+      } catch (e) {
+        console.warn("[inboundWahaPool] error al guardar mensaje de baja:", (e as Error).message);
+      }
+
+      await emitirEvento(clienteId, "message.inbound", `inbound:${wamid}`, {
+        from: telefono,
+        type: "chat",
+        text: texto.slice(0, 1000),
+        message_id: waId,
+      });
+
+      const nueva = await registrarBaja(supa, { clienteId, chatId, nombre });
+      if (nueva) {
+        await emitirEvento(clienteId, "contact.optout", `optout:${wamid}`, {
+          phone: telefono,
+          source: "whatsapp_keyword",
+        });
+        // Confirmar baja enviando al chatId original (conserva @lid si vino por ahí)
+        const destinoConfirmacion = idRes.chatIdOriginal?.endsWith("@lid")
+          ? idRes.chatIdOriginal
+          : chatId;
+        await enviarTextoPool(sesion, destinoConfirmacion, CONFIRMACION_BAJA).catch(() => undefined);
+      }
+      return { accion: "baja", detalle: chatId };
+    }
+
+    // B) Posible BAJA (frase ambigua o compleja con palabra clave)
+    if (bajaCheck.posibleBaja) {
+      try {
+        const tino = await tinoDe(clienteId);
+        if (tino) {
+          await asegurarContacto(supa, { clienteId, chatId, nombre, telefono });
+          await guardarMensaje(supa, {
+            empleadoId: tino,
+            chatId,
+            rol: "cliente",
+            texto: `[posible_baja] ${texto}`,
+            waId: waId ?? null,
+          });
+        }
+      } catch (e) {
+        console.warn("[inboundWahaPool] error al guardar posible_baja:", (e as Error).message);
+      }
+
+      try {
+        notificarHQ({
+          tipo: "info",
+          clientePortalId: clienteId,
+          detalle: `Aviso Pool WAHA: Posible baja ambigua recibida de ${telefono}: "${texto.slice(0, 80)}"`,
+        });
+      } catch {}
+
+      await emitirEvento(clienteId, "message.inbound", `inbound:${wamid}`, {
+        from: telefono,
+        type: "chat",
+        text: texto.slice(0, 1000),
+        message_id: waId,
+      });
+
+      return { accion: "posible_baja", detalle: chatId };
+    }
+
+    // C) Mensaje normal entrante para la bandeja humana
     try {
       const tino = await tinoDe(clienteId);
       if (tino) {
@@ -166,30 +276,13 @@ export async function manejarEntranteWahaPool(
       console.error("[inboundWahaPool] error al guardar en bandeja:", (e as Error).message);
     }
 
-    // Emitir evento message.inbound a Kambak
-    const wamid = waId ?? `${chatId}:${Date.now()}`;
     await emitirEvento(clienteId, "message.inbound", `inbound:${wamid}`, {
-      from: `+${chatId}`,
+      from: telefono,
       type: "chat",
       text: texto.slice(0, 1000),
       message_id: waId,
     });
 
-    // Detectar si es orden de BAJA
-    if (esMensajeDeBaja(texto)) {
-      const nueva = await registrarBaja(supa, { clienteId, chatId, nombre });
-      if (nueva) {
-        await emitirEvento(clienteId, "contact.optout", `optout:${wamid}`, {
-          phone: `+${chatId}`,
-          source: "whatsapp_keyword",
-        });
-        // Confirmar baja enviando el texto estándar por el mismo número
-        await enviarTextoPool(sesion, chatId, CONFIRMACION_BAJA).catch(() => undefined);
-      }
-      return { accion: "baja", detalle: chatId };
-    }
-
-    // Cuenta de solo mensajería: NUNCA llama a ningún modelo
     return { accion: "cliente:solo_mensajeria", detalle: chatId };
   }
 
