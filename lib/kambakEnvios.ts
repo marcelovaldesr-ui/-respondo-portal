@@ -27,6 +27,7 @@ import {
   pararTipeo,
 } from "@/lib/wahaPool";
 import { textoWaha } from "@/lib/plantillasKambakPool";
+import { emitirEvento } from "@/lib/webhookSalida";
 
 /**
  * ENVÍOS POR API PARA CUENTAS DE SOLO MENSAJERÍA (Kambak).
@@ -244,10 +245,22 @@ export async function procesarEnvio(
   }
 
   const mes = mesChile(ahora);
+  const metaObj = cuerpo.metadata && typeof cuerpo.metadata === "object" ? (cuerpo.metadata as Record<string, unknown>) : {};
+  const origenRef = (
+    cuerpo.origen_ref ||
+    cuerpo.referencia ||
+    cuerpo.local ||
+    metaObj.origen_ref ||
+    metaObj.local ||
+    metaObj.slug ||
+    null
+  ) as string | null;
+
   const base = {
     cliente_id: clienteId, clave, plantilla: p.nombre, categoria: p.categoria,
     telefono_hash: hash, mes,
     canal: esWahaMarketing ? "waha" : "meta",
+    origen_ref: origenRef,
   };
 
   async function registrar(extra: Record<string, unknown>): Promise<FilaEnvio | null> {
@@ -377,9 +390,140 @@ export async function drenarCola(ahora: Date = new Date(), max = 50): Promise<{ 
 }
 
 /**
+ * Intercala filas pendientes según su local (origen_ref) en estilo round-robin.
+ * Evita que un local con 300 envíos monopolice todos los chips y bloquee a otro local.
+ */
+export function intercalarPorOrigenRef<T extends { origen_ref?: string | null }>(
+  filas: T[],
+): T[] {
+  const grupos = new Map<string, T[]>();
+  for (const f of filas) {
+    const clave = f.origen_ref || "_sin_ref";
+    const lista = grupos.get(clave) || [];
+    lista.push(f);
+    grupos.set(clave, lista);
+  }
+
+  const resultado: T[] = [];
+  const listas = Array.from(grupos.values());
+  let maxLen = 0;
+  for (const l of listas) {
+    if (l.length > maxLen) maxLen = l.length;
+  }
+
+  for (let i = 0; i < maxLen; i++) {
+    for (const l of listas) {
+      if (i < l.length) {
+        resultado.push(l[i]);
+      }
+    }
+  }
+
+  return resultado;
+}
+
+/**
+ * Reaper: filas en estado 'enviando' por más de 3 min sin wamid -> estado_incierto;
+ * con wamid -> enviado. Corre al inicio de cada pasada del cron.
+ */
+export async function reaperEnviosWaha(
+  supa = db(),
+  ahora = new Date(),
+): Promise<{ recuperados: number; inciertos: number }> {
+  const limiteMs = ahora.getTime() - 3 * 60 * 1000;
+  const { data: atascados } = await supa
+    .from("ed_envios_api")
+    .select("id, cliente_id, wamid, estado, actualizado_en, programado_para")
+    .eq("canal", "waha")
+    .eq("estado", "enviando");
+
+  let recuperados = 0;
+  let inciertos = 0;
+
+  for (const f of atascados ?? []) {
+    const fechaRef = (f.actualizado_en || f.programado_para) as string | null;
+    if (fechaRef && Date.parse(fechaRef) < limiteMs) {
+      if (f.wamid) {
+        await supa
+          .from("ed_envios_api")
+          .update({ estado: "enviado", telefono: null, variables: null })
+          .eq("id", f.id);
+        recuperados++;
+      } else {
+        await supa
+          .from("ed_envios_api")
+          .update({
+            estado: "fallido",
+            motivo: "estado_incierto",
+            ultimo_error: "reaper_timeout_sin_wamid",
+            telefono: null,
+            variables: null,
+          })
+          .eq("id", f.id);
+
+        await emitirEvento(f.cliente_id as string, "message.status", `status:unc:${f.id}`, {
+          id: f.id,
+          status: "failed",
+          reason: "uncertain",
+        }).catch(() => undefined);
+
+        inciertos++;
+      }
+    }
+  }
+
+  return { recuperados, inciertos };
+}
+
+/**
+ * Expiración de cola WAHA: filas en 'en_cola' que superan WAHA_POOL_COLA_MAX_HORAS (default 48h).
+ */
+export async function expirarColaWaha(
+  supa = db(),
+  ahora = new Date(),
+): Promise<number> {
+  const maxHoras = Number(process.env.WAHA_POOL_COLA_MAX_HORAS) || 48;
+  const limiteMs = ahora.getTime() - maxHoras * 3600 * 1000;
+
+  const { data: cola } = await supa
+    .from("ed_envios_api")
+    .select("id, cliente_id, programado_para, creado_en")
+    .eq("canal", "waha")
+    .eq("estado", "en_cola");
+
+  let totalExpirados = 0;
+  for (const f of cola ?? []) {
+    const fechaRef = (f.programado_para || f.creado_en) as string | null;
+    if (fechaRef && Date.parse(fechaRef) < limiteMs) {
+      await supa
+        .from("ed_envios_api")
+        .update({
+          estado: "fallido",
+          motivo: "expirado",
+          ultimo_error: "expirado",
+          telefono: null,
+          variables: null,
+        })
+        .eq("id", f.id);
+
+      await emitirEvento(f.cliente_id as string, "message.status", `status:exp:${f.id}`, {
+        id: f.id,
+        status: "failed",
+        reason: "expired",
+      }).catch(() => undefined);
+
+      totalExpirados++;
+    }
+  }
+
+  return totalExpirados;
+}
+
+/**
  * Despacha la cola de marketing del grupo de números WAHA.
  * Procesa un envío por número en paralelo (Promise.allSettled).
  * Respeta presupuesto de tiempo (guard ≤45s, corte a los 35s),
+ * justicia round-robin entre locales, expiración (48h), reaper (>3m),
  * failover excluyendo número fallido, reintento con backoff exponencial
  * (máx 3 intentos), simulación de tipeo y kill switch en tiempo real.
  */
@@ -394,7 +538,11 @@ export async function drenarColaWaha(
   const supa = db();
   const inicio = Date.now();
 
-  // 1) Obtener números activos con rol envio
+  // 1) Reaper de envíos colgados y expiración de cola vieja
+  await reaperEnviosWaha(supa, ahora);
+  await expirarColaWaha(supa, ahora);
+
+  // 2) Obtener números activos con rol envio
   const { data: numsRaw } = await supa
     .from("ed_waha_numeros")
     .select("*")
@@ -409,13 +557,16 @@ export async function drenarColaWaha(
   });
 
   if (disponibles.length === 0) {
+    if (process.env.WAHA_POOL_FALLBACK_META === "1") {
+      return drenarCola(ahora, max);
+    }
     return out; // Sin números con cupo ni tiempo libre en esta pasada
   }
 
-  // 2) Obtener mensajes pendientes en cola para WAHA
+  // 3) Obtener mensajes pendientes en cola para WAHA
   const { data: filasRaw } = await supa
     .from("ed_envios_api")
-    .select("id, cliente_id, plantilla, categoria, telefono, variables, telefono_hash, mes, canal, intentos, proximo_intento_en, ultimo_error, numero_id, wamid")
+    .select("id, cliente_id, plantilla, categoria, telefono, variables, telefono_hash, mes, canal, intentos, proximo_intento_en, ultimo_error, numero_id, origen_ref, wamid")
     .eq("estado", "en_cola")
     .is("wamid", null)
     .lte("programado_para", ahora.toISOString())
@@ -430,12 +581,15 @@ export async function drenarColaWaha(
     return out;
   }
 
-  // 3) Asignar 1 mensaje por número disponible respetando failover
+  // 4) Reparto equitativo entre locales (round-robin por origen_ref)
+  const filasOrdenadas = intercalarPorOrigenRef(filasDisponibles);
+
+  // 5) Asignar 1 mensaje por número disponible respetando failover
   const filasAsignadas = new Set<string>();
   const pares: Array<{ numero: WahaNumero; fila: (typeof filasRaw)[0] }> = [];
 
   for (const num of disponibles) {
-    const fila = filasDisponibles.find((f) => {
+    const fila = filasOrdenadas.find((f) => {
       if (filasAsignadas.has(f.id as string)) return false;
       if (f.cliente_id !== num.cliente_id) return false;
       // Failover: si falló previamente en este número, preferir otro número disponible

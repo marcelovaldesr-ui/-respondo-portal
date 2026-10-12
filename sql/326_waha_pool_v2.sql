@@ -50,9 +50,21 @@ alter table ed_envios_api
   add column if not exists proximo_intento_en timestamptz,
   add column if not exists ultimo_error text;
 
+-- 5) Columna origen_ref, actualizado_en e índice parcial para cola justa y eficiente (P4)
+alter table ed_envios_api
+  add column if not exists origen_ref text,
+  add column if not exists actualizado_en timestamptz not null default now();
+
+create index if not exists ed_envios_api_cola_waha_idx
+  on ed_envios_api (programado_para, cliente_id, origen_ref)
+  where canal = 'waha' and estado = 'en_cola';
+
 -- (Poblado en las fases siguientes)
 
 -- Rollback:
+-- drop index if exists ed_envios_api_cola_waha_idx;
+-- alter table ed_envios_api drop column if exists actualizado_en;
+-- alter table ed_envios_api drop column if exists origen_ref;
 -- alter table ed_envios_api drop column if exists intentos;
 -- alter table ed_envios_api drop column if exists proximo_intento_en;
 -- alter table ed_envios_api drop column if exists ultimo_error;

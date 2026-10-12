@@ -18,8 +18,8 @@
 | **P0** | M | **HECHO** | `8d98997` | `sql/326_waha_pool_v2.sql`, `docs/PROGRESO_NOCHE_POOL.md` | Baseline (1196 pass / 5 preexistentes) |
 | **P1** | M | **HECHO** | `679c90d` | `lib/wahaPoolIdentidad.ts`, `lib/inboundWahaPool.ts`, `sql/326_waha_pool_v2.sql` | 7 tests nuevos (80 pasan en total) |
 | **P2** | M | **HECHO** | `aedf87c` | `lib/poolSalud.ts`, `lib/wahaPool.ts`, `lib/poolNumeros.ts`, `sql/326_waha_pool_v2.sql`, `sql/consultas/kambak_pool_operacion.sql` | 8 tests nuevos (88 pasan en total) |
-| **P3** | M | **HECHO** | `(este commit)` | `lib/kambakEnvios.ts`, `sql/326_waha_pool_v2.sql` | 4 tests nuevos (92 pasan en total) |
-| **P4** | M | Pendiente | - | `lib/kambakEnvios.ts`, `sql/326_waha_pool_v2.sql` | - |
+| **P3** | M | **HECHO** | `8ec07eb` | `lib/kambakEnvios.ts`, `sql/326_waha_pool_v2.sql` | 4 tests nuevos (92 pasan en total) |
+| **P4** | M | **HECHO** | `(este commit)` | `lib/kambakEnvios.ts`, `sql/326_waha_pool_v2.sql` | 6 tests nuevos (98 pasan en total) |
 | **P5** | M | Pendiente | - | `lib/poolNumeros.ts`, `sql/326_waha_pool_v2.sql` | - |
 | **P6** | M | Pendiente | - | `lib/kambakEnvios.ts`, `lib/webhookSalida.ts`, `docs/contrato-eventos-kambak.json` | - |
 | **P7** | S | Pendiente | - | `lib/poolSalud.ts`, `sql/consultas/kambak_pool_operacion.sql` | - |
@@ -149,6 +149,29 @@
 - **Decisiones:**
   - *Failover inteligente:* En vez de bloquear el mensaje en el mismo chip con problemas, el algoritmo de asignación revisa `f.numero_id` y asigna un chip alternativo disponible del mismo cliente.
   - *Separación de fallos:* Errores del chip (sesión desconectada) nunca penalizan la cuota de 3 intentos del mensaje de marketing.
-- **Pendientes:** Pasar a Fase P4 (Cola: filtro, orden, justicia, expiración, reaper, sin capacidad).
+- **Pendientes:** Iniciar Fase P4 (Cola: filtro, orden, justicia, expiración, reaper, sin capacidad).
+
+### Fase P4 (M) — Cola: Filtro, Orden, Justicia, Expiración, Reaper y Horario de Chile
+- **Hecho:**
+  - Actualizado `sql/326_waha_pool_v2.sql`:
+    - Añadida columna `origen_ref text` a `ed_envios_api` para trazabilidad de local.
+    - Añadida columna `actualizado_en timestamptz not null default now()` para soporte del Reaper.
+    - Creado índice parcial optimizado `ed_envios_api_cola_waha_idx` sobre `(programado_para, cliente_id, origen_ref) where canal = 'waha' and estado = 'en_cola'`.
+    - Rollback correspondiente actualizado.
+  - Modificado `lib/kambakEnvios.ts`:
+    - `procesarEnvio`: extrae y almacena `origen_ref` desde el payload o metadata (`origen_ref`, `referencia`, `local`, `slug`).
+    - `intercalarPorOrigenRef`: función de reparto equitativo round-robin por local que evita que un local con 300 avisos bloquee a otros locales durante horas.
+    - `reaperEnviosWaha`: al inicio de cada pasada, detecta filas en `enviando` atascadas > 3 minutos. Si obtuvieron `wamid`, las recupera a `enviado`; si no tienen `wamid`, las pasa a `fallido` con `motivo: estado_incierto` y emite evento `uncertain` a Kambak ("preferimos perder que duplicar").
+    - `expirarColaWaha`: detecta avisos en `en_cola` que superan `WAHA_POOL_COLA_MAX_HORAS` (por defecto 48 horas) y los cierra como `fallido` con `motivo: expirado`, emitiendo evento `expired` a Kambak.
+    - Fallback a Meta configurable: si no hay capacidad en el pool y `WAHA_POOL_FALLBACK_META=1` está activo, drena por Meta; por defecto (0) espera en cola sin costo Meta adicional.
+    - Horario dinámico de Chile: validado contra `America/Santiago` con Intl que gestiona dinámicamente el cambio de horario de verano (DST) entre UTC-3 y UTC-4 sin offsets fijos.
+  - Creada suite de pruebas unitarias `tests/kambak-pool-cola-v2.test.mjs` con 6 tests exhaustivos cubriendo justicia, expiración, reaper, fallback y transiciones DST.
+- **Archivos:** `lib/kambakEnvios.ts`, `sql/326_waha_pool_v2.sql`, `tests/kambak-pool-cola-v2.test.mjs`.
+- **Tests:** 6 nuevos en `tests/kambak-pool-cola-v2.test.mjs` (98 tests pasando en total). Lint 100% limpio (0 errores, 0 warnings).
+- **Decisiones:**
+  - *Filosofía del Reaper:* Ante un timeout > 3 min sin confirmación de ID de WhatsApp (`wamid`), se asume estado incierto y se descarta reintentar para garantizar cero mensajes duplicados al cliente final.
+  - *Intercalación round-robin:* Se particionan los mensajes en memoria por `origen_ref` para alternar la asignación a los chips disponibles.
+- **Pendientes:** Pasar a Fase P5 (Contadores y cupos atómicos).
+
 
 
