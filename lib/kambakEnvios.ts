@@ -11,6 +11,20 @@ import {
   textoDe,
   type PlantillaKambak,
 } from "@/lib/plantillasKambak";
+import {
+  canalMarketingDe,
+  elegirNumero,
+  registrarEnvio as registrarEnvioPool,
+  registrarFallo as registrarFalloPool,
+  registrarExito as registrarExitoPool,
+} from "@/lib/poolNumeros";
+import {
+  wahaPoolApagado,
+  enviarTextoPool,
+  existeEnWhatsApp,
+  iniciarTipeo,
+  pararTipeo,
+} from "@/lib/wahaPool";
 
 /**
  * ENVÍOS POR API PARA CUENTAS DE SOLO MENSAJERÍA (Kambak).
@@ -220,7 +234,10 @@ export async function procesarEnvio(
     return res(429, { ok: false, error: "Demasiados envíos seguidos a este número" });
   }
 
-  if (!simulado() && !(await configPorCliente(clienteId))) {
+  const canalMkt = await canalMarketingDe(clienteId, supa);
+  const esWahaMarketing = p.categoria === "marketing" && canalMkt === "waha" && !wahaPoolApagado();
+
+  if (!esWahaMarketing && !simulado() && !(await configPorCliente(clienteId))) {
     return res(503, { ok: false, error: "WhatsApp de la cuenta sin configurar" });
   }
 
@@ -228,6 +245,7 @@ export async function procesarEnvio(
   const base = {
     cliente_id: clienteId, clave, plantilla: p.nombre, categoria: p.categoria,
     telefono_hash: hash, mes,
+    canal: esWahaMarketing ? "waha" : "meta",
   };
 
   async function registrar(extra: Record<string, unknown>): Promise<FilaEnvio | null> {
@@ -256,9 +274,21 @@ export async function procesarEnvio(
       const f = await registrar({ estado: "omitido", motivo: "monthly_cap" });
       return res(200, f ? aVista(f) : { ok: true, status: "skipped", reason: "monthly_cap" });
     }
+    // Desvío WAHA: marketing por WAHA siempre queda en cola (el pool lo despacha rotando números con pausas)
+    if (esWahaMarketing) {
+      const f = await registrar({
+        estado: "en_cola",
+        canal: "waha",
+        telefono,
+        variables: v.params,
+        programado_para: ahora.toISOString(),
+      });
+      if (!f) return res(500, { ok: false, error: "No se pudo dejar en cola" });
+      return res(200, aVista(f));
+    }
     if (!enHorarioPermitido(ahora)) {
       const f = await registrar({
-        estado: "en_cola", telefono, variables: v.params,
+        estado: "en_cola", canal: "meta", telefono, variables: v.params,
         programado_para: proximaVentana(ahora).toISOString(),
       });
       if (!f) return res(500, { ok: false, error: "No se pudo dejar en cola" });
@@ -270,7 +300,7 @@ export async function procesarEnvio(
   // solo una pasa de acá.
   // Estado «enviando»: el cron de la cola no lo toca. Si el proceso se cae a
   // medio camino queda así y NO se reintenta (preferimos no enviar a enviar dos).
-  const reserva = await registrar({ estado: "enviando", telefono, variables: v.params, programado_para: ahora.toISOString() });
+  const reserva = await registrar({ estado: "enviando", canal: "meta", telefono, variables: v.params, programado_para: ahora.toISOString() });
   if (!reserva) return res(500, { ok: false, error: "No se pudo registrar el envío" });
   if (reserva.estado !== "enviando" || reserva.id === undefined) return res(200, { ...aVista(reserva), duplicate: true });
 
@@ -301,12 +331,21 @@ export async function drenarCola(ahora: Date = new Date(), max = 50): Promise<{ 
   const out = { enviados: 0, fallidos: 0, omitidos: 0 };
   const supa = db();
   const { data } = await supa.from("ed_envios_api")
-    .select("id, cliente_id, plantilla, categoria, telefono, variables, telefono_hash, mes")
+    .select("id, cliente_id, plantilla, categoria, telefono, variables, telefono_hash, mes, canal")
     .eq("estado", "en_cola").lte("programado_para", ahora.toISOString()).limit(max);
 
   const inicio = Date.now();
   for (const f of data ?? []) {
     if (Date.now() - inicio > 25_000) break; // el resto sale en la próxima pasada del cron
+
+    // Si la fila fue encolada para WAHA y el pool sigue activo, la atiende drenarColaWaha.
+    // Si se activó el kill switch o el cliente volvió a 'meta', sale por Meta acá.
+    const canalRow = (f.canal as string | null) ?? "meta";
+    if (canalRow === "waha" && !wahaPoolApagado()) {
+      const canalActual = await canalMarketingDe(f.cliente_id as string, supa);
+      if (canalActual === "waha") continue;
+    }
+
     const p = plantillaKambak(f.plantilla as string);
     const clienteId = f.cliente_id as string;
     const telefono = f.telefono as string | null;
@@ -332,5 +371,137 @@ export async function drenarCola(ahora: Date = new Date(), max = 50): Promise<{ 
     const r = await finalizar(f.id as string, p, clienteId, telefono, params, ahora);
     if (r.status === 200) out.enviados++; else out.fallidos++;
   }
+  return out;
+}
+
+/**
+ * Despacha la cola de marketing del grupo de números WAHA.
+ * Rota entre los números activos del pool, verifica existencia en WhatsApp,
+ * respeta 1 envío por número por pasada, pausas y tope diario.
+ */
+export async function drenarColaWaha(
+  ahora: Date = new Date(),
+  max = 50,
+): Promise<{ enviados: number; fallidos: number; omitidos: number }> {
+  const out = { enviados: 0, fallidos: 0, omitidos: 0 };
+  if (wahaPoolApagado()) return out;
+  if (!enHorarioPermitido(ahora)) return out;
+
+  const supa = db();
+  const { data } = await supa.from("ed_envios_api")
+    .select("id, cliente_id, plantilla, categoria, telefono, variables, telefono_hash, mes, canal")
+    .eq("estado", "en_cola")
+    .lte("programado_para", ahora.toISOString())
+    .limit(max);
+
+  const inicio = Date.now();
+  const numerosUsados = new Set<string>();
+
+  for (const f of data ?? []) {
+    if (Date.now() - inicio > 25_000) break;
+
+    const clienteId = f.cliente_id as string;
+    const canalActual = await canalMarketingDe(clienteId, supa);
+    if (canalActual !== "waha") continue;
+    if (f.categoria !== "marketing") continue;
+
+    const p = plantillaKambak(f.plantilla as string);
+    const telefono = f.telefono as string | null;
+    const params = f.variables as string[] | null;
+    const cerrar = (extra: Record<string, unknown>) =>
+      supa.from("ed_envios_api").update({ telefono: null, variables: null, ...extra }).eq("id", f.id);
+
+    if (!p || !telefono || !params) {
+      await cerrar({ estado: "fallido", motivo: "datos_incompletos" });
+      out.fallidos++;
+      continue;
+    }
+
+    if (!(await esSoloMensajeria(clienteId))) {
+      await cerrar({ estado: "omitido", motivo: "cuenta_no_habilitada" });
+      out.omitidos++;
+      continue;
+    }
+
+    if (await enBaja(clienteId, telefono)) {
+      await cerrar({ estado: "omitido", motivo: "opted_out" });
+      out.omitidos++;
+      continue;
+    }
+
+    if ((await enviosDelMes(clienteId, f.telefono_hash as string, mesChile(ahora), f.id as string)) >= topeMensual()) {
+      await cerrar({ estado: "omitido", motivo: "monthly_cap" });
+      out.omitidos++;
+      continue;
+    }
+
+    // Elegir número disponible del pool que no haya enviado en esta pasada
+    const numero = await elegirNumero(clienteId, ahora, supa, { excluirIds: numerosUsados });
+    if (!numero) {
+      // Todos los números con cupo están en pausa o ya enviaron en esta pasada
+      continue;
+    }
+
+    // Reclamar la fila
+    const { data: tomada } = await supa.from("ed_envios_api")
+      .update({ estado: "enviando", canal: "waha", numero_id: numero.id })
+      .eq("id", f.id).eq("estado", "en_cola").select("id");
+    if (!tomada || tomada.length === 0) continue;
+
+    // Verificar si el contacto tiene WhatsApp
+    const check = await existeEnWhatsApp(numero.sesion, telefono);
+    if (check.ok && !check.existe) {
+      await cerrar({ estado: "omitido", motivo: "sin_whatsapp" });
+      out.omitidos++;
+      continue;
+    }
+
+    // Presencia escribiendo...
+    await iniciarTipeo(numero.sesion, telefono);
+    await pararTipeo(numero.sesion, telefono);
+
+    const texto = textoDe(p, params);
+    const rEnvio = await enviarTextoPool(numero.sesion, telefono, texto);
+
+    if (!rEnvio.ok) {
+      await registrarFalloPool(numero.id, rEnvio.error ?? "error", supa);
+      await cerrar({ estado: "fallido", motivo: (rEnvio.error ?? "error").slice(0, 120) });
+      out.fallidos++;
+      continue;
+    }
+
+    // Éxito: registrar envío en el pool y actualizar la fila
+    numerosUsados.add(numero.id);
+    await registrarEnvioPool(numero.id, ahora, undefined, supa);
+    await registrarExitoPool(numero.id, supa);
+
+    await supa.from("ed_envios_api").update({
+      estado: "enviado",
+      wamid: rEnvio.waId ?? null,
+      enviado_en: ahora.toISOString(),
+      telefono: null,
+      variables: null,
+    }).eq("id", f.id);
+
+    try {
+      const tino = await tinoDe(clienteId);
+      if (tino) {
+        const nombre = p.categoria === "authentication" ? null : params[0];
+        await asegurarContacto(supa, { clienteId, chatId: telefono, nombre, telefono: `+${telefono}` });
+        await guardarMensaje(supa, {
+          empleadoId: tino,
+          chatId: telefono,
+          rol: "empleado",
+          texto,
+          waId: rEnvio.waId ?? null,
+        });
+      }
+    } catch (e) {
+      console.error("[kambak-envios] no se pudo registrar en la conversación:", (e as Error).message);
+    }
+
+    out.enviados++;
+  }
+
   return out;
 }

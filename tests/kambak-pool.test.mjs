@@ -267,7 +267,6 @@ test("poolNumeros: registrarEnvio actualiza contador, fecha y pausa", async () =
 });
 
 test("poolNumeros: registrarFallo bloquea al 3er fallo consecutivo o desconexión", async () => {
-  const ahora = new Date("2026-10-15T15:00:00Z");
   base.tablas.ed_waha_numeros = [
     {
       id: "num-fallas",
@@ -279,18 +278,18 @@ test("poolNumeros: registrarFallo bloquea al 3er fallo consecutivo o desconexió
     },
   ];
 
-  let r = await registrarFallo("num-fallas", "Error temporal 1", ahora, base);
+  let r = await registrarFallo("num-fallas", "Error temporal 1", base);
   assert.equal(r.fallos, 2);
   assert.equal(r.estado, "activo");
 
-  r = await registrarFallo("num-fallas", "Error temporal 2", ahora, base);
+  r = await registrarFallo("num-fallas", "Error temporal 2", base);
   assert.equal(r.fallos, 3);
   assert.equal(r.estado, "bloqueado", "3er fallo bloquea el número");
 
   // Error explícito de WhatsApp logged out bloquea de inmediato
   base.tablas.ed_waha_numeros[0].estado = "activo";
   base.tablas.ed_waha_numeros[0].fallos_seguidos = 0;
-  r = await registrarFallo("num-fallas", "WhatsApp logged out / session terminated", ahora, base);
+  r = await registrarFallo("num-fallas", "WhatsApp logged out / session terminated", base);
   assert.equal(r.estado, "bloqueado");
 
   // Registrar éxito limpia fallos

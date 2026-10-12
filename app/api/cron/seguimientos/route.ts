@@ -23,7 +23,7 @@ import { archivarPendientes } from "@/lib/archivarMedia";
 import { generarSeguimientosCotizacion } from "@/lib/generadorCotizacion";
 import { destilarPendientes } from "@/lib/isabelDestilado";
 import { procesarEventos } from "@/lib/ads/colaEventos";
-import { drenarCola } from "@/lib/kambakEnvios";
+import { drenarCola, drenarColaWaha } from "@/lib/kambakEnvios";
 import { procesarEventosPendientes } from "@/lib/webhookSalida";
 
 export const dynamic = "force-dynamic";
@@ -92,6 +92,9 @@ export async function GET(request: NextRequest) {
 
   /** · envíos de Kambak que esperaron el horario (9:00 a 21:00 de Chile) */
   await correrPaso("cola_kambak", () => drenarCola(), (x) => ({ ok: true, trabajo: x.enviados + x.fallidos + x.omitidos > 0, resumen: x }), procesos);
+
+  /** · envíos de marketing de Kambak por el pool WAHA */
+  await correrPaso("cola_waha_kambak", () => drenarColaWaha(), (x) => ({ ok: true, trabajo: x.enviados + x.fallidos + x.omitidos > 0, resumen: x }), procesos);
 
   /**
    * GENERAR ANTES DE ENVIAR.

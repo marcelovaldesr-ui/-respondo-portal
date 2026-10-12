@@ -97,6 +97,24 @@ export function enviadosEfectivosHoy(numero: { dia?: string | null; enviados_hoy
 }
 
 /**
+ * Consulta el canal configurado para marketing del cliente ('meta' o 'waha').
+ * Si WAHA_POOL_APAGADO=1, siempre devuelve 'meta'.
+ */
+export async function canalMarketingDe(
+  clienteId: string,
+  supa = db(),
+): Promise<"meta" | "waha"> {
+  if (process.env.WAHA_POOL_APAGADO === "1") return "meta";
+  const { data } = await supa
+    .from("ed_clientes")
+    .select("canal_marketing")
+    .eq("id", clienteId)
+    .maybeSingle();
+  const c = (data?.canal_marketing as string | null) ?? "meta";
+  return c === "waha" ? "waha" : "meta";
+}
+
+/**
  * Elige el mejor número disponible del pool para un cliente:
  *  1. Activo (`estado = 'activo'`) y con rol de envío (`rol = 'envio'`)
  *  2. Con cupo disponible hoy (`enviadosEfectivosHoy < topeDelDia`)
@@ -107,6 +125,7 @@ export async function elegirNumero(
   clienteId: string,
   ahora: Date = new Date(),
   supa = db(),
+  opts?: { excluirIds?: Set<string> | string[] },
 ): Promise<WahaNumero | null> {
   const { data, error } = await supa
     .from("ed_waha_numeros")
@@ -119,7 +138,14 @@ export async function elegirNumero(
     return null;
   }
 
+  const excluidos = opts?.excluirIds
+    ? (opts.excluirIds instanceof Set ? opts.excluirIds : new Set(opts.excluirIds))
+    : null;
+
   const candidatos = (data as WahaNumero[]).filter((num) => {
+    if (excluidos && excluidos.has(num.id)) {
+      return false;
+    }
     // Si tiene una pausa vigente para un instante futuro, no se puede usar aún
     if (num.proximo_envio_en && Date.parse(num.proximo_envio_en) > ahora.getTime()) {
       return false;
@@ -210,7 +236,6 @@ export async function registrarEnvio(
 export async function registrarFallo(
   numeroId: string,
   errorMsg: string,
-  _ahora: Date = new Date(),
   supa = db(),
 ): Promise<{ fallos: number; estado: string }> {
   const { data: actual } = await supa
