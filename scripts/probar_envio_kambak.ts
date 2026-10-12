@@ -8,6 +8,8 @@ import { db } from "../lib/db";
  * USO (lo corre una PERSONA):
  *   npx tsx scripts/probar_envio_kambak.ts 9XXXXXXXX                 (ensayo: NO envía nada)
  *   npx tsx scripts/probar_envio_kambak.ts 9XXXXXXXX --enviar        (envía 1 mensaje REAL)
+ *   Solo para pruebas entre ustedes: --fuera-de-horario  (corre la lógica real del portal en este
+ *     computador, haciendo como si fueran las 10:00 de Chile, para no esperar a las 9:00)
  *   Opcional: --plantilla sello_promo | sello_cerca | sello_premio_cerca   (por defecto sello_promo)
  *
  * QUÉ HACE
@@ -24,9 +26,10 @@ const SLUG = "kambak";
 
 const args = process.argv.slice(2);
 const enviar = args.includes("--enviar");
+const fueraDeHorario = args.includes("--fuera-de-horario");
 const iPl = args.indexOf("--plantilla");
 const plantilla = iPl >= 0 ? args[iPl + 1] : "sello_promo";
-const crudo = (args.find((a, i) => !a.startsWith("--") && i !== iPl + 1) ?? "").replace(/[\s+()-]/g, "");
+const crudo = (args.find((a, i) => !a.startsWith("--") && (iPl < 0 || i !== iPl + 1)) ?? "").replace(/[\s+()-]/g, "");
 
 const VARIABLES: Record<string, string[]> = {
   // orden exacto de cada plantilla (ver lib/plantillasKambak.ts)
@@ -87,6 +90,23 @@ async function main() {
   console.log(`\nNegocio: ${cli.nombre}   Plantilla: ${plantilla}   Destino: ${to.slice(0, 5)}•••${to.slice(-3)}`);
   if (!enviar) {
     console.log("\nENSAYO: no se envió nada. Para mandar el mensaje real, repite el comando agregando --enviar\n");
+    return;
+  }
+
+  if (fueraDeHorario) {
+    // Misma lógica del portal (plantilla, tope, bajas, envío a Meta) pero con el reloj en las 10:00 de Chile.
+    const { procesarEnvio } = await import("../lib/kambakEnvios");
+    const ahoraFalso = new Date(Date.now());
+    ahoraFalso.setUTCHours(13, 0, 0, 0); // 10:00 Chile (UTC-3)
+    const r = await procesarEnvio(cli.id, JSON.parse(cuerpo), ahoraFalso);
+    console.log(`\nResultado: HTTP ${r.status}\n${JSON.stringify(r.cuerpo).slice(0, 400)}\n`);
+    const { data: fila } = await supa
+      .from("ed_envios_api")
+      .select("plantilla, estado, motivo, wamid, creado_en")
+      .eq("cliente_id", cli.id)
+      .eq("clave", clave)
+      .maybeSingle();
+    console.log("Registro en el portal:", fila ?? "(aún sin registro)");
     return;
   }
 

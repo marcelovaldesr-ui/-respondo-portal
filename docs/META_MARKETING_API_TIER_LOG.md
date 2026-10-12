@@ -6,3 +6,4 @@ Dónde leer el contador: developers.facebook.com → Respondo Ads → Casos de u
 | Fecha | Llamadas (panel) | Tasa de error | Ventana | Elegible full access | Nota |
 |---|---|---|---|---|---|
 | 22-sep-2026 | **226 / 500** | No visible en el panel | 15 días móviles | **NO** | Hoy hubo ~8 llamadas con error durante el diagnóstico (validate_only rechazados por permisos, un intento de asignación rechazado, un campo inexistente). Cuentan para la tasa de error: no repetirlas. |
+| 06-oct-2026 | **162 / 500** (ads_management 161, ads_read 278, business_management 40) | No visible en el panel | 15 dias moviles | **NO** | Estado: Acceso limitado. En Requisitos: verificacion de empresa en verde; revision de la app y preguntas de datos en gris; el punto del requisito de 500 llamadas se ve verde pero con 162 no se cumple (lectura ambigua). Sin llamadas artificiales. |
