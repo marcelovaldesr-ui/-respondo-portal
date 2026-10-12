@@ -16,8 +16,8 @@
 | Fase | Prioridad | Estado | Commit | Archivos clave | Tests |
 |---|---|---|---|---|---|
 | **P0** | M | **HECHO** | `8d98997` | `sql/326_waha_pool_v2.sql`, `docs/PROGRESO_NOCHE_POOL.md` | Baseline (1196 pass / 5 preexistentes) |
-| **P1** | M | **HECHO** | `(este commit)` | `lib/wahaPoolIdentidad.ts`, `lib/inboundWahaPool.ts`, `sql/326_waha_pool_v2.sql` | 7 tests nuevos (80 pasan en total) |
-| **P2** | M | Pendiente | - | `lib/poolSalud.ts`, `lib/wahaPool.ts`, `sql/326_waha_pool_v2.sql` | - |
+| **P1** | M | **HECHO** | `679c90d` | `lib/wahaPoolIdentidad.ts`, `lib/inboundWahaPool.ts`, `sql/326_waha_pool_v2.sql` | 7 tests nuevos (80 pasan en total) |
+| **P2** | M | **HECHO** | `(este commit)` | `lib/poolSalud.ts`, `lib/wahaPool.ts`, `lib/poolNumeros.ts`, `sql/326_waha_pool_v2.sql`, `sql/consultas/kambak_pool_operacion.sql` | 8 tests nuevos (88 pasan en total) |
 | **P3** | M | Pendiente | - | `lib/kambakEnvios.ts`, `sql/326_waha_pool_v2.sql` | - |
 | **P4** | M | Pendiente | - | `lib/kambakEnvios.ts`, `sql/326_waha_pool_v2.sql` | - |
 | **P5** | M | Pendiente | - | `lib/poolNumeros.ts`, `sql/326_waha_pool_v2.sql` | - |
@@ -102,4 +102,31 @@
   - *Mocking de wahaPool:* `tests/kambak-pool-webhook.test.mjs` preexistente mockea `@/lib/wahaPool` de forma aislada. Para evitar acoplamiento, `wahaPoolIdentidad.ts` inspecciona variables de entorno directamente (`WAHA_POOL_URL`, `RESPONDO_POOL_SIMULADO`).
   - *Orden de eventos en BAJA:* Al recibir una BAJA verificada, se emite `message.inbound` y luego `contact.optout`, preservando compatibilidad exacta con el webhook de Kambak.
   - *Destino de confirmación:* Si el mensaje provino de un `@lid`, la confirmación se envía a `idRes.chatIdOriginal` para mantener el hilo del cliente en WhatsApp; si vino de teléfono normal, se envía a los dígitos normalizados del teléfono (`chatId`).
-- **Pendientes:** Pasar a Fase P2 (Salud del pool: distinguir WAHA caído de número caído).
+- **Pendientes:** Iniciar Fase P2 (Salud del pool: distinguir WAHA caído de número caído).
+
+### Fase P2 (M) — Salud del Pool: Distinguir WAHA Caído de Número Caído
+- **Hecho:**
+  - Actualizado `lib/wahaPool.ts`:
+    - `estadoSesion` ahora clasifica la respuesta retornando `{ ok: true, status, tipo: 'sesion' }`, `{ ok: false, tipo: 'inalcanzable', status, error }` (para timeouts, red, 5xx, 401), o `{ ok: false, tipo: 'sesion', status, error }` (para 404, STOPPED, FAILED, SCAN_QR_CODE, UNPAIRED).
+  - Actualizado `sql/326_waha_pool_v2.sql`:
+    - Creada tabla `ed_waha_pool_estado` (`pool_inalcanzable_desde`, `alerta_inalcanzable_en`, `alerta_sin_capacidad_en`).
+    - Añadidas columnas a `ed_waha_numeros`: `pausado_hasta timestamptz`, `ultimo_ok_en timestamptz`, `ciclos_pausa int default 0`.
+    - Rollback correspondiente actualizado.
+  - Creado script `sql/consultas/kambak_pool_operacion.sql` para administración manual (reactivación de bloqueados, pausa manual, ver estado global).
+  - Actualizado `lib/poolSalud.ts`:
+    - Detección de caída global de WAHA: Si **todos** los números activos/calentando son `inalcanzable`, no se cambia el estado de ningún número, se registra en `ed_waha_pool_estado` y se alerta a HQ con rate-limit de 30 minutos.
+    - Tolerancia para `inalcanzable` individual: requiere 2 revisiones seguidas antes de pausar el chip.
+    - Backoff en fallos transitorios: pausa temporal escalonada (15 min -> 1 h -> 6 h).
+    - Bloqueo solo ante señales claras de baneo (`UNPAIRED` / `logged out`) o tras agotar 3 ciclos de pausa sin recuperación.
+    - Recuperación automática de `caido` y `pausado` a `activo` tan pronto la sesión vuelve a `WORKING`.
+    - Deduplicación de alertas: máx. 1 alerta por número/tipo cada 60 min; aviso informativo "recuperado" al restablecerse.
+    - Detección de falta de capacidad (`pool_sin_capacidad`): alerta si quedan 0 números activos con cupo en horario hábil de Chile (09:00 - 21:00), limitada a 1 aviso cada 2 horas.
+  - Creada suite de pruebas unitarias y de integración `tests/kambak-pool-salud-v2.test.mjs` con 8 tests nuevos exhaustivos.
+- **Archivos:** `lib/poolSalud.ts`, `lib/wahaPool.ts`, `lib/poolNumeros.ts`, `sql/326_waha_pool_v2.sql`, `sql/consultas/kambak_pool_operacion.sql`, `tests/kambak-pool-salud-v2.test.mjs`.
+- **Tests:** 8 nuevos en `tests/kambak-pool-salud-v2.test.mjs` (88 tests pasando en total). Lint 100% limpio (0 errores, 0 warnings).
+- **Decisiones:**
+  - *Preservación de estados ante corte de WAHA:* Se evita terminantemente el "flapping" o marcar números como caídos/bloqueados cuando el problema es infraestructura de red o reinicio del contenedor WAHA.
+  - *Tolerancia de 2 revisiones:* Un fallo de red aislado no saca el chip de inmediato a pausa; se marca `waha_inalcanzable_1` y solo si persiste en el siguiente cron se aplica el ciclo 1 de enfriamiento (15 min).
+  - *Operación manual:* Se entrega `kambak_pool_operacion.sql` para que ante un bloqueo de WhatsApp el operador pueda reactivar limpiamente el chip reseteando `fallos_seguidos`, `ciclos_pausa` y `pausado_hasta`.
+- **Pendientes:** Pasar a Fase P3 (Envío robusto con tiempo controlado).
+

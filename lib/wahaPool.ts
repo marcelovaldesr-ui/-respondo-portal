@@ -146,21 +146,39 @@ export async function pararTipeo(
   }
 }
 
+export type ResultadoEstadoSesion = {
+  ok: boolean;
+  status: string;
+  tipo?: "sesion" | "inalcanzable";
+  me?: { id?: string };
+  error?: string;
+};
+
 /**
  * Consulta el estado de una sesión en WAHA (GET /api/sessions/{session}).
  * Posibles estados: 'WORKING', 'STARTING', 'SCAN_QR_CODE', 'FAILED', 'STOPPED', etc.
+ *
+ * Diferencia entre:
+ *  - ok: true -> sesión operativa (WORKING)
+ *  - ok: false, tipo: 'inalcanzable' -> servidor caído / timeout / error HTTP 5xx / 401
+ *  - ok: false, tipo: 'sesion' -> sesión no existe (404) o está caída/desconectada (FAILED, STOPPED, SCAN_QR_CODE)
  */
 export async function estadoSesion(
   sesion: string,
-): Promise<{ ok: boolean; status: string; me?: { id?: string }; error?: string }> {
+): Promise<ResultadoEstadoSesion> {
   if (poolSimulado()) {
-    return { ok: true, status: "WORKING", me: { id: "simulated@c.us" } };
+    return { ok: true, status: "WORKING", tipo: "sesion", me: { id: "simulated@c.us" } };
   }
 
   const base = baseUrl();
   const key = apiKey();
   if (!base || !key) {
-    return { ok: false, status: "UNKNOWN", error: "Falta WAHA_POOL_URL o WAHA_POOL_API_KEY" };
+    return {
+      ok: false,
+      status: "UNKNOWN",
+      tipo: "inalcanzable",
+      error: "Falta WAHA_POOL_URL o WAHA_POOL_API_KEY",
+    };
   }
 
   try {
@@ -169,20 +187,63 @@ export async function estadoSesion(
       signal: AbortSignal.timeout(8000),
       cache: "no-store",
     });
+
     if (!r.ok) {
-      return { ok: false, status: "UNKNOWN", error: `HTTP ${r.status}` };
+      if (r.status === 404) {
+        return {
+          ok: false,
+          status: "NOT_FOUND",
+          tipo: "sesion",
+          error: "HTTP 404: Sesión no encontrada",
+        };
+      }
+      if (r.status === 401 || r.status === 403 || r.status >= 500) {
+        return {
+          ok: false,
+          status: "UNKNOWN",
+          tipo: "inalcanzable",
+          error: `HTTP ${r.status}`,
+        };
+      }
+      return {
+        ok: false,
+        status: "UNKNOWN",
+        tipo: "sesion",
+        error: `HTTP ${r.status}`,
+      };
     }
+
     const j = (await r.json().catch(() => ({}))) as {
       status?: string;
       me?: { id?: string };
     };
+
+    const statusStr = (j.status ?? "UNKNOWN").toUpperCase();
+    const esCaido = ["FAILED", "STOPPED", "SCAN_QR_CODE", "UNPAIRED"].includes(statusStr);
+
+    if (esCaido) {
+      return {
+        ok: false,
+        status: statusStr,
+        tipo: "sesion",
+        me: j.me,
+        error: `Estado de sesión: ${statusStr}`,
+      };
+    }
+
     return {
       ok: true,
-      status: j.status ?? "UNKNOWN",
+      status: j.status ?? "WORKING",
+      tipo: "sesion",
       me: j.me,
     };
   } catch (e) {
-    return { ok: false, status: "UNKNOWN", error: (e as Error).message };
+    return {
+      ok: false,
+      status: "UNKNOWN",
+      tipo: "inalcanzable",
+      error: (e as Error).message,
+    };
   }
 }
 

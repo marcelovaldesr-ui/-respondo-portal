@@ -23,6 +23,9 @@ export type WahaNumero = {
   dia?: string | null; // 'YYYY-MM-DD'
   ultimo_envio_en?: string | null;
   proximo_envio_en?: string | null;
+  pausado_hasta?: string | null;
+  ultimo_ok_en?: string | null;
+  ciclos_pausa?: number;
   ultimo_error?: string | null;
   fallos_seguidos: number;
   creado_en?: string;
