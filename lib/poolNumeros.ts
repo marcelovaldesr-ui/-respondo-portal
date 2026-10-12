@@ -16,6 +16,11 @@ export type WahaNumero = {
   telefono_hash?: string | null;
   etiqueta?: string | null;
   estado: "calentando" | "activo" | "pausado" | "caido" | "bloqueado" | "retirado";
+  /**
+   * Rol del chip en el pool:
+   * - "envio": chips dedicados a difusión saliente de campañas.
+   * - "respuesta": reservado para futuras líneas dedicadas a recepción y soporte (no usado hoy).
+   */
   rol: "envio" | "respuesta";
   calentamiento_desde?: string | null; // 'YYYY-MM-DD'
   tope_diario: number;

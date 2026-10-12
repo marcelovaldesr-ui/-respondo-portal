@@ -225,3 +225,22 @@
   - *Días reales vs contador:* La rampa se calcula determinísticamente a partir de `calentamiento_desde` usando medianoche en huso horario de Chile, evitando derivas por días en los que no hubo envíos.
   - *No promoción a ciegas:* Se protege al pool de activar un chip que nunca ha demostrado ser capaz de emitir mensajes (`ultimo_ok_en === null`).
 - **Pendientes:** Pasar a Fase P8 (Respuestas de clientes al número del pool).
+
+### Fase P8 (S) — Respuestas de Clientes al Número del Pool [H13]
+- **Hecho:**
+  - Actualizado `lib/inboundWahaPool.ts`:
+    - Auto-respuesta condicional opcional detrás del feature flag `WAHA_POOL_AUTORESPUESTA=1` (por defecto desactivada, `0`).
+    - Límite estricto de frecuencia: máximo 1 auto-respuesta por contacto cada 24 horas (consultando `ed_mensajes` con `rol: 'empleado'`).
+    - Búsqueda del nombre del local del último envío en `ed_envios_api` mediante huella SHA-256 (`cliente_id:telefono`). Si se conoce: `"Este número solo envía avisos de {local}. Para consultas, escríbele directamente al local."`; si no se conoce: `"Este número solo envía avisos automáticos. Para consultas, escríbele directamente al local."`.
+    - Destino tolerante a hilos `@lid`: responde al chat id original (conservando `@lid` si corresponde para que WAHA rutee al hilo activo).
+    - Exclusiones críticas respetadas: nunca responde a grupos (`@g.us`), mensajes broadcast ni estados (`status@`). A solicitudes de `BAJA` nunca responde con auto-respuesta genérica sino con la confirmación de desuscripción.
+    - Registro en `ed_mensajes` del asistente humano como trazabilidad.
+  - Actualizado `lib/poolNumeros.ts`:
+    - Documentado el rol `respuesta` como explícitamente reservado para futuras líneas bidireccionales dedicadas (hoy no se asigna en producción para evitar código muerto o roles engañosos).
+  - Creada suite de pruebas unitarias `tests/kambak-pool-respuestas.test.mjs` con 5 tests cubriendo: desactivación por defecto, envío con nombre de local cuando está activo, rate-limit 1/24h, mensajes de grupos ignorados, y desuscripción por BAJA con confirmación exclusiva.
+- **Archivos:** `lib/inboundWahaPool.ts`, `lib/poolNumeros.ts`, `tests/kambak-pool-respuestas.test.mjs`.
+- **Tests:** 5 tests nuevos en `tests/kambak-pool-respuestas.test.mjs` (119 tests del pool pasando en total). Lint 100% limpio (0 errores, 1 warning en página estática ajena).
+- **Decisiones:**
+  - *Desacoplamiento estricto:* La función de huella SHA-256 se genera localmente vía `node:crypto` para no forzar la importación de módulos pesados de envío saliente en el flujo de webhooks entrantes, preservando aislamiento modular y compatibilidad de mocks en tests existentes.
+- **Pendientes:** Pasar a Fase P9 (Visibilidad operativa).
+

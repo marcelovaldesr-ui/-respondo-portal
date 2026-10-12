@@ -10,7 +10,12 @@ import {
   analizarIntencionBaja,
   alertarHqLidNoResuelto,
 } from "@/lib/wahaPoolIdentidad";
+import { createHash } from "node:crypto";
 import { notificarHQ } from "@/lib/hqBridge";
+
+function huellaTelefono(clienteId: string, telefono: string): string {
+  return createHash("sha256").update(`${clienteId}:${telefono}`).digest("hex");
+}
 
 /**
  * PROCESAMIENTO DE WEBHOOKS ENTRANTES DEL POOL WAHA.
@@ -27,6 +32,7 @@ export type ResultadoInboundWahaPool = {
   accion: string;
   detalle?: string;
   duplicado?: boolean;
+  autorespuesta?: boolean;
 };
 
 export async function manejarEntranteWahaPool(
@@ -283,7 +289,64 @@ export async function manejarEntranteWahaPool(
       message_id: waId,
     });
 
-    return { accion: "cliente:solo_mensajeria", detalle: chatId };
+    let autorespuestaEnviada = false;
+    // Auto-respuesta opcional (detrás de WAHA_POOL_AUTORESPUESTA=1, default 0)
+    // Se envía como máximo una vez por contacto cada 24 horas.
+    if (process.env.WAHA_POOL_AUTORESPUESTA === "1") {
+      try {
+        const limite24h = new Date(Date.now() - 24 * 3600 * 1000).toISOString();
+        const { data: yaRespondido } = await supa
+          .from("ed_mensajes")
+          .select("id")
+          .eq("chat_id", chatId)
+          .eq("rol", "empleado")
+          .gte("creado_en", limite24h)
+          .limit(1)
+          .maybeSingle();
+
+        if (!yaRespondido) {
+          const hash = huellaTelefono(clienteId, idRes.telefono);
+          const { data: ultEnvio } = await supa
+            .from("ed_envios_api")
+            .select("origen_ref")
+            .eq("cliente_id", clienteId)
+            .eq("telefono_hash", hash)
+            .order("creado_en", { ascending: false })
+            .limit(1)
+            .maybeSingle();
+
+          const localNombre = ultEnvio?.origen_ref;
+          const textoAuto = localNombre
+            ? `Este número solo envía avisos de ${localNombre}. Para consultas, escríbele directamente al local.`
+            : `Este número solo envía avisos automáticos. Para consultas, escríbele directamente al local.`;
+
+          const destinoRespuesta = idRes.chatIdOriginal?.endsWith("@lid")
+            ? idRes.chatIdOriginal
+            : chatId;
+
+          await enviarTextoPool(sesion, destinoRespuesta, textoAuto).catch(() => undefined);
+          autorespuestaEnviada = true;
+
+          const tino = await tinoDe(clienteId);
+          if (tino) {
+            await guardarMensaje(supa, {
+              empleadoId: tino,
+              chatId,
+              rol: "empleado",
+              texto: textoAuto,
+            });
+          }
+        }
+      } catch (err) {
+        console.warn("[inboundWahaPool] error en autorespuesta:", (err as Error).message);
+      }
+    }
+
+    return {
+      accion: "cliente:solo_mensajeria",
+      detalle: chatId,
+      ...(autorespuestaEnviada ? { autorespuesta: true } : {}),
+    };
   }
 
   // 3) Estado de la sesión (session.status)
