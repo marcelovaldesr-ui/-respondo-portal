@@ -30,6 +30,7 @@ create table if not exists ed_waha_pool_estado (
   ultimo_chequeo_en           timestamptz not null default now(),
   alerta_inalcanzable_en      timestamptz,
   alerta_sin_capacidad_en     timestamptz,
+  ultimo_resumen_en           timestamptz,
   actualizado_en              timestamptz not null default now()
 );
 

@@ -244,3 +244,25 @@
   - *Desacoplamiento estricto:* La función de huella SHA-256 se genera localmente vía `node:crypto` para no forzar la importación de módulos pesados de envío saliente en el flujo de webhooks entrantes, preservando aislamiento modular y compatibilidad de mocks en tests existentes.
 - **Pendientes:** Pasar a Fase P9 (Visibilidad operativa).
 
+### Fase P9 (S) — Visibilidad Operativa y Señales de Calidad [H14]
+- **Hecho:**
+  - Creado `sql/consultas/kambak_pool_estado.sql` con 5 consultas operativas:
+    1. Estado de cada número con días reales de calentamiento, cuota, pausas y errores.
+    2. Agrupación de la cola en 24h por estado y motivo.
+    3. Tasa de entrega y fallo en 24h.
+    4. Bajas en 24h y 7 días.
+    5. Estado global de conectividad y fecha del último resumen diario.
+  - Actualizado `sql/326_waha_pool_v2.sql`:
+    - Añadida columna `ultimo_resumen_en timestamptz` a `ed_waha_pool_estado`.
+  - Actualizado `lib/poolSalud.ts`:
+    - `verificarCalidadPool`: evalúa en ventana de 24 horas:
+      - Tasa de fallo > 20% con >= 20 envíos por número: pausa preventivamente el chip durante 1 hora y genera alerta informativa a HQ.
+      - Tasa de BAJA > 3% con >= 30 envíos por campaña (`origen_ref`): emite alerta a HQ advirtiendo revisar contenido y segmentación.
+    - `emitirResumenDiarioPool`: a partir de las 21:30 Chile, recopila las métricas del día (total procesados, enviados, en cola, fallidos por motivo, bajas y números no activos), envía un resumen consolidado a HQ y marca `ultimo_resumen_en` en `ed_waha_pool_estado` (máximo 1 vez al día).
+    - `chequearWahaPool`: ampliado para reportar en `/api/salud` tanto el conteo de números sanos como la cantidad en cola y timestamp del mensaje más antiguo.
+  - Creada suite de pruebas unitarias `tests/kambak-pool-visibilidad.test.mjs` con 4 tests cubriendo señales de calidad (fallo y baja), resumen diario a las 21:30 con deduplicación por día, y métricas de `/api/salud`.
+- **Archivos:** `sql/consultas/kambak_pool_estado.sql`, `sql/326_waha_pool_v2.sql`, `lib/poolSalud.ts`, `tests/kambak-pool-visibilidad.test.mjs`.
+- **Tests:** 4 tests nuevos en `tests/kambak-pool-visibilidad.test.mjs` (123 tests del pool pasando en total). Lint 100% limpio (0 errores, 1 warning en página estática ajena).
+- **Decisiones:**
+  - *Pausas preventivas automáticas:* La tasa de fallo > 20% aplica una pausa preventiva de 1 hora con enfriamiento en lugar de un bloqueo permanente, permitiendo que la rotación pruebe otros chips sanos mientras el chip afectado descansa.
+- **Pendientes:** Pasar a Fase P10 (Cancelar envíos pendientes por campaña).

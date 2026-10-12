@@ -612,12 +612,221 @@ export async function revisarSaludPool(
   // 3) Verificar capacidad general en horario hábil
   await alertarSinCapacidadSiCorresponde(numeros, ahora);
 
+  // 4) Verificar calidad operativa y resumen diario (P9)
+  await verificarCalidadPool(supa, ahora);
+  await emitirResumenDiarioPool(supa, ahora);
+
   return out;
+}
+
+/**
+ * Señales de calidad del pool (P9 / H14):
+ * 1) Tasa de fallo > 20% en 24h con >= 20 envíos por número -> pausado preventivo (1h) y alerta a HQ.
+ * 2) Tasa de BAJA > 3% con >= 30 envíos por campaña (origen_ref) en 24h -> alerta a HQ.
+ */
+export async function verificarCalidadPool(
+  supa = db(),
+  ahora: Date = new Date(),
+): Promise<{
+  numerosPausadosPorCalidad: string[];
+  alertasCampanasBaja: string[];
+}> {
+  const out = {
+    numerosPausadosPorCalidad: [] as string[],
+    alertasCampanasBaja: [] as string[],
+  };
+
+  const limite24h = new Date(ahora.getTime() - 24 * 3600 * 1000).toISOString();
+
+  // 1. Tasa de fallo por número en 24h
+  const { data: numeros } = await supa
+    .from("ed_waha_numeros")
+    .select("*")
+    .in("estado", ["activo", "calentando"]);
+
+  for (const num of numeros ?? []) {
+    const { data: envios24h } = await supa
+      .from("ed_envios_api")
+      .select("id, estado")
+      .eq("sesion_waha", num.sesion)
+      .gte("creado_en", limite24h);
+
+    const total = envios24h?.length ?? 0;
+    if (total >= 20) {
+      const fallidos = envios24h?.filter((e) => e.estado === "fallido").length ?? 0;
+      const tasaFallo = fallidos / total;
+      if (tasaFallo > 0.20) {
+        const pct = Math.round(tasaFallo * 100);
+        const motivo = `Tasa de fallo elevada en 24h: ${pct}% (${fallidos}/${total})`;
+        const pausadoHasta = new Date(ahora.getTime() + 60 * 60 * 1000).toISOString();
+
+        await supa
+          .from("ed_waha_numeros")
+          .update({
+            estado: "pausado",
+            pausado_hasta: pausadoHasta,
+            ultimo_error: motivo,
+          })
+          .eq("id", num.id);
+
+        out.numerosPausadosPorCalidad.push(num.sesion);
+        await alertarNumeroAfectado(num, "pausado", motivo, supa, ahora);
+      }
+    }
+  }
+
+  // 2. Tasa de BAJA por campaña (origen_ref) en 24h
+  const { data: enviosCampana } = await supa
+    .from("ed_envios_api")
+    .select("origen_ref, estado, motivo")
+    .eq("canal", "waha")
+    .gte("creado_en", limite24h)
+    .not("origen_ref", "is", null);
+
+  const porCampana = new Map<string, { total: number; bajas: number }>();
+  for (const e of enviosCampana ?? []) {
+    const ref = e.origen_ref as string;
+    const actual = porCampana.get(ref) || { total: 0, bajas: 0 };
+    actual.total++;
+    if (e.motivo === "opt_out" || e.motivo === "opted_out") {
+      actual.bajas++;
+    }
+    porCampana.set(ref, actual);
+  }
+
+  for (const [ref, stats] of porCampana.entries()) {
+    if (stats.total >= 30) {
+      const tasaBaja = stats.bajas / stats.total;
+      if (tasaBaja > 0.03) {
+        const pct = (tasaBaja * 100).toFixed(1);
+        out.alertasCampanasBaja.push(ref);
+        try {
+          notificarHQ({
+            tipo: "info",
+            detalle: `Aviso Pool WAHA: Tasa de BAJA > 3% en campaña "${ref}" (${pct}%, ${stats.bajas}/${stats.total}). Revisar contenido/segmentación.`,
+          });
+        } catch {}
+      }
+    }
+  }
+
+  return out;
+}
+
+/**
+ * Resumen diario del pool WAHA a las 21:30 Chile (P9 / H14).
+ * Emite por notificarHQ: enviados, entregados, fallidos por motivo, bajas, en cola, números no activos.
+ * Se emite exactamente 1 vez por día (controlado por ed_waha_pool_estado.ultimo_resumen_en).
+ */
+export async function emitirResumenDiarioPool(
+  supa = db(),
+  ahora: Date = new Date(),
+  forzar = false,
+): Promise<boolean> {
+  if (!forzar) {
+    const partes = new Intl.DateTimeFormat("en-CA", {
+      timeZone: "America/Santiago",
+      hour: "numeric",
+      minute: "numeric",
+      hourCycle: "h23",
+    }).formatToParts(ahora);
+
+    const hora = parseInt(partes.find((p) => p.type === "hour")?.value ?? "0", 10);
+    const min = parseInt(partes.find((p) => p.type === "minute")?.value ?? "0", 10);
+
+    // Solo a partir de las 21:30 en Chile
+    if (hora < 21 || (hora === 21 && min < 30)) {
+      return false;
+    }
+  }
+
+  const strHoy = fechaChile(ahora);
+
+  // Verificar si ya se emitió hoy
+  const { data: estadoPool } = await supa
+    .from("ed_waha_pool_estado")
+    .select("*")
+    .eq("id", 1)
+    .maybeSingle();
+
+  if (!forzar && estadoPool?.ultimo_resumen_en) {
+    const ultimoResumenStr = fechaChile(new Date(estadoPool.ultimo_resumen_en));
+    if (ultimoResumenStr === strHoy) {
+      return false;
+    }
+  }
+
+  const tInicio = new Date(`${strHoy}T00:00:00Z`).toISOString();
+
+  // Envíos de hoy
+  const { data: envios } = await supa
+    .from("ed_envios_api")
+    .select("estado, motivo")
+    .eq("canal", "waha")
+    .gte("creado_en", tInicio);
+
+  const total = envios?.length ?? 0;
+  const entregados = envios?.filter((e) => e.estado === "sent" || e.estado === "delivered" || e.estado === "read").length ?? 0;
+  const enCola = envios?.filter((e) => e.estado === "en_cola" || e.estado === "enviando").length ?? 0;
+  const fallidos = envios?.filter((e) => e.estado === "fallido") ?? [];
+  const fallidosPorMotivo: Record<string, number> = {};
+  for (const f of fallidos) {
+    const m = f.motivo || "desconocido";
+    fallidosPorMotivo[m] = (fallidosPorMotivo[m] ?? 0) + 1;
+  }
+
+  // Bajas de hoy
+  const { count: bajasHoy } = await supa
+    .from("ed_contactos")
+    .select("*", { count: "exact", head: true })
+    .eq("no_contactar", true)
+    .gte("actualizado_en", tInicio);
+
+  // Números activos vs no activos
+  const { data: numeros } = await supa
+    .from("ed_waha_numeros")
+    .select("sesion, estado");
+
+  const noActivos = (numeros ?? [])
+    .filter((n) => n.estado !== "activo")
+    .map((n) => `${n.sesion} (${n.estado})`);
+
+  const fallidosTxt = Object.entries(fallidosPorMotivo)
+    .map(([m, c]) => `${m}: ${c}`)
+    .join(", ") || "0";
+
+  const noActivosTxt = noActivos.length > 0 ? noActivos.join(", ") : "ninguno";
+
+  const resumenTexto = `📊 RESUMEN DIARIO POOL WAHA (${strHoy})\n` +
+    `- Total procesados: ${total}\n` +
+    `- Entregados/enviados: ${entregados}\n` +
+    `- En cola / pendientes: ${enCola}\n` +
+    `- Fallidos: ${fallidos.length} (${fallidosTxt})\n` +
+    `- Bajas registradas: ${bajasHoy ?? 0}\n` +
+    `- Números no activos: ${noActivosTxt}`;
+
+  try {
+    notificarHQ({
+      tipo: "info",
+      detalle: resumenTexto,
+    });
+  } catch {}
+
+  await supa
+    .from("ed_waha_pool_estado")
+    .upsert({
+      id: 1,
+      ultimo_resumen_en: ahora.toISOString(),
+      actualizado_en: ahora.toISOString(),
+    });
+
+  return true;
 }
 
 /**
  * Chequeo de salud del pool WAHA para /api/salud.
  * Retorna ok: true (omitido) si WAHA_POOL_URL no está configurada y no está en modo simulado.
+ * Añade métricas operativas (números activos, en cola, más antigua en cola).
  */
 export async function chequearWahaPool(
   supa = db(),
@@ -647,6 +856,33 @@ export async function chequearWahaPool(
     };
   }
 
+  // Métricas de cola (P9)
+  let colaInfo = "";
+  try {
+    const { count: enCola } = await supa
+      .from("ed_envios_api")
+      .select("*", { count: "exact", head: true })
+      .eq("canal", "waha")
+      .eq("estado", "en_cola");
+
+    if (enCola && enCola > 0) {
+      const { data: masAntigua } = await supa
+        .from("ed_envios_api")
+        .select("creado_en")
+        .eq("canal", "waha")
+        .eq("estado", "en_cola")
+        .order("creado_en", { ascending: true })
+        .limit(1)
+        .maybeSingle();
+
+      colaInfo = `, ${enCola} en cola (más antigua: ${masAntigua?.creado_en || "desconocida"})`;
+    } else {
+      colaInfo = ", 0 en cola";
+    }
+  } catch {
+    // tolerante si la consulta falla
+  }
+
   const caidos: string[] = [];
   for (const n of activos) {
     const r = await estadoSesion(n.sesion);
@@ -659,12 +895,12 @@ export async function chequearWahaPool(
   if (caidos.length > 0) {
     return {
       ok: false,
-      detalle: `${caidos.length}/${activos.length} números con problemas: ${caidos.join(", ")}`,
+      detalle: `${caidos.length}/${activos.length} números con problemas: ${caidos.join(", ")}${colaInfo}`,
     };
   }
 
   return {
     ok: true,
-    detalle: `${activos.length} número(s) sanos (${activos.map((n) => n.sesion).join(", ")})`,
+    detalle: `${activos.length} número(s) sanos (${activos.map((n) => n.sesion).join(", ")})${colaInfo}`,
   };
 }
