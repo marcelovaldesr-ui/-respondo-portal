@@ -33,9 +33,74 @@ export async function GET(request: NextRequest) {
 
   const url = new URL(request.url);
   const slug = url.searchParams.get("slug") ?? "";
+  const modoParam = url.searchParams.get("modo");
+
+  if (modoParam === "catalogo") {
+    if (!slug) {
+      return NextResponse.json({ ok: false, error: "parametros" }, { status: 400 });
+    }
+    const { data: clienteCat } = await db()
+      .from("ed_clientes")
+      .select("id, nombre, rubro")
+      .eq("slug", slug)
+      .eq("reservas_online", true)
+      .eq("activo", true)
+      .maybeSingle();
+    if (!clienteCat) return NextResponse.json({ ok: false, error: "no_existe" }, { status: 404 });
+
+    const { data: servicios } = await db()
+      .from("ed_servicios")
+      .select("id, nombre, descripcion, duracion_min, precio_clp")
+      .eq("cliente_id", clienteCat.id)
+      .eq("activo", true)
+      .order("orden", { ascending: true });
+
+    if (!servicios || servicios.length === 0) {
+      return NextResponse.json({ ok: false, error: "sin_servicios" }, { status: 404 });
+    }
+
+    const { data: camposCrudos } = await db()
+      .from("ed_servicio_campos")
+      .select("id, servicio_id, etiqueta, tipo, opciones, obligatorio, ayuda, orden")
+      .in("servicio_id", servicios.map((s) => s.id as string))
+      .order("orden", { ascending: true });
+
+    const camposPorServicio = new Map<string, unknown[]>();
+    for (const c of camposCrudos ?? []) {
+      const sid = c.servicio_id as string;
+      camposPorServicio.set(sid, [...(camposPorServicio.get(sid) ?? []), c]);
+    }
+
+    const { data: profesionales } = await db()
+      .from("ed_profesionales")
+      .select("id, nombre")
+      .eq("cliente_id", clienteCat.id)
+      .eq("activo", true);
+
+    return NextResponse.json({
+      ok: true,
+      cliente: {
+        nombre: clienteCat.nombre as string,
+        rubro: (clienteCat.rubro as string) ?? "",
+      },
+      profesionales: (profesionales ?? []).map((p) => ({
+        id: p.id as string,
+        nombre: p.nombre as string,
+      })),
+      servicios: servicios.map((s) => ({
+        id: s.id as string,
+        nombre: s.nombre as string,
+        descripcion: (s.descripcion as string) ?? null,
+        duracionMin: s.duracion_min as number,
+        precioClp: (s.precio_clp as number) ?? null,
+        campos: camposPorServicio.get(s.id as string) ?? [],
+      })),
+    });
+  }
+
   const servicioId = url.searchParams.get("servicio") ?? "";
   const profesional = url.searchParams.get("profesional");
-  const modo = url.searchParams.get("modo") === "horas" ? "horas" : "dias";
+  const modo = modoParam === "horas" ? "horas" : "dias";
   if (!slug || !esUuid(servicioId)) {
     return NextResponse.json({ ok: false, error: "parametros" }, { status: 400 });
   }
