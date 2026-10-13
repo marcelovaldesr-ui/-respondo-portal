@@ -22,6 +22,7 @@ import { archivarPendientes } from "@/lib/archivarMedia";
 import { generarSeguimientosCotizacion } from "@/lib/generadorCotizacion";
 import { destilarPendientes } from "@/lib/isabelDestilado";
 import { procesarEventos } from "@/lib/ads/colaEventos";
+import { enviarResumenesDiariosAgenda } from "@/lib/resumenDiarioAgenda";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -292,6 +293,18 @@ export async function GET(request: NextRequest) {
     procesos,
   )) ?? { revisados: 0, avisados: 0, detalle: [] };
 
+  const resumenDiario = (await correrPaso(
+    "resumen_diario_agenda",
+    () => enviarResumenesDiariosAgenda({ supa }),
+    (x) => ({
+      ok: true,
+      trabajo: x.detalle[0] !== "fuera_de_ventana_matutina",
+      resumen: { revisados: x.revisados, enviados: x.enviados, omitidos: x.omitidos },
+      errores: x.errores,
+    }),
+    procesos,
+  )) ?? { revisados: 0, enviados: 0, omitidos: 0, detalle: [], errores: [] };
+
   // Acotado porque cada entrante puede invocar IA; el siguiente latido toma
   // los restantes sin arriesgar el timeout del cron principal.
   const webhooks = (await correrPaso(
@@ -478,6 +491,7 @@ export async function GET(request: NextRequest) {
     instagram,
     webhooks,
     cupos: { revisados: cupos.revisados, avisados: cupos.avisados },
+    resumenDiario: { revisados: resumenDiario.revisados, enviados: resumenDiario.enviados },
     // El detalle nombra conversaciones: va el conteo, no las líneas.
     reingresos,
     reconciliado,
