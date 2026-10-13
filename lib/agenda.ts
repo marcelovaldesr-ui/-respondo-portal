@@ -885,6 +885,21 @@ async function procesarCitaCompletada(
     });
   }
 
+  // Si el local no tiene su propia fila en ed_integraciones, reutiliza el
+  // webhook global de Kambak (`/api/hooks/respondo`) ya registrado en la base.
+  if (destinos.length === 0) {
+    const { data: globalKambak } = await supa
+      .from("ed_integraciones")
+      .select("url, secreto")
+      .eq("activo", true)
+      .ilike("url", "%/api/hooks/respondo%");
+    for (const row of globalKambak ?? []) {
+      const url = String(row.url ?? "").trim();
+      const secreto = String(row.secreto ?? "").trim();
+      if (url && secreto) destinos.push({ url, secreto });
+    }
+  }
+
   if (!destinos.length) return;
 
   const cuerpo = JSON.stringify({
