@@ -157,10 +157,10 @@ export async function generarMantenciones(
     }
 
     const datos = (c.datos as Record<string, string> | null) ?? {};
-    const vehiculo = String(datos.vehiculo ?? "").trim();
+    const vehiculo = String(datos.vehiculo || datos.ultimo_servicio || "").trim();
     const nombre = String(c.nombre ?? "").trim().split(/\s+/)[0] ?? "";
     if (!nombre || !vehiculo) {
-      // La plantilla necesita los cuatro parámetros. Sin moto o sin nombre no
+      // La plantilla necesita los cuatro parámetros. Sin moto/servicio o sin nombre no
       // se puede armar un mensaje que no suene a formulario, así que se salta
       // y queda anotado para que alguien complete la ficha.
       detalle.push(`${chatId}: ficha incompleta (${!nombre ? "sin nombre" : "sin moto"})`);
