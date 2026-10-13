@@ -3,6 +3,7 @@ import { exigirUsuarioPortal } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { formatearSlot, ZONA_AGENDA, fechaChileDe, horaChileAUtc } from "@/lib/agendaCore";
 import { estadoConexionGoogle } from "@/lib/estadoGoogleCore";
+import { calcularComisionesProfesionales } from "@/lib/comisionesAgenda";
 import CalendarioAgenda, { type CitaCal, type FranjaSemanal, type ProfCal } from "@/components/CalendarioAgenda";
 import NuevaCita from "@/components/NuevaCita";
 import AgendaSubnav from "@/components/agenda/AgendaSubnav";
@@ -31,7 +32,7 @@ type CitaFila = {
   estado: string;
   origen: string;
   profesional_id: string;
-  ed_servicios: { nombre: string; requiere_anticipo?: boolean; anticipo_monto_fijo?: number | null } | null;
+  ed_servicios: { nombre: string; precio_clp?: number | null; requiere_anticipo?: boolean; anticipo_monto_fijo?: number | null } | null;
   ed_profesionales: { nombre: string } | null;
   /** Ficha del servicio respondida al reservar (migración 277). */
   datos_extra?: Record<string, string> | null;
@@ -119,8 +120,14 @@ export default async function Agenda({
       // (Fase 2) También el estado de Google: si un calendario no se puede
       // comprobar, sus horas dejan de ofrecerse y el dueño tiene que saberlo
       // ACÁ, que es la pantalla que mira todos los días, no escondido en
-      // configuración. Reintento sin las columnas por si falta la 221/222.
+      // configuración. Reintento sin las columnas por si falta la 221/222 o 325.
       (async () => {
+        const conComision = await supa
+          .from("ed_profesionales")
+          .select("id, nombre, activo, comision_pct, gcal_sync, gcal_ultimo_error, gcal_ultima_sync")
+          .eq("cliente_id", usuario.clienteId)
+          .order("creado_en", { ascending: true });
+        if (!conComision.error) return conComision;
         const conGoogle = await supa
           .from("ed_profesionales")
           .select("id, nombre, activo, gcal_sync, gcal_ultimo_error, gcal_ultima_sync")
@@ -142,7 +149,7 @@ export default async function Agenda({
         const conCommerce = await supa
           .from("ed_citas")
           .select(
-            "id, nombre_contacto, telefono, chat_id, inicio, fin, estado, origen, profesional_id, datos_extra, clase_id, hold_expira_en, anticipo_pagado, pago_id, ed_servicios!servicio_id(nombre, requiere_anticipo, anticipo_monto_fijo), ed_profesionales!profesional_id(nombre)",
+            "id, nombre_contacto, telefono, chat_id, inicio, fin, estado, origen, profesional_id, datos_extra, clase_id, hold_expira_en, anticipo_pagado, pago_id, ed_servicios!servicio_id(nombre, precio_clp, requiere_anticipo, anticipo_monto_fijo), ed_profesionales!profesional_id(nombre)",
           )
           .eq("cliente_id", usuario.clienteId)
           .gte("inicio", desdeIso)
@@ -153,7 +160,7 @@ export default async function Agenda({
         const conFicha = await supa
           .from("ed_citas")
           .select(
-            "id, nombre_contacto, telefono, chat_id, inicio, fin, estado, origen, profesional_id, datos_extra, ed_servicios!servicio_id(nombre), ed_profesionales!profesional_id(nombre)",
+            "id, nombre_contacto, telefono, chat_id, inicio, fin, estado, origen, profesional_id, datos_extra, ed_servicios!servicio_id(nombre, precio_clp), ed_profesionales!profesional_id(nombre)",
           )
           .eq("cliente_id", usuario.clienteId)
           .gte("inicio", desdeIso)
@@ -163,7 +170,7 @@ export default async function Agenda({
         return supa
           .from("ed_citas")
           .select(
-            "id, nombre_contacto, telefono, chat_id, inicio, fin, estado, origen, profesional_id, ed_servicios!servicio_id(nombre), ed_profesionales!profesional_id(nombre)",
+            "id, nombre_contacto, telefono, chat_id, inicio, fin, estado, origen, profesional_id, ed_servicios!servicio_id(nombre, precio_clp), ed_profesionales!profesional_id(nombre)",
           )
           .eq("cliente_id", usuario.clienteId)
           .gte("inicio", desdeIso)
@@ -182,6 +189,7 @@ export default async function Agenda({
     id: string;
     nombre: string;
     activo: boolean;
+    comision_pct?: number | null;
     gcal_sync?: boolean | null;
     gcal_ultimo_error?: string | null;
     gcal_ultima_sync?: string | null;
@@ -337,6 +345,22 @@ export default async function Agenda({
   const bloqueoTapando = listaBloqueos.find(
     (b) => !b.profesional_id && Date.parse(b.desde) <= ahoraMs && Date.parse(b.hasta) > ahoraMs,
   );
+
+  const tieneComisionesConfiguradas = listaProfesionales.some((p) => (p.comision_pct ?? 0) > 0);
+  const resumenComisiones = tieneComisionesConfiguradas
+    ? calcularComisionesProfesionales({
+        profesionales: listaProfesionales
+          .filter((p) => p.activo || (p.comision_pct ?? 0) > 0)
+          .map((p) => ({ id: p.id, nombre: p.nombre, comisionPct: p.comision_pct ?? 0 })),
+        citas: listaCitas.map((c) => ({
+          id: c.id,
+          profesionalId: c.profesional_id,
+          estado: c.estado,
+          inicio: c.inicio,
+          precioClp: c.ed_servicios?.precio_clp ?? 0,
+        })),
+      })
+    : null;
 
   return (
     <main className="mx-auto max-w-6xl px-4 py-6 sm:px-6 lg:px-10 lg:py-9">
@@ -551,6 +575,62 @@ export default async function Agenda({
           citaInicial={citaInicial}
         />
       </div>
+
+      {/* ── Comisiones por profesional (últimos 30 días) ─────────────── */}
+      {resumenComisiones && (
+        <div className="tarjeta mt-6 p-5">
+          <div className="flex flex-wrap items-baseline justify-between gap-2">
+            <div>
+              <p className="text-[14.5px] font-bold">Comisiones por profesional (últimos 30 días)</p>
+              <p className="mt-0.5 text-[12.5px]" style={{ color: "var(--muted)" }}>
+                Calculado sobre citas marcadas como completadas con precio de servicio.
+              </p>
+            </div>
+            <Link href="/agenda/configuracion?s=profesionales" className="text-[12.5px] font-semibold" style={{ color: "var(--azul)" }}>
+              Ajustar porcentajes →
+            </Link>
+          </div>
+          <div className="mt-3 overflow-x-auto">
+            <table className="w-full text-left text-[13px]">
+              <thead>
+                <tr className="border-b" style={{ borderColor: "var(--borde)", color: "var(--muted)" }}>
+                  <th className="py-2 pr-3 font-semibold">Profesional</th>
+                  <th className="py-2 px-3 font-semibold">Atenciones</th>
+                  <th className="py-2 px-3 font-semibold">Vendido</th>
+                  <th className="py-2 px-3 font-semibold">% Comisión</th>
+                  <th className="py-2 pl-3 font-semibold">A pagar</th>
+                </tr>
+              </thead>
+              <tbody>
+                {resumenComisiones.filas.map((f) => (
+                  <tr key={f.profesionalId} className="border-b" style={{ borderColor: "var(--borde)" }}>
+                    <td className="py-2 pr-3 font-semibold">{f.nombre}</td>
+                    <td className="py-2 px-3">{f.atenciones}</td>
+                    <td className="py-2 px-3">${f.totalVendidoClp.toLocaleString("es-CL")}</td>
+                    <td className="py-2 px-3">{f.comisionPct}%</td>
+                    <td className="py-2 pl-3 font-bold" style={{ color: "var(--azul)" }}>
+                      ${f.comisionClp.toLocaleString("es-CL")}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+              <tfoot>
+                <tr className="font-bold">
+                  <td className="pt-2.5 pr-3">Total</td>
+                  <td className="pt-2.5 px-3">{resumenComisiones.totalAtenciones}</td>
+                  <td className="pt-2.5 px-3">${resumenComisiones.totalVendidoClp.toLocaleString("es-CL")}</td>
+                  <td className="pt-2.5 px-3">
+                    Local: ${resumenComisiones.totalRetencionLocalClp.toLocaleString("es-CL")}
+                  </td>
+                  <td className="pt-2.5 pl-3" style={{ color: "var(--azul)" }}>
+                    ${resumenComisiones.totalComisionClp.toLocaleString("es-CL")}
+                  </td>
+                </tr>
+              </tfoot>
+            </table>
+          </div>
+        </div>
+      )}
     </main>
   );
 }

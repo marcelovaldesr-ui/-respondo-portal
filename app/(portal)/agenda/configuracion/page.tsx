@@ -15,6 +15,7 @@ import {
   alternarServicio,
   eliminarServicio,
   crearProfesional,
+  configurarComisionProfesional,
   alternarProfesional,
   eliminarProfesional,
   agregarHorario,
@@ -46,6 +47,7 @@ type Profesional = {
   id: string;
   nombre: string;
   activo: boolean;
+  comision_pct?: number | null;
   gcal_id?: string | null;
   gcal_sync?: boolean | null;
   gcal_ultimo_error?: string | null;
@@ -96,13 +98,22 @@ export default async function ConfiguracionAgenda({
               .order("creado_en", { ascending: true })
           : r,
       ),
-    // Las columnas de Google son de las migraciones 221 y 222: si faltan, se
+    // Las columnas de Google (221/222) y comision_pct (325): si faltan, se
     // reintenta con juegos de columnas más chicos y la pantalla sigue andando.
     supa
       .from("ed_profesionales")
-      .select("id, nombre, activo, gcal_id, gcal_sync, gcal_ultimo_error, gcal_modo, gcal_oauth_email")
+      .select("id, nombre, activo, comision_pct, gcal_id, gcal_sync, gcal_ultimo_error, gcal_modo, gcal_oauth_email")
       .eq("cliente_id", usuario.clienteId)
       .order("creado_en", { ascending: true })
+      .then((r0) =>
+        r0.error
+          ? supa
+              .from("ed_profesionales")
+              .select("id, nombre, activo, gcal_id, gcal_sync, gcal_ultimo_error, gcal_modo, gcal_oauth_email")
+              .eq("cliente_id", usuario.clienteId)
+              .order("creado_en", { ascending: true })
+          : r0,
+      )
       .then((r) =>
         r.error
           ? supa
@@ -349,7 +360,24 @@ export default async function ConfiguracionAgenda({
                       </span>
                     )}
                   </div>
-                  <div className="flex shrink-0 gap-1.5">
+                  <div className="flex flex-wrap items-center gap-2 shrink-0">
+                    <form action={configurarComisionProfesional} className="flex items-center gap-1.5">
+                      <input type="hidden" name="id" value={p.id} />
+                      <label className="text-[12px]" style={{ color: "var(--muted)" }} title="Porcentaje de comisión sobre servicios completados">
+                        Comisión %
+                      </label>
+                      <input
+                        name="comision_pct"
+                        type="number"
+                        min={0}
+                        max={100}
+                        defaultValue={p.comision_pct ?? 0}
+                        className="campo min-h-[34px] w-[72px] px-2 py-1 text-[12.5px]"
+                      />
+                      <button type="submit" className="btn-suave min-h-[34px] px-2.5 text-[12px]">
+                        Guardar %
+                      </button>
+                    </form>
                     <form action={alternarProfesional}>
                       <input type="hidden" name="id" value={p.id} />
                       <input type="hidden" name="activo" value={String(p.activo)} />
@@ -398,8 +426,9 @@ export default async function ConfiguracionAgenda({
             );
           })}
         </div>
-        <FormularioAgregar action={crearProfesional} className="mt-4 flex gap-3">
+        <FormularioAgregar action={crearProfesional} className="mt-4 grid gap-3 sm:grid-cols-[1fr_150px_auto]">
           <input name="nombre" required className="campo" placeholder="Nombre (persona, sillón o sala)" />
+          <input name="comision_pct" type="number" min={0} max={100} className="campo" placeholder="% comisión (ej: 45)" />
           <button type="submit" className="btn-primario shrink-0 px-4 py-2 text-[14px]">Agregar</button>
         </FormularioAgregar>
       </Seccion>

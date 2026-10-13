@@ -251,8 +251,30 @@ export async function crearProfesional(formData: FormData) {
   const clienteId = await clienteActual();
   const nombre = texto(formData, "nombre");
   if (!nombre) return;
-  await db().from("ed_profesionales").insert({ cliente_id: clienteId, nombre });
+  const rawPct = texto(formData, "comision_pct");
+  const comisionPct = rawPct ? Math.min(100, Math.max(0, Math.round(Number(rawPct) || 0))) : 0;
+  const supa = db();
+  const conComision = await supa
+    .from("ed_profesionales")
+    .insert({ cliente_id: clienteId, nombre, comision_pct: comisionPct });
+  if (conComision.error) {
+    await supa.from("ed_profesionales").insert({ cliente_id: clienteId, nombre });
+  }
   revalidatePath("/agenda", "layout"); // "layout" = también /agenda/configuracion
+}
+
+export async function configurarComisionProfesional(formData: FormData) {
+  const clienteId = await clienteActual();
+  const id = texto(formData, "id");
+  if (!id) return;
+  const bruto = Number(texto(formData, "comision_pct"));
+  const comisionPct = Number.isFinite(bruto) ? Math.min(100, Math.max(0, Math.round(bruto))) : 0;
+  await db()
+    .from("ed_profesionales")
+    .update({ comision_pct: comisionPct })
+    .eq("id", id)
+    .eq("cliente_id", clienteId);
+  revalidatePath("/agenda", "layout");
 }
 
 export async function alternarProfesional(formData: FormData) {
