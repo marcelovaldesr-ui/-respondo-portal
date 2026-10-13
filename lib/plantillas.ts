@@ -78,7 +78,17 @@ export type Plantilla = {
 };
 
 /** Rubros que agendan horas. Los que no están acá no usan las citas. */
-const CON_AGENDA = ["estetica", "dental", "salud", "nutricion", "taller", "motos", "inmobiliaria"];
+const CON_AGENDA = [
+  "barberia",
+  "restaurante",
+  "estetica",
+  "dental",
+  "salud",
+  "nutricion",
+  "taller",
+  "motos",
+  "inmobiliaria",
+];
 /** Rubros que entregan un producto o trabajo terminado. */
 const CON_PEDIDOS = ["imprenta", "tienda", "retail"];
 

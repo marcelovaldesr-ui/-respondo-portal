@@ -128,6 +128,62 @@ export const PLANTILLAS: Record<
       },
     ],
   },
+
+  barberia: {
+    nombre: "Barbería y peluquería",
+    negocio: "Barbería La Clásica",
+    fichas: [
+      {
+        categoria: "precios",
+        titulo: "Precios de cortes y barba",
+        contenido:
+          "Corte clásico o degradado (fade): $12.000 (30 min). Perfilado de barba con toalla caliente: $8.000 (20 min). Pack Corte + Barba: $18.000 (45 min). Corte niño (hasta 10 años): $10.000.",
+      },
+      {
+        categoria: "servicios",
+        titulo: "Servicios y tarjeta de sellos",
+        contenido:
+          "Atendemos con reserva previa por WhatsApp o en nuestra página de reservas. Cada corte suma 1 sello en tu tarjeta digital de Kambak (Google Wallet / Apple Wallet): al juntar 6 sellos, el siguiente corte es gratis.",
+      },
+      {
+        categoria: "horarios",
+        titulo: "Horario de atención",
+        contenido:
+          "Lunes a viernes de 10:00 a 20:00, sábados de 10:00 a 18:00. Domingos cerrado.",
+      },
+      {
+        categoria: "politicas",
+        titulo: "Políticas de reserva",
+        contenido:
+          "Te enviamos recordatorio por WhatsApp con enlace para confirmar o reagendar. Rogamos avisar con al menos 3 horas de anticipación si no puedes asistir.",
+      },
+    ],
+  },
+
+  restaurante: {
+    nombre: "Restaurante y gastrobar",
+    negocio: "Restaurante El Roble",
+    fichas: [
+      {
+        categoria: "servicios",
+        titulo: "Reservas de mesa y carta",
+        contenido:
+          "Reservas de mesa para almuerzo y cena por WhatsApp o enlace web. Contamos con salón interior y terraza cubierta. Cada visita suma 1 sello en tu tarjeta de fidelización Kambak.",
+      },
+      {
+        categoria: "horarios",
+        titulo: "Horario de cocina",
+        contenido:
+          "Martes a sábado de 12:30 a 23:30, domingos de 12:30 a 17:00. Lunes cerrado.",
+      },
+      {
+        categoria: "politicas",
+        titulo: "Políticas de reserva de mesa",
+        contenido:
+          "Guardamos la mesa hasta 15 minutos después de la hora reservada. Para grupos de más de 8 personas coordinamos menú o anticipo por este mismo chat.",
+      },
+    ],
+  },
 };
 
 export const CATEGORIAS = [

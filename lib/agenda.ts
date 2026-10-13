@@ -12,6 +12,7 @@ import {
 } from "@/lib/agendaCore";
 import { ocupadosDesdeGoogle, sincronizarCita, quitarCitaDeGoogle } from "@/lib/agendaGoogle";
 import { notificarHQ } from "@/lib/hqBridge";
+import { firmar } from "@/lib/puenteSalida";
 
 /**
  * CAPA DE DATOS del módulo de agenda (F0) — el contrato "AccionesAgenda".
@@ -748,13 +749,15 @@ export async function cambiarEstado(
   citaId: string,
   estado: "confirmada" | "cancelada" | "no_show" | "completada",
   supa: SupabaseClient = db(),
+  opts?: { fetchImpl?: typeof fetch },
 ): Promise<{ ok: boolean; error?: string; encontrada?: boolean }> {
+  const ahoraIso = new Date().toISOString();
   const { data, error } = await supa
     .from("ed_citas")
-    .update({ estado, actualizado_en: new Date().toISOString() })
+    .update({ estado, actualizado_en: ahoraIso })
     .eq("id", citaId)
     .eq("cliente_id", clienteId)
-    .select("id, profesional_id")
+    .select("id, profesional_id, servicio_id, chat_id, telefono, nombre_contacto, fin")
     .maybeSingle();
   if (error) return { ok: false, error: error.message };
 
@@ -762,9 +765,153 @@ export async function cambiarEstado(
   if (data && (estado === "cancelada" || estado === "no_show")) {
     await quitarCitaDeGoogle(data.id as string, data.profesional_id as string, supa);
   }
+
+  // Cuando la cita se marca como "completada" ("Sí, se atendió" o encuesta de Vera):
+  // 1) Actualiza ultima_atencion y datos.ultimo_servicio en ed_contactos (destraba a Beto).
+  // 2) Avisa a Kambak con evento firmado `cita.completada` para sumar +1 sello.
+  if (data && estado === "completada") {
+    await procesarCitaCompletada(
+      clienteId,
+      {
+        id: data.id as string,
+        servicioId: (data.servicio_id as string | null) ?? null,
+        chatId: (data.chat_id as string | null) ?? null,
+        telefono: (data.telefono as string | null) ?? null,
+        nombreContacto: (data.nombre_contacto as string | null) ?? null,
+        fin: (data.fin as string | null) ?? ahoraIso,
+      },
+      supa,
+      opts?.fetchImpl,
+    );
+  }
+
   // `encontrada` distingue "se actualizó" de "ese id no es de este negocio":
   // quien llama no debe tocar nada más (seguimientos) si la cita no era suya.
   return { ok: true, encontrada: Boolean(data) };
+}
+
+async function procesarCitaCompletada(
+  clienteId: string,
+  cita: {
+    id: string;
+    servicioId: string | null;
+    chatId: string | null;
+    telefono: string | null;
+    nombreContacto: string | null;
+    fin: string;
+  },
+  supa: SupabaseClient,
+  fetchImpl: typeof fetch = fetch,
+): Promise<void> {
+  const telefonoLimpio = (cita.telefono || cita.chatId || "").replace(/\D/g, "");
+  const chatClave = cita.chatId || telefonoLimpio;
+
+  const [svcR, cliR, intR] = await Promise.all([
+    cita.servicioId
+      ? supa.from("ed_servicios").select("nombre").eq("id", cita.servicioId).maybeSingle()
+      : Promise.resolve({ data: null }),
+    supa.from("ed_clientes").select("slug").eq("id", clienteId).maybeSingle(),
+    supa
+      .from("ed_integraciones")
+      .select("id, url, secreto, eventos")
+      .eq("cliente_id", clienteId)
+      .eq("activo", true),
+  ]);
+
+  const nombreServicio = ((svcR.data as { nombre?: string } | null)?.nombre || "Atención").trim();
+
+  if (chatClave) {
+    try {
+      const { data: existente } = await supa
+        .from("ed_contactos")
+        .select("id, datos")
+        .eq("cliente_id", clienteId)
+        .eq("chat_id", chatClave)
+        .maybeSingle();
+
+      const datosPrevios =
+        ((existente as { datos?: Record<string, string> | null } | null)?.datos) ?? {};
+      const nuevosDatos = { ...datosPrevios, ultimo_servicio: nombreServicio };
+
+      if (existente) {
+        await supa
+          .from("ed_contactos")
+          .update({
+            ultima_atencion: cita.fin,
+            datos: nuevosDatos,
+          })
+          .eq("cliente_id", clienteId)
+          .eq("chat_id", chatClave);
+      } else {
+        await supa.from("ed_contactos").insert({
+          cliente_id: clienteId,
+          chat_id: chatClave,
+          nombre: cita.nombreContacto || `+${chatClave}`,
+          telefono: cita.telefono || chatClave,
+          ultima_atencion: cita.fin,
+          datos: nuevosDatos,
+        });
+      }
+    } catch {
+      // Best-effort: si falta la migración 282 (ultima_atencion), no bloquea el cierre.
+    }
+  }
+
+  const slug = ((cliR.data as { slug?: string | null } | null)?.slug || "").trim();
+  if (!slug || !telefonoLimpio) return;
+
+  const destinos: { url: string; secreto: string }[] = [];
+  for (const row of intR.data ?? []) {
+    const url = String(row.url ?? "").trim();
+    const secreto = String(row.secreto ?? "").trim();
+    const eventos = Array.isArray(row.eventos) ? (row.eventos as string[]) : [];
+    if (
+      url &&
+      secreto &&
+      (eventos.includes("cita.completada") || url.includes("/api/hooks/respondo"))
+    ) {
+      destinos.push({ url, secreto });
+    }
+  }
+
+  if (
+    destinos.length === 0 &&
+    process.env.KAMBAK_WEBHOOK_URL &&
+    process.env.KAMBAK_WEBHOOK_SECRET
+  ) {
+    destinos.push({
+      url: process.env.KAMBAK_WEBHOOK_URL.trim(),
+      secreto: process.env.KAMBAK_WEBHOOK_SECRET.trim(),
+    });
+  }
+
+  if (!destinos.length) return;
+
+  const cuerpo = JSON.stringify({
+    type: "cita.completada",
+    data: {
+      slug,
+      citaId: cita.id,
+      phone: telefonoLimpio,
+      nombre: cita.nombreContacto,
+      servicio: nombreServicio,
+    },
+  });
+
+  await Promise.allSettled(
+    destinos.map(async (d) => {
+      const sig = firmar(cuerpo, d.secreto);
+      await fetchImpl(d.url, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-respondo-signature": sig,
+          "x-respondo-firma": sig,
+        },
+        body: cuerpo,
+      });
+    }),
+  );
 }
 
 /**
