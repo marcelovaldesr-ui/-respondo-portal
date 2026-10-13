@@ -827,14 +827,22 @@ export default function CalendarioAgenda({
                     </form>
                   )}
                   {detalle.telefono && (
-                    <a
-                      href={`https://wa.me/${detalle.telefono.replace(/\D/g, "")}`}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="btn-suave block w-full px-4 py-2.5 text-center text-[14px]"
-                    >
-                      Escribir por WhatsApp
-                    </a>
+                    <div className="grid grid-cols-2 gap-2">
+                      <Link
+                        href={`/clientes/${encodeURIComponent(detalle.telefono.replace(/\D/g, ""))}`}
+                        className="btn-suave block w-full px-3 py-2.5 text-center text-[13.5px]"
+                      >
+                        Ver ficha e historial
+                      </Link>
+                      <a
+                        href={`https://wa.me/${detalle.telefono.replace(/\D/g, "")}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="btn-suave block w-full px-3 py-2.5 text-center text-[13.5px]"
+                      >
+                        WhatsApp
+                      </a>
+                    </div>
                   )}
 
                   <MoverHora
@@ -869,6 +877,14 @@ export default function CalendarioAgenda({
                 </>
               ) : (
                 <>
+                  {detalle.telefono && (
+                    <Link
+                      href={`/clientes/${encodeURIComponent(detalle.telefono.replace(/\D/g, ""))}`}
+                      className="btn-suave block w-full px-4 py-2.5 text-center text-[14px]"
+                    >
+                      Ver ficha e historial
+                    </Link>
+                  )}
                   <form action={accionReabrir}>
                     <input type="hidden" name="id" value={detalle.id} />
                     <button className="btn-suave w-full px-4 py-2.5 text-[14px]">Reabrir esta hora</button>

@@ -490,7 +490,16 @@ export default async function Agenda({
                 style={{ borderColor: "var(--borde)" }}
               >
                 <div className="min-w-0">
-                  <p className="truncate text-[13.5px] font-semibold">{c.nombre_contacto}</p>
+                  {c.chat_id || c.telefono ? (
+                    <Link
+                      href={`/clientes/${encodeURIComponent((c.chat_id ?? c.telefono ?? "").replace(/\D/g, ""))}`}
+                      className="truncate text-[13.5px] font-semibold hover:underline"
+                    >
+                      {c.nombre_contacto}
+                    </Link>
+                  ) : (
+                    <p className="truncate text-[13.5px] font-semibold">{c.nombre_contacto}</p>
+                  )}
                   <p className="truncate text-[12px]" style={{ color: "var(--muted)" }}>
                     {c.ed_servicios?.nombre ?? "Servicio"} · {etiquetaProxima(c.inicio, claveHoy)}
                   </p>

@@ -17,10 +17,23 @@ import type { Etapa } from "@/lib/embudo";
  */
 
 export type EventoCliente = {
-  tipo: "conversacion" | "resultado" | "escalacion" | "seguimiento" | "etapa";
+  tipo: "conversacion" | "resultado" | "escalacion" | "seguimiento" | "etapa" | "cita";
   fecha: string;
   titulo: string;
   detalle?: string;
+};
+
+export type CitaCliente = {
+  id: string;
+  inicio: string;
+  fin: string;
+  servicio: string;
+  profesional: string;
+  precioClp: number | null;
+  estado: string;
+  origen: string;
+  notas: string | null;
+  datosExtra: Record<string, string> | null;
 };
 
 export type ResumenCliente = {
@@ -45,6 +58,11 @@ export type FichaCliente = ResumenCliente & {
   /** Motivo de la etapa (Fase 1): «Perdido · Sin respuesta». */
   etapaMotivo: string | null;
   eventos: EventoCliente[];
+  /** Historial de citas de ed_citas (más reciente primero). */
+  citas: CitaCliente[];
+  visitasCompletadas: number;
+  inasistencias: number;
+  ultimaVisita: string | null;
 };
 
 /** Días completos entre una fecha y hoy. */
@@ -169,13 +187,37 @@ export async function listarClientes(
   return { items: lista, total: contactosR.count ?? lista.length };
 }
 
+/** Extrae los últimos 9 dígitos chilenos (9XXXXXXXX) o los dígitos limpios para cruzar chat_id y telefono. */
+export function claveTelefonoFicha(valor: string | null | undefined): string {
+  const digitos = String(valor ?? "").replace(/\D/g, "");
+  if (digitos.length >= 9 && digitos.slice(-9).startsWith("9")) {
+    return digitos.slice(-9);
+  }
+  return digitos;
+}
+
+const ETIQUETA_ESTADO_CITA: Record<string, string> = {
+  completada: "Asistió",
+  confirmada: "Confirmada",
+  agendada: "Agendada",
+  reagendada: "Reagendada",
+  no_show: "No llegó",
+  cancelada: "Cancelada",
+  pendiente_pago: "Pendiente de pago",
+};
+
 /**
- * Ficha completa: datos + línea de tiempo de todo lo que pasó con esa persona.
+ * Ficha completa: datos + historial de citas + línea de tiempo de todo lo que
+ * pasó con esa persona.
  *
  * La línea de tiempo agrupa los mensajes POR DÍA en vez de listar uno por uno:
  * un cliente con 200 mensajes generaría una lista imposible de leer, y lo que
  * interesa acá es "el 27 de julio hablamos", no cada línea del chat (para eso
  * está la bandeja, a un clic).
+ *
+ * Si la persona reservó por la página web o fue cargada en la agenda y todavía
+ * no tiene fila en `ed_contactos`, la ficha se arma igual desde sus citas en
+ * `ed_citas` para que el barbero o dueño siempre pueda abrirla desde `/agenda`.
  */
 export async function fichaCliente(
   clienteId: string,
@@ -184,40 +226,110 @@ export async function fichaCliente(
 ): Promise<FichaCliente | null> {
   const supa = supaOpt ?? db();
   const ids = await empleadosDe(clienteId, supa);
-  if (!ids.length) return null;
 
-  const { data: contacto } = await supa
-    .from("ed_contactos")
-    .select("chat_id, nombre, telefono, email, notas, etiquetas, etapa, etapa_en, etapa_motivo, ultimo_empleado_id, ultimo_mensaje_en, total_mensajes")
-    .eq("cliente_id", clienteId) // barrera de acceso
-    .eq("chat_id", chatId)
-    .maybeSingle();
-  if (!contacto) return null;
-
-  const [mensajesR, resultadosR, escalacionesR, seguimientosR, tinoR] = await Promise.all([
+  const [{ data: contacto }, citasBrutasR, serviciosR, profesionalesR] = await Promise.all([
     supa
-      .from("ed_mensajes")
-      .select("rol, texto, creado_en, empleado_id")
-      .in("empleado_id", ids)
+      .from("ed_contactos")
+      .select("chat_id, nombre, telefono, email, notas, etiquetas, etapa, etapa_en, etapa_motivo, ultimo_empleado_id, ultimo_mensaje_en, total_mensajes")
+      .eq("cliente_id", clienteId) // barrera de acceso
       .eq("chat_id", chatId)
-      .order("creado_en", { ascending: true })
-      .limit(1000),
-    supa.from("ed_resultados").select("tipo, creado_en").in("empleado_id", ids).eq("chat_id", chatId),
-    supa
-      .from("ed_escalaciones")
-      .select("trigger, resumen, creado_en, atendida_en")
-      .in("empleado_id", ids)
-      .eq("chat_id", chatId),
-    supa
-      .from("ed_seguimientos")
-      .select("tipo, enviado_en, respuesta_recibida")
-      .in("empleado_id", ids)
-      .eq("chat_id", chatId)
-      .not("enviado_en", "is", null)
-      // La ficha no puede decir "se le envió" algo que se descartó.
-      .is(COL_DESCARTADO, null),
-    supa.from("ed_empleados").select("id").eq("cliente_id", clienteId).eq("rol", "tino").maybeSingle(),
+      .maybeSingle(),
+    (async () => {
+      const conDatosExtra = await supa
+        .from("ed_citas")
+        .select("id, servicio_id, profesional_id, chat_id, nombre_contacto, telefono, inicio, fin, estado, origen, notas, datos_extra")
+        .eq("cliente_id", clienteId)
+        .order("inicio", { ascending: false })
+        .limit(500);
+      if (!conDatosExtra.error) return conDatosExtra;
+      return supa
+        .from("ed_citas")
+        .select("id, servicio_id, profesional_id, chat_id, nombre_contacto, telefono, inicio, fin, estado, origen, notas")
+        .eq("cliente_id", clienteId)
+        .order("inicio", { ascending: false })
+        .limit(500);
+    })(),
+    supa.from("ed_servicios").select("id, nombre, precio_clp").eq("cliente_id", clienteId),
+    supa.from("ed_profesionales").select("id, nombre").eq("cliente_id", clienteId),
   ]);
+
+  const claveBuscada = claveTelefonoFicha(chatId);
+  const mapaServicios = new Map<string, { nombre: string; precioClp: number | null }>();
+  for (const s of serviciosR.data ?? []) {
+    mapaServicios.set(s.id as string, {
+      nombre: (s.nombre as string) || "Servicio",
+      precioClp: (s.precio_clp as number | null) ?? null,
+    });
+  }
+  const mapaProfesionales = new Map<string, string>();
+  for (const p of profesionalesR.data ?? []) {
+    mapaProfesionales.set(p.id as string, (p.nombre as string) || "—");
+  }
+
+  const filasCitas = (citasBrutasR.data ?? []).filter((c) => {
+    if (c.chat_id === chatId || c.telefono === chatId) return true;
+    if (!claveBuscada) return false;
+    return (
+      claveTelefonoFicha(c.chat_id as string | null) === claveBuscada ||
+      claveTelefonoFicha(c.telefono as string | null) === claveBuscada
+    );
+  });
+
+  if (!contacto && filasCitas.length === 0) return null;
+
+  const citas: CitaCliente[] = filasCitas.map((c) => {
+    const svc = mapaServicios.get(c.servicio_id as string);
+    const prof = mapaProfesionales.get(c.profesional_id as string);
+    return {
+      id: c.id as string,
+      inicio: c.inicio as string,
+      fin: c.fin as string,
+      servicio: svc?.nombre ?? "Servicio",
+      profesional: prof ?? "—",
+      precioClp: svc?.precioClp ?? null,
+      estado: (c.estado as string) || "agendada",
+      origen: (c.origen as string) || "portal",
+      notas: (c.notas as string | null) ?? null,
+      datosExtra: ((c as { datos_extra?: Record<string, string> | null }).datos_extra ?? null),
+    };
+  });
+
+  const visitasCompletadas = citas.filter((c) => c.estado === "completada").length;
+  const inasistencias = citas.filter((c) => c.estado === "no_show").length;
+  const ultimaVisita = citas.find((c) => c.estado === "completada")?.inicio ?? null;
+
+  const [mensajesR, resultadosR, escalacionesR, seguimientosR, tinoR] = ids.length
+    ? await Promise.all([
+        supa
+          .from("ed_mensajes")
+          .select("rol, texto, creado_en, empleado_id")
+          .in("empleado_id", ids)
+          .eq("chat_id", chatId)
+          .order("creado_en", { ascending: true })
+          .limit(1000),
+        supa.from("ed_resultados").select("tipo, creado_en").in("empleado_id", ids).eq("chat_id", chatId),
+        supa
+          .from("ed_escalaciones")
+          .select("trigger, resumen, creado_en, atendida_en")
+          .in("empleado_id", ids)
+          .eq("chat_id", chatId),
+        supa
+          .from("ed_seguimientos")
+          .select("tipo, enviado_en, respuesta_recibida")
+          .in("empleado_id", ids)
+          .eq("chat_id", chatId)
+          .not("enviado_en", "is", null)
+          // La ficha no puede decir "se le envió" algo que se descartó.
+          .is(COL_DESCARTADO, null),
+        supa.from("ed_empleados").select("id").eq("cliente_id", clienteId).eq("rol", "tino").maybeSingle(),
+      ])
+    : [
+        { data: [] },
+        { data: [] },
+        { data: [] },
+        { data: [] },
+        { data: null },
+      ];
 
   const mensajes = mensajesR.data ?? [];
   const eventos: EventoCliente[] = [];
@@ -238,6 +350,16 @@ export async function fichaCliente(
       tipo: "conversacion",
       fecha: d.ultimo,
       titulo: `${d.n} mensaje${d.n === 1 ? "" : "s"} intercambiados`,
+    });
+  }
+
+  for (const c of citas) {
+    const etiquetaEstado = ETIQUETA_ESTADO_CITA[c.estado] ?? c.estado;
+    eventos.push({
+      tipo: "cita",
+      fecha: c.inicio,
+      titulo: `Cita: ${c.servicio} (${etiquetaEstado})`,
+      detalle: c.profesional !== "—" ? `Con ${c.profesional}` : undefined,
     });
   }
 
@@ -279,7 +401,7 @@ export async function fichaCliente(
     });
   }
 
-  if (contacto.etapa_en) {
+  if (contacto?.etapa_en) {
     eventos.push({
       tipo: "etapa",
       fecha: contacto.etapa_en as string,
@@ -289,7 +411,8 @@ export async function fichaCliente(
 
   eventos.sort((a, b) => b.fecha.localeCompare(a.fecha)); // más reciente arriba
 
-  const primera = mensajes[0]?.creado_en as string | undefined;
+  const primeraCita = filasCitas.length ? (filasCitas[filasCitas.length - 1].inicio as string) : undefined;
+  const primera = (mensajes[0]?.creado_en as string | undefined) ?? primeraCita;
   /**
    * (Fase 1) «Último contacto» y el conteo salen del resumen que mantiene el
    * trigger de la 250. Los mensajes de arriba vienen en orden ascendente con
@@ -297,21 +420,26 @@ export async function fichaCliente(
    * ficha decía «hace 40 días» de alguien que escribió hoy.
    */
   const ultima =
-    (contacto.ultimo_mensaje_en as string | null) ?? (mensajes[mensajes.length - 1]?.creado_en as string | undefined);
-  const etiquetasContacto = ((contacto.etiquetas as string[] | null) ?? []);
+    (contacto?.ultimo_mensaje_en as string | null) ??
+    (mensajes[mensajes.length - 1]?.creado_en as string | undefined) ??
+    ultimaVisita;
+  const etiquetasContacto = ((contacto?.etiquetas as string[] | null) ?? []);
   const cotizaciones =
     (resultadosR.data ?? []).filter((r) => r.tipo === "cotizacion_enviada").length ||
     (etiquetasContacto.includes("cotizacion") ? 1 : 0);
 
+  const nombreRespaldo = (filasCitas[0]?.nombre_contacto as string | undefined) || `+${chatId}`;
+  const telefonoRespaldo = (filasCitas[0]?.telefono as string | null) ?? null;
+
   return {
     chatId,
-    nombre: (contacto.nombre as string) || `+${chatId}`,
-    telefono: (contacto.telefono as string) ?? null,
-    email: (contacto.email as string) ?? null,
-    notas: (contacto.notas as string) ?? null,
-    etiquetas: ((contacto.etiquetas as string[] | null) ?? []),
-    etapa: (((contacto.etapa as string) ?? "nuevo") as Etapa),
-    mensajes: (contacto.total_mensajes as number | null) || mensajes.length,
+    nombre: (contacto?.nombre as string) || nombreRespaldo,
+    telefono: (contacto?.telefono as string) ?? telefonoRespaldo,
+    email: (contacto?.email as string) ?? null,
+    notas: (contacto?.notas as string) ?? null,
+    etiquetas: etiquetasContacto,
+    etapa: (((contacto?.etapa as string) ?? (visitasCompletadas > 0 ? "ganado" : "agendado")) as Etapa),
+    mensajes: (contacto?.total_mensajes as number | null) || mensajes.length,
     primeraVez: primera ?? null,
     ultimaVez: ultima ?? null,
     diasSinHablar: diasDesde(ultima ?? null),
@@ -320,15 +448,19 @@ export async function fichaCliente(
     // Con quién abrir el chat: el último empleado que habló (si es del
     // negocio); si no, Tino. Antes era siempre Tino.
     empleadoId:
-      (ids.includes(contacto.ultimo_empleado_id as string) ? (contacto.ultimo_empleado_id as string) : null) ??
+      (ids.includes(contacto?.ultimo_empleado_id as string) ? (contacto?.ultimo_empleado_id as string) : null) ??
       (tinoR.data?.id as string) ??
       "",
-    etapaMotivo: (contacto.etapa_motivo as string | null) ?? null,
+    etapaMotivo: (contacto?.etapa_motivo as string | null) ?? null,
     eventos,
+    citas,
+    visitasCompletadas,
+    inasistencias,
+    ultimaVisita,
   };
 }
 
-/** Guarda los datos editables de la ficha. Filtra por cliente (barrera). */
+/** Guarda los datos editables de la ficha. Filtra por cliente (barrera) y crea el contacto si solo existía en citas. */
 export async function guardarDatosCliente(
   clienteId: string,
   chatId: string,
@@ -341,6 +473,23 @@ export async function guardarDatosCliente(
     const s = (v ?? "").trim();
     limpio[k] = s === "" ? null : s.slice(0, 2000);
   }
+  const { data: existente } = await supa
+    .from("ed_contactos")
+    .select("chat_id")
+    .eq("cliente_id", clienteId)
+    .eq("chat_id", chatId)
+    .maybeSingle();
+
+  if (!existente) {
+    const { error: errIns } = await supa.from("ed_contactos").insert({
+      cliente_id: clienteId,
+      chat_id: chatId,
+      ...limpio,
+      actualizado_en: new Date().toISOString(),
+    });
+    return errIns ? { ok: false, error: errIns.message } : { ok: true };
+  }
+
   const { error } = await supa
     .from("ed_contactos")
     .update({ ...limpio, actualizado_en: new Date().toISOString() })
