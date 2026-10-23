@@ -398,14 +398,21 @@ async function ejecutarSobreHijo(
       const hasta = localChileAUtc(`${txt(d.hasta, 10)}T23:59`);
       if (!desde || !hasta || hasta < desde) return fallo(400, "Revisa las fechas.");
       if (hasta.getTime() - desde.getTime() > 62 * 86_400_000) return fallo(400, "Rango muy largo.");
-      const { data } = await supa
+      // Las relaciones llevan el nombre de la columna (`!servicio_id`): desde la migración 272
+      // ed_citas tiene dos llaves hacia ed_servicios/ed_profesionales y sin ese aviso la consulta
+      // es ambigua, la base la rechaza y el panel mostraba «0 reservas» sin ningún error.
+      const { data, error } = await supa
         .from("ed_citas")
-        .select("id, inicio, fin, estado, nombre_contacto, telefono, origen, notas, datos_extra, servicio_id, profesional_id, ed_servicios(nombre, precio_clp), ed_profesionales(nombre)")
+        .select("id, inicio, fin, estado, nombre_contacto, telefono, origen, notas, datos_extra, servicio_id, profesional_id, ed_servicios!servicio_id(nombre, precio_clp), ed_profesionales!profesional_id(nombre)")
         .eq("cliente_id", hijoId)
         .gte("inicio", desde.toISOString())
         .lte("inicio", hasta.toISOString())
         .order("inicio", { ascending: true })
         .limit(300);
+      if (error) {
+        console.error("[kambak-agenda] citas.listar:", error.message);
+        return fallo(500, "No se pudieron cargar las reservas. Intenta de nuevo.");
+      }
       return ok({ citas: data ?? [] });
     }
 
