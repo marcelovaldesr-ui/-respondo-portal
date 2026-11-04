@@ -22,7 +22,7 @@ import { idsEmpleadosDeCliente } from "@/lib/empleadosCache";
 import { responderSiBot } from "@/lib/responderBot";
 import { esSoloMensajeria } from "@/lib/soloMensajeria";
 import { esMensajeDeBaja, registrarBaja, CONFIRMACION_BAJA } from "@/lib/bajas";
-import { emitirEvento } from "@/lib/webhookSalida";
+import { emitirBrainroot, emitirEvento } from "@/lib/webhookSalida";
 import { empleadoParaEntrante } from "@/lib/seguimientos";
 import { fechaLimiteModelo } from "@/lib/presupuesto";
 import { transporteDe } from "@/lib/transporte";
@@ -198,6 +198,17 @@ export async function manejarEntranteMeta(
       canal: "whatsapp",
     });
     await setModo(empleadoId, chatId, "humano", supa);
+    // Cuentas de solo mensajería (Kambak): BrainRoot recibe una copia de lo que
+    // la persona escribió desde el celular. Solo BrainRoot; kambak.cl no.
+    if (await esSoloMensajeria(cfgEco.clienteId, supa)) {
+      await emitirBrainroot(cfgEco.clienteId, "message.outbound", `outbound:${eco.waId ?? `${chatId}:${Date.now()}`}`, {
+        to: `+${chatId}`,
+        type: eco.tipoMeta ?? "text",
+        text: (eco.texto ?? "").slice(0, 1000),
+        message_id: eco.waId,
+        timestamp: eco.timestamp ?? Math.floor(Date.now() / 1000),
+      });
+    }
     /**
      * Una PERSONA le escribió al cliente: eso ES atender. La escalación se
      * cierra acá igual que cuando responde desde el portal; si no, "te
@@ -394,12 +405,23 @@ export async function manejarEntranteMeta(
     if (await esSoloMensajeria(cfg.clienteId, supa)) {
       let detalle: string | undefined;
       const wamid = m.waId ?? `${chatId}:${Date.now()}`;
-      await emitirEvento(cfg.clienteId, "message.inbound", `inbound:${wamid}`, {
-        from: `+${chatId}`,
-        type: m.tipo,
-        text: (m.texto ?? "").slice(0, 1000),
-        message_id: m.waId,
-      });
+      await emitirEvento(
+        cfg.clienteId,
+        "message.inbound",
+        `inbound:${wamid}`,
+        {
+          from: `+${chatId}`,
+          type: m.tipo,
+          text: (m.texto ?? "").slice(0, 1000),
+          message_id: m.waId,
+        },
+        // Solo en la copia hacia BrainRoot: kambak.cl recibe el mismo evento de siempre.
+        {
+          name: m.nombre ?? null,
+          timestamp: m.timestamp ?? Math.floor(Date.now() / 1000),
+          ...(m.referralMeta ? { referral: m.referralMeta } : {}),
+        },
+      );
       // BAJA nativa: se marca ANTES de cualquier otra cosa, y se avisa a Kambak.
       if (esMensajeDeBaja(m.texto)) {
         detalle = "baja";

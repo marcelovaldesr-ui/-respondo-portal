@@ -29,6 +29,10 @@ export type EntranteNormalizado = {
   referencia?: Referencia;
   /** Adjunto que mandó el cliente, si el mensaje traía uno. Ver `AdjuntoMeta`. */
   adjunto?: AdjuntoMeta;
+  /** `timestamp` de Meta (segundos Unix), si viene. */
+  timestamp?: number;
+  /** El objeto `referral` de Meta TAL CUAL (para la copia hacia BrainRoot). */
+  referralMeta?: Record<string, unknown>;
 };
 
 /**
@@ -166,6 +170,7 @@ export function parsearWebhook(payload: unknown): EntranteNormalizado[] {
             id?: string;
             from?: string;
             type?: string;
+            timestamp?: string;
             text?: { body?: string };
             image?: { id?: string; mime_type?: string; caption?: string };
             video?: { id?: string; mime_type?: string; caption?: string };
@@ -318,6 +323,8 @@ export function parsearWebhook(payload: unknown): EntranteNormalizado[] {
           waId: m.id ?? null,
           ...(referencia ? { referencia } : {}),
           ...(adjunto ? { adjunto } : {}),
+          ...(Number.isFinite(Number(m.timestamp)) && m.timestamp ? { timestamp: Number(m.timestamp) } : {}),
+          ...(ref ? { referralMeta: ref as Record<string, unknown> } : {}),
         });
       }
     }

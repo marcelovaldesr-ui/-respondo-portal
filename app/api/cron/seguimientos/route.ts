@@ -24,7 +24,7 @@ import { generarSeguimientosCotizacion } from "@/lib/generadorCotizacion";
 import { destilarPendientes } from "@/lib/isabelDestilado";
 import { procesarEventos } from "@/lib/ads/colaEventos";
 import { drenarCola } from "@/lib/kambakEnvios";
-import { procesarEventosPendientes } from "@/lib/webhookSalida";
+import { procesarEventosBrainroot, procesarEventosPendientes } from "@/lib/webhookSalida";
 import { enviarResumenesDiariosAgenda } from "@/lib/resumenDiarioAgenda";
 
 export const dynamic = "force-dynamic";
@@ -90,6 +90,7 @@ export async function GET(request: NextRequest) {
    * · reintentos del webhook hacia Kambak (espera creciente)
    */
   await correrPaso("webhook_kambak", () => procesarEventosPendientes(), (x) => ({ ok: true, trabajo: x.revisados > 0, resumen: x }), procesos);
+  await correrPaso("webhook_brainroot", () => procesarEventosBrainroot(), (x) => ({ ok: true, trabajo: x.revisados > 0, resumen: x }), procesos);
 
   /** · envíos de Kambak que esperaron el horario (9:00 a 21:00 de Chile) */
   await correrPaso("cola_kambak", () => drenarCola(), (x) => ({ ok: true, trabajo: x.enviados + x.fallidos + x.omitidos > 0, resumen: x }), procesos);

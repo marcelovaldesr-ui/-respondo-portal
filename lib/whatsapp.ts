@@ -659,6 +659,10 @@ export type EcoMeta = {
    * oficial y empezó a importar.
    */
   adjunto?: { id: string; tipo: string; mime?: string | null; nombre?: string | null };
+  /** Tipo tal como lo manda Meta (text, image, document…). */
+  tipoMeta?: string;
+  /** `timestamp` de Meta (segundos Unix), si viene. */
+  timestamp?: number;
 };
 
 /** Extrae los ecos de Coexistencia (message_echoes) de un payload de Meta. */
@@ -673,6 +677,7 @@ export function parsearEcosMeta(payload: unknown): EcoMeta[] {
             id?: string;
             to?: string;
             type?: string;
+            timestamp?: string;
             text?: { body?: string };
             image?: { id?: string; mime_type?: string; caption?: string };
             video?: { id?: string; mime_type?: string; caption?: string };
@@ -740,6 +745,8 @@ export function parsearEcosMeta(payload: unknown): EcoMeta[] {
           texto,
           waId: e.id ?? null,
           ...(adjunto ? { adjunto } : {}),
+          tipoMeta: tipo,
+          ...(e.timestamp && Number.isFinite(Number(e.timestamp)) ? { timestamp: Number(e.timestamp) } : {}),
         });
       }
     }
