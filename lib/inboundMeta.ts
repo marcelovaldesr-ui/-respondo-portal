@@ -22,7 +22,8 @@ import { idsEmpleadosDeCliente } from "@/lib/empleadosCache";
 import { responderSiBot } from "@/lib/responderBot";
 import { esSoloMensajeria } from "@/lib/soloMensajeria";
 import { esMensajeDeBaja, registrarBaja, CONFIRMACION_BAJA } from "@/lib/bajas";
-import { emitirBrainroot, emitirEvento } from "@/lib/webhookSalida";
+import { emitirBrainroot, emitirEvento, procesarEventosBrainroot } from "@/lib/webhookSalida";
+import { parsearHistorialMeta } from "@/lib/parserMeta";
 import { empleadoParaEntrante } from "@/lib/seguimientos";
 import { fechaLimiteModelo } from "@/lib/presupuesto";
 import { transporteDe } from "@/lib/transporte";
@@ -138,6 +139,57 @@ export async function manejarEntranteMeta(
       accion: "ack",
       detalle: `${ack.estado}${r.encontrado === false ? " (ajeno)" : ""}`,
     });
+  }
+
+  /**
+   * 0.b) HISTORIAL DE COEXISTENCIA (webhook "history", 3-nov-2026).
+   * NO se guarda en la bandeja ni dispara respuestas: son chats viejos. Para las
+   * cuentas de solo mensajería (Kambak) se reenvía a BrainRoot, un evento por
+   * hilo y por parte, y se entrega por lotes al final.
+   */
+  const historial = parsearHistorialMeta(payload);
+  if (historial.hilos.length || historial.errores.length) {
+    let encolados = 0;
+    for (const err of historial.errores) {
+      const cfg = await configPorPhoneId(err.phoneNumberId);
+      if (!cfg) continue;
+      console.error("[meta history] Meta rechazó el historial", { code: err.code });
+      await emitirBrainroot(cfg.clienteId, "history.error", `history-error:${err.code ?? "x"}`, {
+        code: err.code,
+        message: err.message.slice(0, 300),
+      });
+      resultados.push({ accion: "historial_rechazado", detalle: String(err.code ?? "") });
+    }
+    for (const h of historial.hilos) {
+      const cfg = await configPorPhoneId(h.phoneNumberId);
+      if (!cfg) {
+        resultados.push({ accion: "historial_sin_cliente", detalle: h.phoneNumberId });
+        continue;
+      }
+      await emitirBrainroot(
+        cfg.clienteId,
+        "history.thread",
+        `history:${h.phase ?? "x"}:${h.chunk_order ?? "x"}:${h.thread}`,
+        {
+          thread: `+${h.thread}`,
+          phase: h.phase,
+          chunk_order: h.chunk_order,
+          progress: h.progress,
+          messages: h.messages.map((m) => ({
+            ...m,
+            from: m.from ? `+${m.from.replace(/^\+/, "")}` : m.from,
+            ...(m.to ? { to: `+${m.to.replace(/^\+/, "")}` } : {}),
+          })),
+        },
+        { soloEncolar: true },
+      );
+      encolados++;
+    }
+    if (encolados) {
+      // Entrega por lotes dentro de esta misma invocación; lo que quede lo saca el cron.
+      await procesarEventosBrainroot(new Date(), 40).catch(() => undefined);
+      resultados.push({ accion: "historial", detalle: `${encolados} hilos` });
+    }
   }
 
   // 1) Ecos de Coexistencia (mensajes salientes del número del negocio).

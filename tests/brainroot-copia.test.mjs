@@ -237,3 +237,68 @@ test("lo que la persona escribe desde el celular (eco de Coexistencia) va SOLO a
   await manejarEntranteMeta(eco, { sinDebounce: true, enviar: async () => ({ ok: true }) });
   assert.equal(de("br").length, 1);
 });
+
+function payloadHistorial(history) {
+  return {
+    object: "whatsapp_business_account",
+    entry: [{ id: "WABA", changes: [{ field: "history", value: {
+      messaging_product: "whatsapp",
+      metadata: { display_phone_number: "56985761941", phone_number_id: "PHONE_K" },
+      history,
+    } }] }],
+  };
+}
+
+test("historial de Coexistencia: va a BrainRoot por hilo, sin tocar la bandeja ni kambak.cl", async () => {
+  const p = payloadHistorial([{
+    metadata: { phase: 1, chunk_order: 2, progress: 55 },
+    threads: [{
+      id: "56911112222",
+      messages: [
+        { from: "56911112222", id: "wamid.H1", timestamp: "1761000000", type: "text", text: { body: "Hola, vi el anuncio" }, history_context: { status: "READ" } },
+        { from: "56985761941", to: "56911112222", id: "wamid.H2", timestamp: "1761000100", type: "text", text: { body: "¡Hola! Te cuento" }, history_context: { status: "DELIVERED" } },
+        { from: "56911112222", id: "wamid.H3", timestamp: "1761000200", type: "media_placeholder", history_context: { status: "READ" } },
+      ],
+    }, {
+      id: "56933334444",
+      messages: [{ from: "56933334444", id: "wamid.H4", timestamp: "1761000300", type: "image", image: { caption: "esto" } }],
+    }],
+  }]);
+  const r = await manejarEntranteMeta(p, { sinDebounce: true, enviar: async () => ({ ok: true }) });
+  assert.ok(r.some((x) => x.accion === "historial" && x.detalle === "2 hilos"), JSON.stringify(r));
+  assert.equal(de("k").length, 0, "kambak.cl no recibe historial");
+  assert.equal((base.tablas.ed_mensajes ?? []).length, 0, "no se guarda en la bandeja");
+  const ev = de("br").map((l) => JSON.parse(l.cuerpo));
+  assert.equal(ev.length, 2);
+  assert.ok(ev.every((e) => e.type === "history.thread"));
+  const h1 = ev.find((e) => e.data.thread === "+56911112222");
+  assert.equal(h1.data.phase, 1);
+  assert.equal(h1.data.chunk_order, 2);
+  assert.equal(h1.data.progress, 55);
+  assert.deepEqual(h1.data.messages.map((m) => m.direction), ["in", "out", "in"]);
+  assert.deepEqual(h1.data.messages[1], {
+    from: "+56985761941", to: "+56911112222", direction: "out", type: "text",
+    text: "¡Hola! Te cuento", message_id: "wamid.H2", timestamp: 1761000100, status: "delivered",
+  });
+  assert.equal(h1.data.messages[2].text, "[adjunto]");
+  const h2 = ev.find((e) => e.data.thread === "+56933334444");
+  assert.equal(h2.data.messages[0].text, "[image] esto");
+
+  // Meta repite la misma parte: no se duplica.
+  await manejarEntranteMeta(p, { sinDebounce: true, enviar: async () => ({ ok: true }) });
+  assert.equal(de("br").length, 2);
+});
+
+test("historial rechazado por el negocio (2593109) llega a BrainRoot como history.error", async () => {
+  await manejarEntranteMeta(payloadHistorial([{ errors: [{ code: 2593109, title: "History sync is turned off by the business from the WhatsApp Business App", message: "History sync is turned off by the business from the WhatsApp Business App" }] }]), { sinDebounce: true });
+  const ev = de("br").map((l) => JSON.parse(l.cuerpo));
+  assert.equal(ev.length, 1);
+  assert.equal(ev[0].type, "history.error");
+  assert.equal(ev[0].data.code, 2593109);
+});
+
+test("historial de una cuenta con asistente: no se manda a ningún lado", async () => {
+  base.tablas.ed_empleados.push({ id: "22222222-0000-4000-8000-00000000000b", cliente_id: OTRO, rol: "tino", activo: true });
+  await manejarEntranteMeta({ entry: [{ changes: [{ field: "history", value: { metadata: { phone_number_id: "PHONE_O" }, history: [{ metadata: { phase: 0, chunk_order: 1, progress: 100 }, threads: [{ id: "569", messages: [{ from: "569", id: "x", type: "text", text: { body: "hola" } }] }] }] } }] }] }, { sinDebounce: true });
+  assert.equal(llamadas.length, 0);
+});

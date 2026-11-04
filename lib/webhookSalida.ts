@@ -31,7 +31,7 @@ import { esSoloMensajeria } from "@/lib/soloMensajeria";
 
 export type TipoEvento = "message.status" | "message.inbound" | "contact.optout";
 /** Solo existe en la copia hacia BrainRoot (lo que escribe una persona desde el celular). */
-export type TipoEventoBrainroot = TipoEvento | "message.outbound";
+export type TipoEventoBrainroot = TipoEvento | "message.outbound" | "history.thread" | "history.error";
 
 /** Minutos de espera antes de cada reintento. */
 export const ESPERAS_MIN = [1, 5, 15, 60, 360, 1440];
@@ -295,6 +295,7 @@ export async function emitirBrainroot(
   tipo: TipoEventoBrainroot,
   clave: string,
   data: Record<string, unknown>,
+  opts?: { soloEncolar?: boolean },
 ): Promise<void> {
   try {
     const cfg = configBrainroot();
@@ -308,9 +309,11 @@ export async function emitirBrainroot(
       .single();
     if (error) {
       if (error.code === "23505") return; // ya estaba (Meta repitió el aviso)
-      if (esTablaInexistente(error)) {
+      // 42P01/PGRST205: tabla sin crear (migración 329). 23514: el CHECK de la
+      // tabla todavía no conoce este tipo (migración 330). En ambos casos: directo.
+      if (esTablaInexistente(error) || error.code === "23514") {
         // Sin cola todavía: un solo intento directo, con un id estable por evento.
-        console.error("[brainroot] falta la migración 329; entrega directa sin reintentos");
+        console.error("[brainroot] cola no disponible (" + error.code + "); entrega directa sin reintentos");
         if (Date.now() < pausaBrainrootHasta) return;
         const directo: FilaEvento = {
           id: idEstable(clienteId, clave),
@@ -329,6 +332,7 @@ export async function emitirBrainroot(
       console.error("[brainroot] no se pudo encolar:", error.message);
       return;
     }
+    if (opts?.soloEncolar) return; // quien llama la entrega por lotes
     if (Date.now() < pausaBrainrootHasta) return; // queda para el cron
     const ok = await entregarBrainroot(fila as FilaEvento);
     if (!ok) pausaBrainrootHasta = Date.now() + PAUSA_MS;

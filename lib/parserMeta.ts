@@ -331,3 +331,110 @@ export function parsearWebhook(payload: unknown): EntranteNormalizado[] {
   }
   return out;
 }
+
+
+/* ========================================================================== *
+ * HISTORIAL DE COEXISTENCIA (webhook field "history", 3-nov-2026)
+ *
+ * Después de pedir el sync (POST /{phone_number_id}/smb_app_data con
+ * sync_type "history"), Meta manda hasta 6 meses de chats de la app en
+ * partes: value.history[] = { metadata: {phase, chunk_order, progress},
+ * threads: [{ id: <número del usuario>, messages: [...] }] }.
+ * Si el negocio no comparte el historial llega history[].errors[] (2593109).
+ * En un mensaje del historial, `from` es el negocio o el usuario; `to` solo
+ * viene en ecos (lo que mandó el negocio desde la app).
+ * ========================================================================== */
+
+export type MensajeHistorial = {
+  from: string;
+  to?: string;
+  direction: "in" | "out";
+  type: string;
+  text: string;
+  message_id: string | null;
+  timestamp: number | null;
+  status: string | null;
+};
+
+export type HiloHistorial = {
+  phoneNumberId: string;
+  thread: string; // número del usuario, sin "+"
+  phase: number | null;
+  chunk_order: number | null;
+  progress: number | null;
+  messages: MensajeHistorial[];
+};
+
+export type ErrorHistorial = { phoneNumberId: string; code: number | null; message: string };
+
+function textoDeMensajeHistorial(m: Record<string, unknown>, tipo: string): string {
+  const sub = (k: string) => (m[k] && typeof m[k] === "object" ? (m[k] as Record<string, unknown>) : null);
+  if (tipo === "text") return String(sub("text")?.body ?? "");
+  if (tipo === "media_placeholder") return "[adjunto]";
+  const cap = sub(tipo)?.caption;
+  if (typeof cap === "string" && cap.trim()) return `[${tipo}] ${cap.trim()}`;
+  if (tipo === "button") return String(sub("button")?.text ?? "[botón]");
+  if (tipo === "interactive") {
+    const i = sub("interactive") as { button_reply?: { title?: string }; list_reply?: { title?: string } } | null;
+    return i?.button_reply?.title ?? i?.list_reply?.title ?? "[interactivo]";
+  }
+  return `[${tipo || "desconocido"}]`;
+}
+
+export function parsearHistorialMeta(payload: unknown): { hilos: HiloHistorial[]; errores: ErrorHistorial[] } {
+  const hilos: HiloHistorial[] = [];
+  const errores: ErrorHistorial[] = [];
+  const p = payload as { entry?: { changes?: { field?: string; value?: Record<string, unknown> }[] }[] };
+  for (const entry of p?.entry ?? []) {
+    for (const change of entry.changes ?? []) {
+      const value = change.value as
+        | {
+            metadata?: { phone_number_id?: string };
+            history?: {
+              metadata?: { phase?: number | string; chunk_order?: number | string; progress?: number | string };
+              threads?: { id?: string; messages?: Record<string, unknown>[] }[];
+              errors?: { code?: number; title?: string; message?: string }[];
+            }[];
+          }
+        | undefined;
+      const phoneNumberId = value?.metadata?.phone_number_id;
+      if (!phoneNumberId || !Array.isArray(value?.history)) continue;
+      for (const h of value.history) {
+        for (const e of h.errors ?? []) {
+          errores.push({ phoneNumberId, code: typeof e.code === "number" ? e.code : null, message: String(e.message ?? e.title ?? "error") });
+        }
+        const num = (x: unknown) => (x === undefined || x === null || x === "" || !Number.isFinite(Number(x)) ? null : Number(x));
+        for (const t of h.threads ?? []) {
+          if (!t.id) continue;
+          const messages: MensajeHistorial[] = [];
+          for (const m of t.messages ?? []) {
+            const tipo = String(m.type ?? "");
+            const from = String(m.from ?? "");
+            const to = typeof m.to === "string" ? m.to : undefined;
+            const ctx = m.history_context as { status?: string } | undefined;
+            messages.push({
+              from,
+              ...(to ? { to } : {}),
+              // Del usuario = from igual al id del hilo. Todo lo demás lo mandó el negocio.
+              direction: !to && from === t.id ? "in" : "out",
+              type: tipo,
+              text: textoDeMensajeHistorial(m, tipo).slice(0, 2000),
+              message_id: typeof m.id === "string" ? m.id : null,
+              timestamp: num(m.timestamp),
+              status: ctx?.status ? String(ctx.status).toLowerCase() : null,
+            });
+          }
+          hilos.push({
+            phoneNumberId,
+            thread: t.id,
+            phase: num(h.metadata?.phase),
+            chunk_order: num(h.metadata?.chunk_order),
+            progress: num(h.metadata?.progress),
+            messages,
+          });
+        }
+      }
+    }
+  }
+  return { hilos, errores };
+}

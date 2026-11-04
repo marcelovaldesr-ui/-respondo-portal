@@ -2,6 +2,7 @@ import { exigirPermisoPortal } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { estadoConexion } from "@/lib/conexion";
 import ConectarWhatsApp from "@/components/ConectarWhatsApp";
+import PedirHistorialMeta from "@/components/PedirHistorialMeta";
 import { instagramConfigurado } from "@/lib/instagramOAuth";
 
 export const dynamic = "force-dynamic";
@@ -113,6 +114,17 @@ export default async function PaginaWhatsApp({
                 <ConectarWhatsApp />
               </div>
             </div>
+            {coexistencia === true ? (
+              <div className="mt-5 border-t pt-4" style={{ borderColor: "var(--borde)" }}>
+                <p className="text-[13.5px]" style={{ color: "var(--muted)" }}>
+                  Historial de la app: dentro de las 24 h siguientes a conectar, Meta
+                  deja traer una sola vez hasta 6 meses de chats.
+                </p>
+                <div className="mt-3">
+                  <PedirHistorialMeta />
+                </div>
+              </div>
+            ) : null}
           </>
         ) : (
           <>
