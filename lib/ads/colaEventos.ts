@@ -3,35 +3,42 @@ import { esSoloMensajeria, sinSoloMensajeria } from "@/lib/soloMensajeria";
 import {
   armarPayload,
   idDeEvento,
+  respuestaParaGuardar,
   toca_reintentar,
   verificar,
   type EventoPendiente,
   type TipoEvento,
 } from "@/lib/ads/eventos";
+import { leerConfig, type ConfigConversiones } from "@/lib/ads/conversionesConfig";
+import { leerCotizacion } from "@/lib/ads/cotizacionCore";
 
 /**
  * LA COLA DE CONVERSIONES — de nuestros hechos a Meta.
  *
- * CÓMO ESTÁ ARMADO Y POR QUÉ ASÍ
- * En vez de disparar un evento desde cada lugar donde puede pasar algo —el
- * detector de cierres, la agenda, el webhook de pagos, el embudo— hay UN
- * proceso que BARRE lo que ya ocurrió y encola lo que falte. Cinco disparadores
- * repartidos serían cinco lugares donde olvidarse de uno, cinco caminos que
- * probar y cinco formas de mandar el mismo evento dos veces.
+ * Función general de Respondo, por tenant, detrás del flag
+ * `ed_clientes.conversiones_meta_activo` (migración 331, apagado por defecto).
+ * Un negocio que no lo enciende no entra a ningún paso de este archivo.
  *
- * El barrido, en cambio, es idempotente por construcción: el `evento_id` se
- * deriva del hecho, y la llave única de la tabla rechaza el duplicado aunque el
- * código se equivoque. Correrlo dos veces no hace daño.
+ * CÓMO ESTÁ ARMADO
+ * Un proceso BARRE lo que ya ocurrió y encola lo que falte. El `evento_id` se
+ * deriva del hecho y la llave única de la tabla rechaza el duplicado: correrlo
+ * dos veces no hace daño. ⭐ Meta NO deduplica estos eventos; esa barrera es
+ * toda nuestra.
  *
- * DOS PASOS SEPARADOS A PROPÓSITO:
- *   1. `encolar`  — mira la base. No usa red. Siempre puede correr.
- *   2. `enviar`   — habla con Meta. Puede fallar, y falla sin perder nada:
- *                   lo que no salió queda en la cola con su motivo.
+ *   1. `encolar`  — mira la base. No usa red.
+ *   2. `enviar`   — habla con Meta. Si falla, queda en la cola con su motivo,
+ *                   el payload y la respuesta. La conversación con el cliente no
+ *                   se entera: todo esto corre en el cron, no en el webhook.
  *
- * Un evento sin `ctwa_clid` NO se manda: queda `descartado` con el motivo
- * escrito. Se guarda igual para poder EXPLICAR por qué no salió, que es la
- * pregunta que sigue cuando alguien mira la pantalla y ve menos de lo que
- * esperaba.
+ * DE DÓNDE SALE CADA EVENTO
+ *   · LeadSubmitted — `ed_contactos.cotizacion.completaEn` (la IA leyó
+ *                     producto + cantidad; ver extraccionCotizacion.ts).
+ *   · QualifiedLead — `cotizacion.calificadaEn` (la regla del tenant o el
+ *                     botón manual «Cotización calificada»).
+ *   · Purchase      — `ed_resultados` venta_confirmada que marcó una PERSONA
+ *                     con el botón «Marcar como venta» (nota.origen =
+ *                     'venta_marcada'). Uno por venta. NO sale de cada pago:
+ *                     una imprenta cobra abono y saldo, y serían dos compras.
  */
 
 const GRAPH = "https://graph.facebook.com/v21.0";
@@ -40,142 +47,148 @@ const TIMEOUT_MS = 12_000;
 const VENTANA_DIAS = 7;
 /** Tope por corrida: comparte función con el cron de seguimientos. */
 const MAX_POR_CORRIDA = 40;
+/** Marca de las ventas que cuentan como Purchase. */
+export const ORIGEN_VENTA_MARCADA = "venta_marcada";
 
 type Candidato = {
   chatId: string;
   tipo: TipoEvento;
   ocurridoEn: Date;
+  ctwaClid: string;
   valor?: number | null;
-  moneda?: string | null;
+  ventaId?: string | null;
+  origen: string;
 };
 
-/**
- * Busca hechos recientes que merezcan un evento y los deja encolados.
- *
- * Los tres orígenes son los que Respondo puede AFIRMAR, no inferir:
- *   · `Purchase` — un cobro por enlace que quedó pagado. Con monto real. Solo
- *                  ese: un pago que el cliente INFORMÓ en el chat no cuenta.
- *   · `Schedule` — una cita creada (ed_resultados: agendamiento).
- *   · `Lead`     — una cotización enviada. Es el punto donde una consulta se
- *                  volvió una oportunidad; antes de eso es solo una pregunta.
- */
+type ClienteConversiones = {
+  activo: boolean;
+  config: ConfigConversiones;
+  datasetId: string;
+  wabaId: string;
+};
+
+/** Lee flag + config + dataset. Sin la 331 devuelve `activo: false`. */
+export async function configDeCliente(clienteId: string): Promise<ClienteConversiones> {
+  const { data, error } = await db()
+    .from("ed_clientes")
+    .select("conversiones_meta_activo, conversiones_meta, ads_dataset_id, waba_id")
+    .eq("id", clienteId)
+    .maybeSingle();
+  if (error || !data) {
+    return { activo: false, config: leerConfig(null), datasetId: "", wabaId: "" };
+  }
+  return {
+    activo: Boolean(data.conversiones_meta_activo),
+    config: leerConfig(data.conversiones_meta),
+    datasetId: String(data.ads_dataset_id ?? "").trim(),
+    wabaId: String(data.waba_id ?? "").trim(),
+  };
+}
+
+/** El `ctwa_clid` guardado en el contacto (migración 282, `datos.campana`). */
+export function clidDe(datos: unknown): string {
+  const campana = ((datos ?? {}) as Record<string, unknown>).campana as Record<string, unknown> | undefined;
+  return String(campana?.ctwaClid ?? "").trim();
+}
+
+/** Busca hechos recientes que merezcan un evento y los deja encolados. */
 export async function encolar(clienteId: string): Promise<{ nuevos: number; descartados: number }> {
   const supa = db();
-  const desde = new Date(Date.now() - VENTANA_DIAS * 86_400_000).toISOString();
-
-  const { data: empleados } = await supa
-    .from("ed_empleados")
-    .select("id")
-    .eq("cliente_id", clienteId);
-  const ids = (empleados ?? []).map((e) => e.id as string);
-
+  const cfg = await configDeCliente(clienteId);
+  if (!cfg.activo) return { nuevos: 0, descartados: 0 };
+  const desdeMs = Date.now() - VENTANA_DIAS * 86_400_000;
+  const desde = new Date(desdeMs).toISOString();
   const candidatos: Candidato[] = [];
 
-  // Compras: la fuente más confiable, porque hay plata de por medio.
-  const { data: pagos } = await supa
-    .from("ed_pagos")
-    .select("chat_id, monto, pagado_en")
-    .eq("cliente_id", clienteId)
-    .eq("estado", "pagado")
-    .gte("pagado_en", desde)
-    .limit(200);
-  for (const p of pagos ?? []) {
-    if (!p.pagado_en) continue;
-    candidatos.push({
-      chatId: p.chat_id as string,
-      tipo: "Purchase",
-      ocurridoEn: new Date(p.pagado_en as string),
-      valor: Number(p.monto) || null,
-      moneda: "CLP",
-    });
+  // ── Leads: de la cotización estructurada, solo conversaciones de anuncio ──
+  if (cfg.config.eventos.LeadSubmitted || cfg.config.eventos.QualifiedLead) {
+    const { data: contactos } = await supa
+      .from("ed_contactos")
+      .select("chat_id, datos, cotizacion")
+      .eq("cliente_id", clienteId)
+      .not("cotizacion", "is", null)
+      .not("datos->campana->>ctwaClid", "is", null)
+      .gte("ultimo_mensaje_en", desde)
+      .limit(300);
+    for (const c of contactos ?? []) {
+      const cot = leerCotizacion(c.cotizacion);
+      const clid = clidDe(c.datos);
+      const chatId = c.chat_id as string;
+      if (cfg.config.eventos.LeadSubmitted && cot.completaEn && Date.parse(cot.completaEn) >= desdeMs) {
+        candidatos.push({ chatId, tipo: "LeadSubmitted", ocurridoEn: new Date(cot.completaEn), ctwaClid: clid, origen: "ia" });
+      }
+      if (cfg.config.eventos.QualifiedLead && cot.calificadaEn && Date.parse(cot.calificadaEn) >= desdeMs) {
+        candidatos.push({
+          chatId,
+          tipo: "QualifiedLead",
+          ocurridoEn: new Date(cot.calificadaEn),
+          ctwaClid: clid,
+          origen: cot.calificadaManual ? "manual" : "regla",
+        });
+      }
+    }
   }
 
-  // Agendas y cotizaciones.
-  if (ids.length) {
-    const { data: res } = await supa
-      .from("ed_resultados")
-      .select("chat_id, tipo, creado_en, valor_clp")
-      .in("empleado_id", ids)
-      /**
-       * SIN `venta_confirmada` NI `venta_recuperada` (Fase 0, 11-sep-2026).
-       * `venta_confirmada` la escribe el detector de cierres cuando el CLIENTE
-       * DICE que pagó (lo lee un modelo en el chat): es un pago informado, no
-       * confirmado. Mandárselo a Meta como `Purchase` le enseñaría a buscar
-       * compradores que quizá no pagaron. El único `Purchase` es el cobro que
-       * una persona (o el proveedor de pago) marcó como pagado, arriba.
-       */
-      .in("tipo", ["agendamiento", "cotizacion_enviada"])
-      .gte("creado_en", desde)
-      .limit(400);
-
-    for (const r of res ?? []) {
-      const tipo: TipoEvento = (r.tipo as string) === "agendamiento" ? "Schedule" : "Lead";
-      candidatos.push({
-        chatId: r.chat_id as string,
-        tipo,
-        ocurridoEn: new Date(r.creado_en as string),
-        valor: null,
-        moneda: null,
-      });
+  // ── Compras: solo las que marcó una persona, una por venta ───────────────
+  if (cfg.config.eventos.Purchase) {
+    const { data: emps } = await supa.from("ed_empleados").select("id").eq("cliente_id", clienteId);
+    const ids = (emps ?? []).map((e) => e.id as string);
+    if (ids.length) {
+      const { data: ventas } = await supa
+        .from("ed_resultados")
+        .select("id, chat_id, valor_clp, creado_en")
+        .in("empleado_id", ids)
+        .eq("tipo", "venta_confirmada")
+        .eq("detectado_por", "humano")
+        .eq("nota->>origen", ORIGEN_VENTA_MARCADA)
+        .gte("creado_en", desde)
+        .limit(200);
+      const chats = [...new Set((ventas ?? []).map((v) => v.chat_id as string))];
+      const clids = new Map<string, string>();
+      if (chats.length) {
+        const { data } = await supa
+          .from("ed_contactos")
+          .select("chat_id, datos")
+          .eq("cliente_id", clienteId)
+          .in("chat_id", chats);
+        for (const c of data ?? []) clids.set(c.chat_id as string, clidDe(c.datos));
+      }
+      for (const v of ventas ?? []) {
+        candidatos.push({
+          chatId: v.chat_id as string,
+          tipo: "Purchase",
+          ocurridoEn: new Date(v.creado_en as string),
+          ctwaClid: clids.get(v.chat_id as string) ?? "",
+          valor: Number(v.valor_clp) || null,
+          ventaId: v.id as string,
+          origen: "manual",
+        });
+      }
     }
   }
 
   if (!candidatos.length) return { nuevos: 0, descartados: 0 };
 
-  /**
-   * ORDEN ANTES DE CORTAR. El tope por corrida existe para no pasarse del
-   * tiempo del cron, pero cortar una lista sin ordenar puede dejar afuera una
-   * venta para que entren cuarenta cotizaciones. Una compra vale más que una
-   * cita y una cita más que un lead; a igual tipo, lo más reciente primero.
-   */
-  const PESO: Record<TipoEvento, number> = { Purchase: 3, Schedule: 2, Lead: 1 };
-  candidatos.sort(
-    (a, b) => PESO[b.tipo] - PESO[a.tipo] || b.ocurridoEn.getTime() - a.ocurridoEn.getTime(),
-  );
-
-  /**
-   * El `ctwa_clid` sale del contacto. Se pide UNA vez para todos los chats en
-   * vez de una consulta por evento: con cuarenta candidatos serían cuarenta
-   * viajes a la base dentro de una función que tiene 60 segundos en total.
-   */
-  const chats = [...new Set(candidatos.map((c) => c.chatId))].slice(0, 200);
-  const clids = new Map<string, { clid: string; telefono: string }>();
-  try {
-    const { data } = await supa
-      .from("ed_contactos")
-      .select("chat_id, datos")
-      .eq("cliente_id", clienteId)
-      .in("chat_id", chats);
-    for (const c of data ?? []) {
-      const campana = ((c.datos ?? {}) as Record<string, unknown>).campana as
-        | Record<string, unknown>
-        | undefined;
-      const clid = String(campana?.ctwaClid ?? "");
-      if (clid) clids.set(c.chat_id as string, { clid, telefono: c.chat_id as string });
-    }
-  } catch {
-    return { nuevos: 0, descartados: 0 };
-  }
+  // Orden antes de cortar: una compra vale más que un lead calificado, y este
+  // más que uno sin calificar; a igual tipo, lo más reciente primero.
+  const PESO: Record<TipoEvento, number> = { Purchase: 3, QualifiedLead: 2, LeadSubmitted: 1 };
+  candidatos.sort((a, b) => PESO[b.tipo] - PESO[a.tipo] || b.ocurridoEn.getTime() - a.ocurridoEn.getTime());
 
   let nuevos = 0;
   let descartados = 0;
-
   for (const c of candidatos.slice(0, MAX_POR_CORRIDA)) {
     const ocurridoEn = Math.floor(c.ocurridoEn.getTime() / 1000);
     if (!Number.isFinite(ocurridoEn)) continue;
-
-    const ref = clids.get(c.chatId);
     const evento: EventoPendiente = {
       clienteId,
       chatId: c.chatId,
       tipo: c.tipo,
       ocurridoEn,
-      ctwaClid: ref?.clid ?? "",
-      telefono: c.chatId,
-      valor: c.valor,
-      moneda: c.moneda,
+      ctwaClid: c.ctwaClid,
+      valor: c.valor ?? null,
+      moneda: "CLP",
+      ventaId: c.ventaId ?? null,
     };
-
     const v = verificar(evento);
     const fila = {
       cliente_id: clienteId,
@@ -184,90 +197,93 @@ export async function encolar(clienteId: string): Promise<{ nuevos: number; desc
       evento_id: idDeEvento(evento),
       ocurrido_en: c.ocurridoEn.toISOString(),
       ctwa_clid: evento.ctwaClid || null,
-      valor: c.valor,
-      moneda: c.moneda,
+      valor: c.valor ?? null,
+      moneda: "CLP",
       estado: v.ok ? "pendiente" : "descartado",
       motivo: v.ok ? null : v.motivo,
+      origen: c.origen,
     };
-
-    try {
-      // `ignoreDuplicates`: si ya estaba encolado, no se toca. Sin esto, un
-      // barrido posterior pisaría el estado de uno ya enviado y lo mandaría de
-      // nuevo — el duplicado que toda esta arquitectura existe para evitar.
-      const { data, error } = await supa
-        .from("ed_ads_eventos")
-        .upsert(fila, { onConflict: "cliente_id,evento_id", ignoreDuplicates: true })
-        .select("id");
-
-      /**
-       * PostgREST devuelve el error, no lo lanza. Si la 302 no está aplicada la
-       * tabla no existe y las 40 filas van a fallar igual: se corta acá en vez
-       * de hacer 40 viajes inútiles dentro de un cron que tiene 60 segundos.
-       */
-      if (error) break;
-
-      /**
-       * Se cuenta lo que REALMENTE entró, no lo que se intentó. Con
-       * `ignoreDuplicates` una fila ya encolada vuelve vacía — sumarla igual
-       * haría que el cron reportara «+12 encolados» cada cinco minutos sobre
-       * los mismos doce eventos. El informe del cron tiene que poder creerse.
-       */
-      if (!data?.length) continue;
-      if (v.ok) nuevos += 1;
-      else descartados += 1;
-    } catch {
-      return { nuevos, descartados };
-    }
+    // `ignoreDuplicates`: si ya estaba encolado, no se toca. Sin esto un
+    // barrido posterior pisaría el estado de uno ya enviado y saldría de nuevo.
+    const { data, error } = await supa
+      .from("ed_ads_eventos")
+      .upsert(fila, { onConflict: "cliente_id,evento_id", ignoreDuplicates: true })
+      .select("id");
+    if (error) break; // PostgREST devuelve el error, no lo lanza: sin tabla, cortar.
+    if (!data?.length) continue; // ya estaba: no se cuenta
+    if (v.ok) nuevos += 1;
+    else descartados += 1;
   }
-
   return { nuevos, descartados };
 }
 
-/**
- * Manda a Meta lo que esté pendiente.
- *
- * Requiere dos cosas que el negocio tiene que configurar: el `dataset_id` y un
- * WABA conectado. Sin cualquiera de las dos NO se manda nada y NO se marca como
- * error: los eventos quedan esperando, que es el estado correcto. Fingir que
- * salieron sería la peor forma de fallar acá.
- */
+/** Token del WhatsApp Business del cliente: la API de conversiones cuelga de ahí. */
+export async function tokenWaba(clienteId: string): Promise<string | null> {
+  const { data: cliente } = await db()
+    .from("ed_clientes")
+    .select("waba_token, waba_token_cifrado")
+    .eq("id", clienteId)
+    .maybeSingle();
+  const { descifrar } = await import("@/lib/cifrado");
+  return (
+    (cliente?.waba_token_cifrado ? descifrar(cliente.waba_token_cifrado as string, "waba-token") : null) ??
+    ((cliente?.waba_token as string | null) || null)
+  );
+}
+
+/** Una llamada a la Graph API con timeout. Nunca lanza. */
+export async function llamarGraph(
+  ruta: string,
+  token: string,
+  opciones: { method?: "GET" | "POST"; cuerpo?: unknown } = {},
+): Promise<{ ok: boolean; status: number; cuerpo: Record<string, unknown>; motivo: string }> {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), TIMEOUT_MS);
+  try {
+    const r = await fetch(`${GRAPH}/${ruta}`, {
+      method: opciones.method ?? "GET",
+      signal: ctrl.signal,
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+      ...(opciones.cuerpo !== undefined ? { body: JSON.stringify(opciones.cuerpo) } : {}),
+    });
+    const cuerpo = (await r.json().catch(() => ({}))) as Record<string, unknown>;
+    const err = (cuerpo.error ?? {}) as Record<string, unknown>;
+    return {
+      ok: r.ok,
+      status: r.status,
+      cuerpo,
+      motivo: r.ok ? "" : String(err.message ?? `HTTP ${r.status}`).slice(0, 300),
+    };
+  } catch {
+    return { ok: false, status: 0, cuerpo: {}, motivo: "no se pudo contactar a Meta (timeout o red)" };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/** Manda a Meta lo que esté pendiente. */
 export async function enviar(clienteId: string): Promise<{ enviados: number; fallidos: number }> {
   const supa = db();
   if (await esSoloMensajeria(clienteId, supa)) return { enviados: 0, fallidos: 0 };
-
-  const { data: cliente } = await supa
-    .from("ed_clientes")
-    .select("ads_dataset_id, waba_id, waba_token, waba_token_cifrado")
-    .eq("id", clienteId)
-    .maybeSingle();
-
-  const dataset = String(cliente?.ads_dataset_id ?? "").trim();
-  const wabaId = String(cliente?.waba_id ?? "").trim();
-  if (!dataset || !wabaId) return { enviados: 0, fallidos: 0 };
-
-  /**
-   * El token es el MISMO del WhatsApp Business del cliente: la Conversions API
-   * de mensajería cuelga de ahí, no de la cuenta publicitaria. Por eso medir se
-   * puede tener sin haber conectado nunca una cuenta de anuncios.
-   */
-  const { descifrar } = await import("@/lib/cifrado");
-  const token =
-    (cliente?.waba_token_cifrado
-      ? descifrar(cliente.waba_token_cifrado as string, "waba-token")
-      : null) ?? ((cliente?.waba_token as string | null) || null);
+  const cfg = await configDeCliente(clienteId);
+  // Sin flag, dataset o WABA NO se manda nada y NO se marca error: los eventos
+  // esperan, que es el estado correcto. Fingir que salieron sería peor.
+  if (!cfg.activo || !cfg.datasetId || !cfg.wabaId) return { enviados: 0, fallidos: 0 };
+  const token = await tokenWaba(clienteId);
   if (!token) return { enviados: 0, fallidos: 0 };
 
   const { data: pendientes } = await supa
     .from("ed_ads_eventos")
-    .select("id, chat_id, tipo, evento_id, ocurrido_en, ctwa_clid, valor, moneda, estado, intentos, ultimo_intento")
+    .select("id, chat_id, tipo, ocurrido_en, ctwa_clid, valor, moneda, estado, intentos, ultimo_intento")
     .eq("cliente_id", clienteId)
+    .eq("es_prueba", false)
     .in("estado", ["pendiente", "fallido"])
+    .in("tipo", ["LeadSubmitted", "QualifiedLead", "Purchase"])
     .order("creado_en", { ascending: true })
     .limit(25);
 
   let enviados = 0;
   let fallidos = 0;
-
   for (const f of pendientes ?? []) {
     const intentos = Number(f.intentos) || 0;
     if (
@@ -288,70 +304,161 @@ export async function enviar(clienteId: string): Promise<{ enviados: number; fal
         tipo: f.tipo as TipoEvento,
         ocurridoEn: Math.floor(Date.parse(f.ocurrido_en as string) / 1000),
         ctwaClid: String(f.ctwa_clid ?? ""),
-        telefono: f.chat_id as string,
         valor: f.valor as number | null,
         moneda: f.moneda as string | null,
       },
-      wabaId,
+      cfg.wabaId,
+      { partnerAgent: cfg.config.partnerAgent },
     );
+    const r = await llamarGraph(`${cfg.datasetId}/events`, token, { method: "POST", cuerpo: payload });
 
-    const ctrl = new AbortController();
-    const timer = setTimeout(() => ctrl.abort(), TIMEOUT_MS);
-    let ok = false;
-    let motivo = "";
-    try {
-      const r = await fetch(`${GRAPH}/${dataset}/events`, {
-        method: "POST",
-        signal: ctrl.signal,
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-        body: JSON.stringify(payload),
-      });
-      const cuerpo = (await r.json().catch(() => ({}))) as Record<string, unknown>;
-      ok = r.ok;
-      if (!ok) {
-        const err = (cuerpo.error ?? {}) as Record<string, unknown>;
-        // El mensaje se guarda recortado y sin encabezados: nunca el token.
-        motivo = String(err.message ?? `HTTP ${r.status}`).slice(0, 300);
-      }
-    } catch {
-      motivo = "no se pudo contactar a Meta (timeout o red)";
-    } finally {
-      clearTimeout(timer);
-    }
+    await supa
+      .from("ed_ads_eventos")
+      .update(
+        r.ok
+          ? {
+              estado: "enviado",
+              enviado_en: new Date().toISOString(),
+              motivo: null,
+              payload,
+              respuesta: respuestaParaGuardar(r.cuerpo),
+              intentos: intentos + 1,
+              ultimo_intento: new Date().toISOString(),
+            }
+          : {
+              estado: "fallido",
+              motivo: r.motivo,
+              payload,
+              respuesta: respuestaParaGuardar(r.cuerpo),
+              intentos: intentos + 1,
+              ultimo_intento: new Date().toISOString(),
+            },
+      )
+      .eq("id", f.id as string)
+      .eq("cliente_id", clienteId);
 
-    try {
-      await supa
-        .from("ed_ads_eventos")
-        .update(
-          ok
-            ? { estado: "enviado", enviado_en: new Date().toISOString(), motivo: null }
-            : {
-                estado: "fallido",
-                motivo,
-                intentos: intentos + 1,
-                ultimo_intento: new Date().toISOString(),
-              },
-        )
-        .eq("id", f.id as string)
-        .eq("cliente_id", clienteId);
-    } catch {
-      // Si no se puede escribir el estado, el evento vuelve a intentarse. Es
-      // seguro: el `evento_id` es el mismo y Meta lo deduplica.
-    }
-
-    if (ok) enviados += 1;
+    if (r.ok) enviados += 1;
     else fallidos += 1;
   }
-
   return { enviados, fallidos };
 }
 
 /**
- * Lo que llama el cron. Recorre los negocios que tengan dataset configurado.
+ * EVENTO DE PRUEBA para «Probar eventos» del Administrador de eventos.
  *
- * Nunca lanza: comparte endpoint con los recordatorios de cita, y una falla
- * acá no puede impedir que salga un mensaje que un cliente está esperando a
- * una hora concreta.
+ * Va con `test_event_code`, NO pasa por la cola y NO consume la deduplicación:
+ * su `evento_id` es único por intento. Así probar no impide que después salga
+ * el evento real de esa misma conversación. Usa el `ctwa_clid` de la
+ * conversación de anuncio más reciente; si todavía no hay ninguna, uno de
+ * ejemplo (Meta igual muestra el evento y su diagnóstico en la pestaña de
+ * prueba). Queda registrado con `es_prueba = true`.
+ */
+export async function enviarEventoPrueba(
+  clienteId: string,
+): Promise<{ ok: boolean; mensaje: string; usoClidReal: boolean }> {
+  const supa = db();
+  const cfg = await configDeCliente(clienteId);
+  if (!cfg.wabaId) return { ok: false, mensaje: "Este negocio no tiene WhatsApp conectado.", usoClidReal: false };
+  if (!cfg.datasetId) return { ok: false, mensaje: "Falta el conjunto de datos (dataset).", usoClidReal: false };
+  if (!cfg.config.testEventCode) {
+    return { ok: false, mensaje: "Falta el código de prueba (Test event code) del Administrador de eventos.", usoClidReal: false };
+  }
+  const token = await tokenWaba(clienteId);
+  if (!token) return { ok: false, mensaje: "No se encontró el token de WhatsApp de este negocio.", usoClidReal: false };
+
+  const { data: conAnuncio } = await supa
+    .from("ed_contactos")
+    .select("chat_id, datos")
+    .eq("cliente_id", clienteId)
+    .not("datos->campana->>ctwaClid", "is", null)
+    .order("ultimo_mensaje_en", { ascending: false })
+    .limit(1);
+  const fila = (conAnuncio ?? [])[0];
+  const clidReal = fila ? clidDe(fila.datos) : "";
+  const ctwaClid = clidReal || "RESPONDO_PRUEBA_CTWA_CLID";
+  const chatId = (fila?.chat_id as string | undefined) ?? "prueba";
+  const ahora = Math.floor(Date.now() / 1000);
+
+  const payload = armarPayload(
+    { clienteId, chatId, tipo: "QualifiedLead", ocurridoEn: ahora, ctwaClid },
+    cfg.wabaId,
+    { testEventCode: cfg.config.testEventCode, partnerAgent: cfg.config.partnerAgent },
+  );
+  const r = await llamarGraph(`${cfg.datasetId}/events`, token, { method: "POST", cuerpo: payload });
+
+  await supa.from("ed_ads_eventos").insert({
+    cliente_id: clienteId,
+    chat_id: chatId,
+    tipo: "QualifiedLead",
+    evento_id: `prueba-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    ocurrido_en: new Date(ahora * 1000).toISOString(),
+    ctwa_clid: ctwaClid,
+    valor: 0,
+    moneda: "CLP",
+    estado: r.ok ? "enviado" : "descartado",
+    motivo: r.ok ? null : r.motivo,
+    enviado_en: r.ok ? new Date().toISOString() : null,
+    intentos: 1,
+    ultimo_intento: new Date().toISOString(),
+    payload,
+    respuesta: respuestaParaGuardar(r.cuerpo),
+    es_prueba: true,
+    origen: "prueba",
+  });
+
+  return r.ok
+    ? {
+        ok: true,
+        usoClidReal: Boolean(clidReal),
+        mensaje: `Meta recibió el evento de prueba (${String(r.cuerpo.events_received ?? 1)}). Revísalo en «Probar eventos» del Administrador de eventos.`,
+      }
+    : { ok: false, usoClidReal: Boolean(clidReal), mensaje: `Meta rechazó el evento: ${r.motivo}` };
+}
+
+/**
+ * Obtiene el dataset vinculado a la WABA, o lo crea. `POST /{WABA}/dataset`
+ * devuelve el existente si ya hay uno, así que es seguro repetirlo.
+ *
+ * Es también la VERIFICACIÓN DEL PERMISO: si el token no tiene
+ * `whatsapp_business_manage_events`, Meta lo dice acá, con su mensaje, antes de
+ * que se encole nada.
+ */
+export async function obtenerOCrearDataset(clienteId: string): Promise<{ ok: boolean; datasetId?: string; mensaje: string }> {
+  const cfg = await configDeCliente(clienteId);
+  if (!cfg.wabaId) return { ok: false, mensaje: "Este negocio no tiene WhatsApp conectado." };
+  const token = await tokenWaba(clienteId);
+  if (!token) return { ok: false, mensaje: "No se encontró el token de WhatsApp de este negocio." };
+
+  const leerId = (c: Record<string, unknown>): string => {
+    const directo = String(c.id ?? c.dataset_id ?? "");
+    if (/^\d{6,25}$/.test(directo)) return directo;
+    const lista = Array.isArray(c.data) ? (c.data as Record<string, unknown>[]) : [];
+    const primero = String(lista[0]?.id ?? lista[0]?.dataset_id ?? "");
+    return /^\d{6,25}$/.test(primero) ? primero : "";
+  };
+
+  const leido = await llamarGraph(`${cfg.wabaId}/dataset`, token);
+  let datasetId = leido.ok ? leerId(leido.cuerpo) : "";
+  let ultimo = leido;
+  if (!datasetId) {
+    const creado = await llamarGraph(`${cfg.wabaId}/dataset`, token, { method: "POST" });
+    datasetId = creado.ok ? leerId(creado.cuerpo) : "";
+    ultimo = creado;
+  }
+  if (!datasetId) {
+    return {
+      ok: false,
+      mensaje: `Meta no entregó el conjunto de datos: ${ultimo.motivo || "respuesta sin id"}. Si menciona permisos, falta «whatsapp_business_manage_events» en el token de este WhatsApp.`,
+    };
+  }
+  const { error } = await db().from("ed_clientes").update({ ads_dataset_id: datasetId }).eq("id", clienteId);
+  if (error) return { ok: false, mensaje: `Meta entregó el dataset ${datasetId} pero no se pudo guardar.` };
+  return { ok: true, datasetId, mensaje: `Conjunto de datos listo: ${datasetId}.` };
+}
+
+/**
+ * Lo que llama el cron. Recorre SOLO los negocios con el flag encendido y
+ * dataset. Nunca lanza: comparte endpoint con los recordatorios de cita.
  */
 export async function procesarEventos(opts?: {
   fechaLimite?: number;
@@ -360,15 +467,16 @@ export async function procesarEventos(opts?: {
   const detalle: string[] = [];
   let encolados = 0;
   let enviados = 0;
-
   try {
-    const { data: clientesBruto } = await db()
+    const { data: clientesBruto, error } = await db()
       .from("ed_clientes")
-      .select("id, nombre, ads_dataset_id")
+      .select("id, nombre")
+      .eq("conversiones_meta_activo", true)
       .not("ads_dataset_id", "is", null)
       .limit(opts?.maxClientes ?? 5);
+    // Sin la 331 la columna no existe: es «nadie activo», no un error.
+    if (error) return { encolados: 0, enviados: 0, detalle: ["sin_configurar"] };
     const clientes = await sinSoloMensajeria(clientesBruto);
-
     if (!clientes?.length) return { encolados: 0, enviados: 0, detalle: ["sin_configurar"] };
 
     for (const c of clientes) {
@@ -380,11 +488,10 @@ export async function procesarEventos(opts?: {
       const s = await enviar(c.id as string);
       encolados += e.nuevos;
       enviados += s.enviados;
-      detalle.push(`${c.nombre ?? c.id}: +${e.nuevos} encolados, ${s.enviados} enviados`);
+      detalle.push(`${c.nombre ?? c.id}: +${e.nuevos} encolados, ${s.enviados} enviados, ${s.fallidos} con error`);
     }
   } catch (e) {
     detalle.push(`error: ${(e as Error).message}`);
   }
-
   return { encolados, enviados, detalle };
 }

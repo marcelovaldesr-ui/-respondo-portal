@@ -15,6 +15,7 @@ async function llamar(
   prompt: string,
   timeoutMs = TIMEOUT_MS,
   thinkingBudget?: number,
+  esquema?: Record<string, unknown>,
 ): Promise<Response> {
   const key = process.env.GEMINI_API_KEY;
   if (!key) throw new Error("Falta GEMINI_API_KEY");
@@ -30,6 +31,12 @@ async function llamar(
   // perder calidad. Solo se usa donde hace falta; el chat en vivo no lo pasa.
   if (typeof thinkingBudget === "number") {
     generationConfig.thinkingConfig = { thinkingBudget };
+  }
+  // Schema de respuesta opcional (extracciones estructuradas). Sin él, el
+  // comportamiento es exactamente el de siempre.
+  if (esquema) {
+    generationConfig.responseSchema = esquema;
+    generationConfig.temperature = 0;
   }
   try {
     return await fetch(`${BASE}/${modelo}:generateContent?key=${key}`, {
@@ -93,6 +100,8 @@ export async function generarJSON(
      * Ver lib/presupuesto.ts.
      */
     fechaLimite?: number;
+    /** Schema de respuesta (subconjunto OpenAPI de Gemini). Opcional. */
+    esquema?: Record<string, unknown>;
   },
 ): Promise<string> {
   const principal = process.env.GEMINI_MODEL || MODELO_RESPALDO;
@@ -122,7 +131,7 @@ export async function generarJSON(
         efectivo = Math.min(timeoutMs, restante);
       }
       try {
-        const r = await llamar(modelo, prompt, efectivo, opciones?.thinkingBudget);
+        const r = await llamar(modelo, prompt, efectivo, opciones?.thinkingBudget, opciones?.esquema);
         if (!r.ok) {
           ultimoError = `${modelo}: HTTP ${r.status}`;
           if (esTransitorio(r.status) && intento < maxIntentos) {

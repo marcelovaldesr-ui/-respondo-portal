@@ -19,6 +19,8 @@ import { EVENTOS } from "@/lib/ads/eventos";
 import { modoDemo } from "@/lib/marketing/modo";
 import Cabecera from "@/components/marketing/Cabecera";
 import FormularioDataset from "@/components/marketing/FormularioDataset";
+import ConfigConversiones, { type EventoReciente } from "@/components/marketing/ConfigConversiones";
+import { leerConfig } from "@/lib/ads/conversionesConfig";
 import SelectorCuenta from "@/components/marketing/SelectorCuenta";
 import SelectorCuentaGoogle from "@/components/marketing/SelectorCuentaGoogle";
 import { Pildora } from "@/components/marketing/Estado";
@@ -117,6 +119,36 @@ export default async function Integraciones({
     dataset = "";
   }
   const faltaMigracion = Boolean(clienteRow.error);
+
+  /**
+   * Conversiones a Meta (migración 331). Consulta aparte y tolerante: sin la
+   * 331 las columnas no existen y el resto de la pantalla sigue igual.
+   */
+  const convRow = await db()
+    .from("ed_clientes")
+    .select("conversiones_meta_activo, conversiones_meta")
+    .eq("id", usuario.clienteId)
+    .maybeSingle();
+  const falta331 = Boolean(convRow.error);
+  const convActivo = Boolean(convRow.data?.conversiones_meta_activo);
+  const convConfig = leerConfig(convRow.data?.conversiones_meta);
+  let eventosRecientes: EventoReciente[] = [];
+  if (!falta331) {
+    const { data: evs } = await db()
+      .from("ed_ads_eventos")
+      .select("tipo, estado, motivo, creado_en, es_prueba, origen")
+      .eq("cliente_id", usuario.clienteId)
+      .order("creado_en", { ascending: false })
+      .limit(15);
+    eventosRecientes = (evs ?? []).map((e) => ({
+      tipo: e.tipo as string,
+      estado: e.estado as string,
+      motivo: (e.motivo as string | null) ?? null,
+      creadoEn: e.creado_en as string,
+      esPrueba: Boolean(e.es_prueba),
+      origen: (e.origen as string | null) ?? null,
+    }));
+  }
 
   const necesitaElegir = Boolean(conexion && !conexion.cuentaId);
   const cuentas = necesitaElegir ? await proveedorMeta.cuentas(usuario.clienteId) : null;
@@ -482,9 +514,23 @@ export default async function Integraciones({
                 </p>
               ) : (
                 wabaId && (
-                  <div className="mt-4">
-                    <FormularioDataset valor={dataset} />
-                  </div>
+                  <>
+                    <div className="mt-5">
+                      <ConfigConversiones
+                        activo={convActivo}
+                        config={convConfig}
+                        dataset={dataset}
+                        faltaMigracion={falta331}
+                        eventos={eventosRecientes}
+                      />
+                    </div>
+                    <details className="mt-4">
+                      <summary style={{ fontSize: "11.5px", color: "var(--muted-2)" }}>Escribir el dataset a mano</summary>
+                      <div className="mt-2">
+                        <FormularioDataset valor={dataset} />
+                      </div>
+                    </details>
+                  </>
                 )
               )}
               {cola.pendientes + cola.enviados + cola.descartados + cola.fallidos > 0 && (

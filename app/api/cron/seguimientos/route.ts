@@ -23,6 +23,7 @@ import { archivarPendientes } from "@/lib/archivarMedia";
 import { generarSeguimientosCotizacion } from "@/lib/generadorCotizacion";
 import { destilarPendientes } from "@/lib/isabelDestilado";
 import { procesarEventos } from "@/lib/ads/colaEventos";
+import { extraerCotizaciones } from "@/lib/ads/extraccionCotizacion";
 import { drenarCola } from "@/lib/kambakEnvios";
 import { procesarEventosBrainroot, procesarEventosPendientes } from "@/lib/webhookSalida";
 import { enviarResumenesDiariosAgenda } from "@/lib/resumenDiarioAgenda";
@@ -239,6 +240,19 @@ export async function GET(request: NextRequest) {
    * datos, que es el caso hoy. Va en su propio try y después de los envíos:
    * hablar con Meta puede demorar y no puede frenar un recordatorio de cita.
    */
+  /**
+   * EXTRACCIÓN ESTRUCTURADA DE COTIZACIONES (nov-2026, migración 331). Solo
+   * tenants con `conversiones_meta_activo` y solo chats de anuncio CTWA. Va
+   * ANTES de las conversiones para que un lead detectado en esta pasada salga
+   * en la misma. Sin nadie activo retorna al instante.
+   */
+  await correrPaso(
+    "extraccion_cotizaciones",
+    () => extraerCotizaciones({ fechaLimite: inicioCron + 45_000 }),
+    (x) => ({ ok: true, trabajo: x.revisadas > 0, resumen: { revisadas: x.revisadas, completas: x.completas, calificadas: x.calificadas } }),
+    procesos,
+  );
+
   const conversiones = (await correrPaso(
     "conversiones_pauta",
     () => procesarEventos({ fechaLimite: inicioCron + 50_000 }),

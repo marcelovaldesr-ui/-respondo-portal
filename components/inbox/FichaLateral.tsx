@@ -11,6 +11,7 @@ import { metaEmpleado } from "@/lib/empleados";
 import { EtapaEstado, Estado, PagoEstado } from "@/components/estado/Estados";
 import { marcarAtendida } from "@/app/(portal)/conversaciones/acciones";
 import { confirmarPagoRecibido, marcarPago } from "@/app/(portal)/conversaciones/accionesPagos";
+import VentaMeta from "@/components/inbox/VentaMeta";
 
 /**
  * FICHA LATERAL DE LA CONVERSACIÓN (Fase 1).
@@ -414,6 +415,9 @@ export default function FichaLateral({
           )}
         </dl>
       </Seccion>
+
+      {/* ── Venta y cotización (solo con conversiones a Meta activas) ── */}
+      {!d.soloMensajeria && <VentaMeta chatId={d.chatId} empleadoId={empleadoId} />}
 
       {/* ── Atención ── */}
       <Seccion titulo="Atención">

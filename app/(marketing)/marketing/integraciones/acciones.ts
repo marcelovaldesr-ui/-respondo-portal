@@ -330,3 +330,65 @@ export async function conectarConTokenSistema(formData: FormData): Promise<{ ok:
   revalidatePath("/marketing", "layout");
   return { ok: true };
 }
+
+// ── Conversiones a Meta (Conversions API for Business Messaging) ─────────────
+
+/**
+ * Guarda el flag y la configuración de conversiones del negocio.
+ *
+ * Lo que llega del formulario se pasa por `leerConfig` antes de guardar: una
+ * regla mal escrita se descarta en vez de quedar guardada y calificar a todo
+ * el mundo.
+ */
+export async function guardarConversionesMeta(formData: FormData): Promise<{ ok: boolean; motivo?: string }> {
+  const usuario = await obtenerUsuarioConPermiso("gestionar_integraciones");
+  if (!usuario) return { ok: false, motivo: "Sesión no válida" };
+  const { leerConfig } = await import("@/lib/ads/conversionesConfig");
+
+  let crudo: unknown = null;
+  try {
+    crudo = JSON.parse(String(formData.get("config") ?? "{}"));
+  } catch {
+    return { ok: false, motivo: "La configuración no se pudo leer." };
+  }
+  const config = leerConfig(crudo);
+  const activo = String(formData.get("activo") ?? "") === "1";
+
+  const { error } = await db()
+    .from("ed_clientes")
+    .update({ conversiones_meta_activo: activo, conversiones_meta: config })
+    .eq("id", usuario.clienteId);
+  if (error) {
+    return {
+      ok: false,
+      motivo: /conversiones_meta/.test(error.message)
+        ? "Falta habilitar esta función en la base (migración 331)."
+        : traducirFalla({ proveedor: "almacen", operacion: "guardarConversionesMeta", clienteId: usuario.clienteId, crudo: error }),
+    };
+  }
+  revalidatePath("/marketing", "layout");
+  return { ok: true };
+}
+
+/** Obtiene o crea el dataset de la WABA. También verifica el permiso. */
+export async function obtenerDatasetMeta(): Promise<{ ok: boolean; motivo?: string; datasetId?: string }> {
+  const usuario = await obtenerUsuarioConPermiso("gestionar_integraciones");
+  if (!usuario) return { ok: false, motivo: "Sesión no válida" };
+  const { obtenerOCrearDataset } = await import("@/lib/ads/colaEventos");
+  const r = await obtenerOCrearDataset(usuario.clienteId);
+  revalidatePath("/marketing", "layout");
+  return r.ok ? { ok: true, datasetId: r.datasetId, motivo: r.mensaje } : { ok: false, motivo: r.mensaje };
+}
+
+/** Manda un evento con test_event_code para «Probar eventos». */
+export async function enviarEventoPruebaMeta(): Promise<{ ok: boolean; motivo?: string }> {
+  const usuario = await obtenerUsuarioConPermiso("gestionar_integraciones");
+  if (!usuario) return { ok: false, motivo: "Sesión no válida" };
+  const { enviarEventoPrueba } = await import("@/lib/ads/colaEventos");
+  const r = await enviarEventoPrueba(usuario.clienteId);
+  revalidatePath("/marketing", "layout");
+  return {
+    ok: r.ok,
+    motivo: r.mensaje + (r.ok && !r.usoClidReal ? " (Todavía no hay conversaciones de anuncio: se usó un identificador de ejemplo.)" : ""),
+  };
+}

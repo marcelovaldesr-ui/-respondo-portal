@@ -977,7 +977,7 @@ export function panoramaDemo(rango: Rango, variante: VarianteDemo = "completo"):
       items: [
         { titulo: "WhatsApp conectado", estado: "ok", detalle: "Las conversaciones entran y se atribuyen solas." },
         { titulo: "Cuenta publicitaria de Meta", estado: "ok", detalle: `${NEGOCIO_DEMO.nombre} · factura en CLP` },
-        { titulo: "Devolverle las ventas a Meta", estado: "ok", detalle: "Se envían Lead, Schedule y Purchase con el identificador del clic." },
+        { titulo: "Devolverle las ventas a Meta", estado: "ok", detalle: "Se envían LeadSubmitted, QualifiedLead y Purchase con el identificador del clic." },
         { titulo: "Primera creatividad", estado: "ok", detalle: "8 creatividades en el estudio." },
         { titulo: "Primera campaña", estado: "ok", detalle: "5 campañas con datos." },
       ],
